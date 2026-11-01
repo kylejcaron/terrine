@@ -7,7 +7,7 @@ import pyarrow as pa
 import terrine as tr
 from terrine.data import MaterializedFrame, Roles
 from terrine.errors import FrozenMap
-from terrine.windows import Window, format_duration
+from terrine.windows import Duration, Months, Window
 from tests.fixtures.readme import readme_design, readme_model
 from tests.test_metadata import _provenance
 
@@ -98,13 +98,8 @@ def test_large_descriptor_and_materialized_frame_reprs_are_bounded():
     assert "provenance" not in result
 
 
-def test_frozen_map_and_window_reprs_show_values():
+def test_frozen_map_window_and_duration_reprs_show_values():
     assert "incomplete_coverage" in repr(FrozenMap({"reason": "incomplete_coverage"}))
-    assert "-30d" in repr(Window("-30d", "0s"))
-
-
-def test_format_duration_uses_largest_exact_elapsed_unit():
-    assert format_duration(0) == "0s"
-    assert format_duration(-2_592_000) == "-30d"
-    assert format_duration(604_800) == "1w"
-    assert format_duration(90) == "90s"
+    assert repr(Window("-30d", "0s")) == "Window('-30d', '0s')"
+    assert repr(Duration(604_800)) == "Duration('1w')"
+    assert repr(Months(12)) == "Months(12)"

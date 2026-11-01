@@ -48,7 +48,9 @@ def _followup_at(design: Design, model, timestamp):
         if ends
         else ibis.literal(model.day_boundary(design.anchor.end_exclusive))
     )
-    return cast(ir.TimestampValue, end) + ibis.interval(seconds=design.shape.anticipation)
+    return cast(ir.TimestampValue, end) + ibis.interval(
+        seconds=design.shape.anticipation.seconds
+    )
 
 
 def _trial_columns(table, design: Design, model):

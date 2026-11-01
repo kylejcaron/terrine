@@ -36,7 +36,7 @@ from terrine.spec import (
     gt,
     to_json,
 )
-from terrine.windows import Window
+from terrine.windows import Duration, Months, Window
 
 _FEATURES = {"region": asof("region", before="-1d")}
 _OUTCOMES = {"spend": agg("revenue", window=("0d", "7d"))}
@@ -445,8 +445,8 @@ def test_month_schedule_anchors_are_start_plus_k_months_clamped_to_the_month():
     assert Schedule("1mo", "2025-01-31", "2025-01-31").count(_day) == 1
     assert Schedule("1mo", "2025-01-30", "2025-02-28").count(_day) == 2
     monthly = Schedule("1mo", "2025-01-01", "2025-02-01")
-    assert (monthly.months, monthly.every) == (1, None)
-    assert Schedule("2y", "2025-01-01", "2025-02-01").months == 24
+    assert monthly.every == Months(1)
+    assert Schedule("2y", "2025-01-01", "2025-02-01").every == Months(24)
 
 
 def test_month_count_never_builds_a_date_beyond_the_end_month():
@@ -463,7 +463,7 @@ def test_elapsed_count_is_arithmetic(monkeypatch):
 
     monkeypatch.setattr(anchors, "add_months", never)
     schedule = Schedule("1s", "2025-01-01", "2025-12-31")
-    assert (schedule.every, schedule.months) == (1, None)
+    assert schedule.every == Duration(1)
     assert schedule.count(_day) == 365 * 86_400
     assert schedule.instant(schedule.count(_day) - 1, _day) == datetime(
         2025, 12, 31, 23, 59, 59, tzinfo=UTC

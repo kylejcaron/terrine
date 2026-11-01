@@ -29,7 +29,6 @@ from terrine.spec.design import Design
 from terrine.spec.sequence import _UNSUPPORTED_SHAPE, EventSequence
 from terrine.temporal.attributes import _enriched_property_columns, enrich_events
 from terrine.temporal.sequence import SequenceResult, event_sequence
-from terrine.windows import seconds_text
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -145,7 +144,7 @@ def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
         features=design.features,
         outcomes=design.outcomes,
         eligibility=design.eligibility,
-        gap=seconds_text(design.gap),
+        gap=design.gap,
         anchor_range=design.anchor_range,
     )
     base = compile_columns(base_design, model)
@@ -329,11 +328,14 @@ def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
     else:
         event_id_column = identity_alias
     readiness = model.readiness.for_fact(source.name)
+    session_gap_seconds = None if sequence.sessions is None else sequence.sessions.gap.seconds
+    within = None if sequence.funnel is None else sequence.funnel.within
+    funnel_within_seconds = None if within is None else within.seconds
     result = event_sequence(
         normalized,
         anchors,
-        window_start=sequence.window.start,
-        window_end=sequence.window.end,
+        window_start=sequence.window.start.seconds,
+        window_end=sequence.window.end.seconds,
         max_events=sequence.max_events,
         representation=sequence.representation,
         properties=sequence.properties,
@@ -347,14 +349,10 @@ def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
         observed_until_column="_observed_until" if "_observed_until" in anchors.columns else None,
         complete_from=readiness.start,
         complete_until=readiness.end_exclusive,
-        session_gap_seconds=(
-            sequence.sessions.gap_seconds if sequence.sessions is not None else None
-        ),
+        session_gap_seconds=session_gap_seconds,
         funnel_event_property=funnel_event_property_column,
         funnel_steps=sequence.funnel.steps if sequence.funnel is not None else None,
-        funnel_within_seconds=(
-            sequence.funnel.within_seconds if sequence.funnel is not None else None
-        ),
+        funnel_within_seconds=funnel_within_seconds,
         property_found_columns=property_found_columns,
         funnel_event_property_found_column=funnel_event_property_found_column,
         property_columns=property_columns,
@@ -435,9 +433,7 @@ def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
                 for name in sequence.properties
             },
             label_property=sequence.label_property,
-            session_gap_seconds=(
-                sequence.sessions.gap_seconds if sequence.sessions is not None else None
-            ),
+            session_gap_seconds=session_gap_seconds,
             session_fields=(
                 (
                     "session_index",
@@ -483,9 +479,7 @@ def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
                 sequence.funnel.event_property if sequence.funnel is not None else None
             ),
             funnel_steps=sequence.funnel.steps if sequence.funnel is not None else (),
-            funnel_within_seconds=(
-                sequence.funnel.within_seconds if sequence.funnel is not None else None
-            ),
+            funnel_within_seconds=funnel_within_seconds,
             funnel_attempts_column="funnel_attempts" if sequence.funnel is not None else None,
             funnel_attempts_complete_column=(
                 "funnel_attempts_complete" if sequence.funnel is not None else None

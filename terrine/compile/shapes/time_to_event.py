@@ -30,7 +30,6 @@ from terrine.spec.anchors import FixedDate
 from terrine.spec.design import Design
 from terrine.spec.trajectory import TimeToEvent
 from terrine.temporal.first import first_occurrence
-from terrine.windows import seconds_text
 
 if TYPE_CHECKING:
     from terrine.model import Model
@@ -172,7 +171,7 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
         features=design.features,
         eligibility=design.eligibility,
         treatment=design.treatment,
-        gap=seconds_text(design.gap),
+        gap=design.gap,
         shape="cross_section",
         anchor_range=design.anchor_range,
     )

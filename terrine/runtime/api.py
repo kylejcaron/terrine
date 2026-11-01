@@ -647,7 +647,7 @@ class DesignExecutor:
                 and treatment_column is not None
                 and isinstance(self.design.anchor, FixedDate)
                 and self.design.shape == "cross_section"
-                and treatment.at == 0
+                and treatment.at.seconds == 0
                 and treatment.known_at_t0
                 and pa.types.is_boolean(table.schema.field(treatment_column).type)
             )

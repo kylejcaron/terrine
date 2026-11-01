@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import calendar
 import math
-import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
@@ -12,7 +11,7 @@ from typing import Literal
 
 from terrine._time import utc_instant
 from terrine.errors import RefusalSpec
-from terrine.windows import duration
+from terrine.windows import Duration, Months, calendar_or_duration, duration
 
 __all__ = ["FixedDate", "EventAnchor", "Schedule", "AnchorRange"]
 
@@ -33,7 +32,6 @@ _REVERSED_INSTANTS = RefusalSpec(
     "End time {end!r} is not after start time {start!r}. "
     "Choose a later end time; the end time itself is excluded.",
 )
-_CALENDAR_STEP = re.compile(r"([0-9]{1,19})(mo|y)", re.ASCII)
 
 
 def _context_value(value: object) -> object:
@@ -151,13 +149,14 @@ class EventAnchor:
         event: Name of an event declared in the model.
         occurrence: "first", "each" or "nth"; "first" makes one anchor at the earliest event.
         n: Positive one-based occurrence index for "nth"; None is required for other rules.
-        offset: Elapsed duration string (see `terrine.windows`); "0s" anchors at the selected event.
+        offset: Nonnegative elapsed duration string (see `terrine.windows`) or Duration; "0s"
+            anchors at the selected event.
 
     Attributes:
         event: Name of an event declared in the model.
         occurrence: "first", "each" or "nth"; "first" makes one anchor at the earliest event.
         n: Positive one-based occurrence index for "nth"; None is required for other rules.
-        offset: Exact elapsed offset stored as integer seconds.
+        offset: Nonnegative elapsed offset as a Duration.
 
     Example: tr.EventAnchor("orders", occurrence="first")
     """
@@ -165,14 +164,14 @@ class EventAnchor:
     event: str
     occurrence: Literal["first", "each", "nth"]
     n: int | None
-    offset: int
+    offset: Duration
 
     def __init__(
         self,
         event: str,
         occurrence: Literal["first", "each", "nth"] = "first",
         n: int | None = None,
-        offset: str | Literal[0] = "0s",
+        offset: str | Duration | Literal[0] = "0s",
     ) -> None:
         if not isinstance(event, str) or not event.strip():
             raise _INVALID.error(reason="empty_name", field="event")
@@ -186,7 +185,7 @@ class EventAnchor:
         elif n is not None:
             raise _INVALID.error(reason="n_requires_nth", field="n")
         elapsed = duration(offset, field="offset")
-        if elapsed < 0:
+        if elapsed.seconds < 0:
             raise _INVALID.error(reason="negative", field="offset")
         object.__setattr__(self, "event", event)
         object.__setattr__(self, "occurrence", occurrence)
@@ -225,40 +224,32 @@ class Schedule:
 
 
     Args:
-        every: Positive duration string (see `terrine.windows`) or calendar step such as "1mo" or
-            "1y".
+        every: Positive duration string (see `terrine.windows`) or Duration, or a calendar step
+            such as "1mo", "1y" or Months(3).
         start: First scheduled calendar day, as a date or ISO YYYY-MM-DD string, included.
         end: Last scheduled calendar day, as a date or ISO YYYY-MM-DD string, included in full.
 
     Attributes:
-        every: Elapsed step in integer seconds, or None for a calendar schedule.
-        months: Calendar step in whole months, or None for an elapsed schedule.
+        every: Elapsed step as a Duration, or calendar step as Months.
         start: First scheduled calendar day, as a date or ISO YYYY-MM-DD string, included.
         end: Last scheduled calendar day, as a date or ISO YYYY-MM-DD string, included in full.
 
     Example: tr.Schedule("1mo", "2025-02-01", "2025-03-01")
     """
 
-    every: int | None
-    months: int | None
+    every: Duration | Months
     start: date
     end: date
 
-    def __init__(self, every: str | Literal[0], start: date | str, end: date | str) -> None:
-        if isinstance(every, str) and (match := _CALENDAR_STEP.fullmatch(every)):
-            step = int(match[1]) * (12 if match[2] == "y" else 1)
-            if step > 10**19 - 1:
-                raise _INVALID.error(reason="out_of_range", field="every")
-            interval, months = None, step
-        else:
-            step = duration(every, field="every")
-            interval, months = step, None
-        if step <= 0:
+    def __init__(
+        self, every: str | Duration | Months | Literal[0], start: date | str, end: date | str
+    ) -> None:
+        step = calendar_or_duration(every, field="every")
+        if isinstance(step, Duration) and step.seconds <= 0:
             raise _INVALID.error(reason="not_positive", field="every")
         start_date, end_date = _date(start, "start"), _date(end, "end")
         _inclusive_end(start_date, end_date, "schedule_end_before_start")
-        object.__setattr__(self, "every", interval)
-        object.__setattr__(self, "months", months)
+        object.__setattr__(self, "every", step)
         object.__setattr__(self, "start", start_date)
         object.__setattr__(self, "end", end_date)
 
@@ -273,24 +264,24 @@ class Schedule:
         A month schedule bounds ``k`` by the year-month difference and checks the clamped
         day once, so no date beyond ``end``'s month is constructed.
         """
-        if self.months is None:
-            assert self.every is not None
+        if isinstance(self.every, Duration):
+            every = self.every.seconds
             span = day_boundary(self.end_exclusive) - day_boundary(self.start)
-            return (int(span.total_seconds()) + self.every - 1) // self.every
+            return (int(span.total_seconds()) + every - 1) // every
+        months = self.every.months
         whole_months = (self.end.year - self.start.year) * 12 + self.end.month - self.start.month
-        last = whole_months // self.months
-        return last + 1 if add_months(self.start, last * self.months) <= self.end else last
+        last = whole_months // months
+        return last + 1 if add_months(self.start, last * months) <= self.end else last
 
     def instant(self, k: int, day_boundary: Callable[[date], datetime]) -> datetime:
         """t0 of anchor ``k``: ``start + k * every`` seconds, or local midnight of its month."""
-        if self.months is None:
-            assert self.every is not None
-            return day_boundary(self.start) + timedelta(seconds=k * self.every)
-        return day_boundary(add_months(self.start, k * self.months))
+        if isinstance(self.every, Duration):
+            return day_boundary(self.start) + timedelta(seconds=k * self.every.seconds)
+        return day_boundary(add_months(self.start, k * self.every.months))
 
     def instants(self, day_boundary: Callable[[date], datetime]) -> tuple[datetime, ...]:
         """Every t0 of a calendar-month schedule in order; an elapsed schedule is arithmetic."""
-        if self.months is None:
+        if isinstance(self.every, Duration):
             raise _INVALID.error(reason="elapsed_schedule", field="every")
         return tuple(self.instant(k, day_boundary) for k in range(self.count(day_boundary)))
 

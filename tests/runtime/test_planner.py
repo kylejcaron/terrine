@@ -328,7 +328,7 @@ def test_plan_serialization_preserves_execution_budgets():
 def test_state_panel_correction_rebuilds_adjacent_terminal_and_baseline_layers():
     from types import SimpleNamespace
 
-    from terrine.spec.expressions import AttributeAsOf
+    from terrine.spec.expressions import asof
     from terrine.spec.state_panel import StateObservations, StatePanel
 
     design = SimpleNamespace(
@@ -336,7 +336,7 @@ def test_state_panel_correction_rebuilds_adjacent_terminal_and_baseline_layers()
         shape=StatePanel(
             StateObservations("status", ("new", "old")),
             periods=3,
-            baseline_features={"base": AttributeAsOf("tier", 0)},
+            baseline_features={"base": asof("tier")},
         ),
     )
     graph = dependency_graph(

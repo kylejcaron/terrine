@@ -46,10 +46,10 @@ from terrine.spec.state_panel import (
     encode_cutpoint,
 )
 from terrine.spec.trajectory import CohortSpec, LifeTable, TimeToEvent, Trajectory
-from terrine.windows import Window, seconds_text
+from terrine.windows import Window, duration
 
 __all__ = ["SCHEMA_VERSION", "canonical_json", "to_json", "from_json", "to_yaml", "from_yaml"]
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 _INVALID = RefusalSpec("terrine.design.invalid", "Design document is invalid: {reason}.")
 _INVALID_INPUT = RefusalSpec("terrine.design.invalid", "Design input {field} is invalid: {reason}.")
@@ -93,7 +93,7 @@ def _encode(value: Any) -> Any:
             "outcomes": {key: _encode(item) for key, item in value.outcomes.items()},
             "eligibility": {key: _encode(item) for key, item in value.eligibility.items()},
             "treatment": None if value.treatment is None else _encode(value.treatment),
-            "gap": value.gap,
+            "gap": str(value.gap),
             "shape": _encode(value.shape),
             "anchor_range": None if value.anchor_range is None else _encode(value.anchor_range),
             "sample": None if value.sample is None else _encode(value.sample),
@@ -104,21 +104,20 @@ def _encode(value: Any) -> Any:
             ),
         }
     if isinstance(value, Window):
-        return {"type": "Window", "start": value.start, "end": value.end}
+        return {"type": "Window", "start": str(value.start), "end": str(value.end)}
     if isinstance(value, FixedDate):
         return {"type": "FixedDate", "date": _date_value(value.date)}
     if isinstance(value, EventAnchor):
         node = {"type": "EventAnchor", "event": value.event, "occurrence": value.occurrence}
         if value.n is not None:
             node["n"] = value.n
-        if value.offset:
-            node["offset"] = value.offset
+        if value.offset.seconds != 0:
+            node["offset"] = str(value.offset)
         return node
     if isinstance(value, Schedule):
         return {
             "type": "Schedule",
-            "every": value.every,
-            "months": value.months,
+            "every": str(value.every),
             "start": _date_value(value.start),
             "end": _date_value(value.end),
         }
@@ -156,13 +155,13 @@ def _encode(value: Any) -> Any:
             "funnel": None if value.funnel is None else _encode(value.funnel),
         }
     if isinstance(value, SessionSpec):
-        return {"type": "SessionSpec", "gap_seconds": value.gap_seconds}
+        return {"type": "SessionSpec", "gap": str(value.gap)}
     if isinstance(value, FunnelSpec):
         return {
             "type": "FunnelSpec",
             "event_property": value.event_property,
             "steps": list(value.steps),
-            "within_seconds": value.within_seconds,
+            "within": None if value.within is None else str(value.within),
         }
     if isinstance(value, StatePanel):
         return {
@@ -207,14 +206,14 @@ def _encode(value: Any) -> Any:
             "type": "SequentialSpec",
             "treatment": _encode(value.treatment),
             "trial_weight": None if value.trial_weight is None else _encode(value.trial_weight),
-            "anticipation": value.anticipation,
-            "reference_period": value.reference_period,
+            "anticipation": str(value.anticipation),
+            "reference_period": str(value.reference_period),
         }
     if isinstance(value, EventPanelSpec):
         return {
             "type": "EventPanelSpec",
             "periods": list(value.periods),
-            "period": value.period,
+            "period": str(value.period),
             "reference_period": value.reference_period,
         }
     if isinstance(value, CalendarComparisonSpec):
@@ -244,14 +243,14 @@ def _encode(value: Any) -> Any:
         return {
             "type": "LifeTable",
             "time_to_event": _encode(value.time_to_event),
-            "bin": value.bin,
+            "bin": str(value.bin),
             "group_by": list(value.group_by),
         }
     if isinstance(value, Trajectory):
         return {
             "type": "Trajectory",
             "metric": value.metric,
-            "period": value.period,
+            "period": str(value.period),
             "periods": value.periods,
             "cumulative": value.cumulative,
         }
@@ -283,7 +282,7 @@ def _encode(value: Any) -> Any:
             "label_property": value.label_property,
             "target_event": value.target_event,
             "count_thresholds": list(value.count_thresholds),
-            "finite_horizon_seconds": value.finite_horizon_seconds,
+            "horizon": None if value.horizon is None else str(value.horizon),
         }
     if isinstance(value, MetricAgg):
         node = {"type": "MetricAgg", "metric": value.metric, "window": _encode(value.window)}
@@ -291,7 +290,7 @@ def _encode(value: Any) -> Any:
             node["relative_to"] = _encode(value.relative_to)
         return node
     if isinstance(value, AttributeAsOf):
-        node = {"type": "AttributeAsOf", "attribute": value.attribute, "before": value.before}
+        node = {"type": "AttributeAsOf", "attribute": value.attribute, "before": str(value.before)}
         if value.relative_to is not None:
             node["relative_to"] = _encode(value.relative_to)
         return node
@@ -322,7 +321,7 @@ def _encode(value: Any) -> Any:
         return {
             "type": "Treatment",
             "attribute": value.attribute,
-            "at": value.at,
+            "at": str(value.at),
             "known_at_t0": value.known_at_t0,
         }
     if value is None or isinstance(value, (str, bool, int)):
@@ -419,11 +418,9 @@ def _decimal_string(value: Any) -> Decimal:
 
 
 def _duration_text(value: Any) -> str:
-    if type(value) is int:
-        return seconds_text(value)
-    if isinstance(value, str):
-        return value
-    raise ValueError("duration must be an integer or string")
+    if not isinstance(value, str):
+        raise ValueError("duration must be text")
+    return value
 
 
 def _node(value: Any) -> Any:
@@ -460,14 +457,14 @@ def _node(value: Any) -> Any:
             funnel=None if item["funnel"] is None else _node(item["funnel"]),
         )
     if tag == "SessionSpec":
-        item = _object(value, {"type", "gap_seconds"})
-        return SessionSpec(_duration_text(item["gap_seconds"]))
+        item = _object(value, {"type", "gap"})
+        return SessionSpec(_duration_text(item["gap"]))
     if tag == "FunnelSpec":
-        item = _object(value, {"type", "event_property", "steps", "within_seconds"})
+        item = _object(value, {"type", "event_property", "steps", "within"})
         return FunnelSpec(
             item["event_property"],
             tuple(item["steps"]),
-            None if item["within_seconds"] is None else _duration_text(item["within_seconds"]),
+            None if item["within"] is None else _duration_text(item["within"]),
         )
     if tag == "EventAnchor":
         item = _object(
@@ -477,21 +474,14 @@ def _node(value: Any) -> Any:
             item["event"],
             item["occurrence"],
             item.get("n"),
-            _duration_text(item.get("offset", 0)),
+            _duration_text(item.get("offset", "0s")),
         )
     if tag == "Schedule":
-        item = _object(value, {"type", "every", "months", "start", "end"})
+        item = _object(value, {"type", "every", "start", "end"})
         start, end = _read_date(item["start"]), _read_date(item["end"])
         if isinstance(start, datetime) or isinstance(end, datetime):
             raise ValueError("Schedule bounds require dates")
-        every, months = item["every"], item["months"]
-        if (every is None) == (months is None):
-            raise ValueError("Schedule requires exactly one of every and months")
-        if months is not None:
-            if type(months) is not int or months <= 0:
-                raise ValueError("Schedule months must be a positive integer")
-            return Schedule(f"{months}mo", start, end)
-        return Schedule(_duration_text(every), start, end)
+        return Schedule(_duration_text(item["every"]), start, end)
     if tag == "AnchorRange":
         item = _object(value, {"type", "start", "end"})
         start = None if item["start"] is None else _read_date(item["start"])
@@ -642,7 +632,7 @@ def _node(value: Any) -> Any:
                 "label_property",
                 "target_event",
                 "count_thresholds",
-                "finite_horizon_seconds",
+                "horizon",
             },
         )
         return RetentionMetric(
@@ -650,7 +640,9 @@ def _node(value: Any) -> Any:
             item["label_property"],
             item["target_event"],
             tuple(item["count_thresholds"]),
-            None if item["finite_horizon_seconds"] is None else item["finite_horizon_seconds"],
+            None
+            if item["horizon"] is None
+            else duration(_duration_text(item["horizon"]), field="horizon"),
         )
     if tag == "MetricAgg":
         item = _object(
@@ -671,7 +663,7 @@ def _node(value: Any) -> Any:
         )
         return AttributeAsOf(
             item["attribute"],
-            item["before"],
+            duration(_duration_text(item["before"]), field="before"),
             None if item.get("relative_to") is None else _node(item["relative_to"]),
         )
     if tag == "EventTime":
@@ -718,7 +710,9 @@ def _node(value: Any) -> Any:
         item = _object(
             value, {"type", "attribute", "at", "known_at_t0"}, {"type", "attribute", "known_at_t0"}
         )
-        return Treatment(item["attribute"], _duration_text(item.get("at", 0)), item["known_at_t0"])
+        return Treatment(
+            item["attribute"], _duration_text(item.get("at", "0s")), item["known_at_t0"]
+        )
     raise ValueError(f"unknown specification node: {tag}")
 
 
@@ -745,7 +739,7 @@ def _design(value: Any) -> Design:
         "outcomes": {},
         "eligibility": {},
         "treatment": None,
-        "gap": 0,
+        "gap": "0s",
         "shape": "cross_section",
         "anchor_range": None,
         "sample": None,

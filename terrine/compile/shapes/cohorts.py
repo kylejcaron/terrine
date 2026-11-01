@@ -72,7 +72,7 @@ def _compile_cohorts(
     elapsed_seconds = time_seconds - origin_seconds
     elapsed_nanos = time_nanos - origin_nanos
     carry = elapsed_nanos // 1_000_000_000
-    quotient = (elapsed_seconds + carry) // grouping.bucket
+    quotient = (elapsed_seconds + carry) // grouping.bucket.seconds
     table = table.mutate(bucket_index=quotient.cast("int64"))
     entrants = (
         table.filter(table.age == 0)

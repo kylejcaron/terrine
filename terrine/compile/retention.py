@@ -57,7 +57,8 @@ def compile_retention(
     )
     coverage = model.readiness.for_fact(source.name)
     window = _retention_window(expression, model)
-    finite = expression.finite_horizon_seconds is not None
+    horizon = expression.horizon
+    finite = horizon is not None
     bands = retention_threshold_bands(
         occurrences,
         anchors,
@@ -70,7 +71,7 @@ def compile_retention(
         anchor_timestamp="t0",
         observed_until="_observed_until",
         count_thresholds=expression.count_thresholds,
-        finite_horizon_seconds=expression.finite_horizon_seconds,
+        finite_horizon_seconds=None if horizon is None else horizon.seconds,
         source_complete_from=coverage.start,
         source_complete_through=None if finite else coverage.end_exclusive,
         range_plan=range_plan,
@@ -79,7 +80,7 @@ def compile_retention(
         bands, [anchors.unit == bands.unit, anchors.anchor_id == bands.anchor_id]
     )
     end = (
-        (anchors.t0 + ibis.interval(seconds=window.end))
+        (anchors.t0 + ibis.interval(seconds=window.end.seconds))
         if finite
         else ibis.literal(coverage.end_exclusive)
     )

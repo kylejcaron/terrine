@@ -860,7 +860,7 @@ class Frame:
                             group_supports.setdefault(column, policy)
                 table = aggregate_life_table(
                     table,
-                    interval_seconds=life_table.bin,
+                    interval_seconds=life_table.bin.seconds,
                     group_by=life_table.group_by,
                     group_supports=group_supports,
                     max_rows=None if budget is None else budget.max_rows,
@@ -904,7 +904,7 @@ class Frame:
                 and treatment_column is not None
                 and isinstance(self._design.anchor, FixedDate)
                 and self._design.shape == "cross_section"
-                and treatment.at == 0
+                and treatment.at.seconds == 0
                 and treatment.known_at_t0
                 and pa.types.is_boolean(table.schema.field(treatment_column).type)
             )
@@ -1224,7 +1224,7 @@ class CohortTable:
     def materialize(self, *, budget: Budget | None = None) -> MaterializedFrame:
         parent_design_hash = self.parent_frame._design.spec_hash
         payload = {
-            "bucket_seconds": self.grouping.bucket,
+            "bucket_seconds": self.grouping.bucket.seconds,
             "bucket_origin": self.grouping.bucket_origin.isoformat(),
             "statistic": self.grouping.statistic,
             "value_column": self.value_column,
@@ -1234,7 +1234,7 @@ class CohortTable:
             json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest()
         operation = CohortOperationMeta(
-            self.grouping.bucket,
+            self.grouping.bucket.seconds,
             self.grouping.bucket_origin,
             self.grouping.statistic,
             self.value_column,

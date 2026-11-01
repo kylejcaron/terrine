@@ -11,8 +11,8 @@ import terrine.export
 import terrine.reasons
 import terrine.recipes
 import terrine.spec
+import terrine.windows
 from terrine.frame import Frame
-from terrine.windows import Window
 
 
 def _public_objects() -> Iterator[tuple[str, object]]:
@@ -23,6 +23,7 @@ def _public_objects() -> Iterator[tuple[str, object]]:
         terrine.dataset,
         terrine.export,
         terrine.reasons,
+        terrine.windows,
     ):
         for name in module.__all__:
             obj = getattr(module, name)
@@ -30,7 +31,6 @@ def _public_objects() -> Iterator[tuple[str, object]]:
                 yield f"{module.__name__}.{name}", obj
     for owner, names in (
         (Frame, ()),
-        (Window, ()),
         (terrine.Dataset, ("to_arrow_batches", "to_pyarrow", "to_pandas", "to_polars")),
         (terrine.Model, ("from_tables", "from_catalog", "from_increment", "to_catalog")),
         (terrine.Design, ("validate", "build", "describe", "snapshot")),

@@ -90,14 +90,15 @@ def blocked_range_join(
     The caller derives the candidate multiplicity from the anchor declaration;
     no relation cardinality is guessed or measured by this operation.
     """
-    if plan.block_seconds != window.end - window.start:
+    start, end = window.start.seconds, window.end.seconds
+    if plan.block_seconds != end - start:
         raise ValueError("range block width must equal the window width")
     reserved = set(anchors.columns) | set(events.columns)
     bucket = "__terrine_range_bucket"
     while bucket in reserved:
         bucket += "_"
-    first_bucket = _bucket(anchors.t0, plan.block_seconds, offset_seconds=window.start)
-    last_bucket = _bucket(anchors.t0, plan.block_seconds, offset_seconds=window.end)
+    first_bucket = _bucket(anchors.t0, plan.block_seconds, offset_seconds=start)
+    last_bucket = _bucket(anchors.t0, plan.block_seconds, offset_seconds=end)
     first = anchors.mutate(**{bucket: first_bucket})
     last = anchors.mutate(**{bucket: last_bucket}).filter(first_bucket != last_bucket)
     requests = first.union(last, distinct=False)
@@ -113,10 +114,10 @@ def blocked_range_join(
         event_time += "_right"
     matched = candidates.filter(
         compare_timestamps(
-            candidates[event_time], candidates.t0, "ge", right_offset_seconds=window.start
+            candidates[event_time], candidates.t0, "ge", right_offset_seconds=start
         )
         & compare_timestamps(
-            candidates[event_time], candidates.t0, "lt", right_offset_seconds=window.end
+            candidates[event_time], candidates.t0, "lt", right_offset_seconds=end
         )
     )
     return RangeJoin(requests, candidates, matched)

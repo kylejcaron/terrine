@@ -25,7 +25,7 @@ from terrine.spec.state_panel import (
     StateObservations,
     StatePanel,
 )
-from terrine.windows import Window, seconds_text
+from terrine.windows import Duration, Window
 
 if TYPE_CHECKING:
     from terrine.model import Model
@@ -39,14 +39,14 @@ def _state_panel_design(
     anchor: FixedDate | Schedule,
     features,
     filter_population: bool = False,
-    gap: int | None = None,
+    gap: Duration | None = None,
 ) -> Design:
     return Design(
         design.unit,
         anchor,
         features=features,
         eligibility=design.eligibility if filter_population else None,
-        gap=seconds_text(design.gap if gap is None else gap),
+        gap=design.gap if gap is None else gap,
         shape="cross_section",
         anchor_range=design.anchor_range if filter_population else None,
     )
@@ -138,17 +138,20 @@ def _union_state_periods(
     persisted_prefixes: Mapping[tuple[str, str, str, str], ibis.Table] | None,
 ):
     schedule = design.anchor
-    assert isinstance(schedule, Schedule) and schedule.every is not None
-    period = Window(seconds_text(-schedule.every), 0)
+    assert isinstance(schedule, Schedule) and isinstance(schedule.every, Duration)
+    period = Window(Duration(-schedule.every.seconds), 0)
     node = MetricAgg(metric, period)
     state_design = _state_panel_design(
-        design, anchor=schedule, features={"_state_period": node}, gap=0
+        design, anchor=schedule, features={"_state_period": node}, gap=Duration(0)
     )
     compiled = compile_columns(
         state_design, model, include_membership=False, persisted_prefixes=persisted_prefixes
     )
     endpoint = _state_panel_design(
-        design, anchor=FixedDate(schedule.end_exclusive), features={"_state_period": node}, gap=0
+        design,
+        anchor=FixedDate(schedule.end_exclusive),
+        features={"_state_period": node},
+        gap=Duration(0),
     )
     final = compile_columns(
         endpoint, model, include_membership=False, persisted_prefixes=persisted_prefixes
@@ -167,8 +170,8 @@ def _binned(
     spec = panel.state
     assert isinstance(spec, BinnedMetricState)
     schedule = design.anchor
-    assert isinstance(schedule, Schedule) and schedule.every is not None
-    every = schedule.every
+    assert isinstance(schedule, Schedule) and isinstance(schedule.every, Duration)
+    every = schedule.every.seconds
     period_relation, period_compiled, endpoint_compiled = _union_state_periods(
         design, model, spec.metric, persisted_prefixes=persisted_prefixes
     )
@@ -298,7 +301,7 @@ def _binned(
         )
     state_columns = {
         "from_state": ColumnMeta(
-            Window(seconds_text(-every), 0),
+            Window(Duration(-every), 0),
             "prior_state",
             None,
             None,
@@ -306,7 +309,7 @@ def _binned(
             "from_state_reason",
         ),
         "to_state": ColumnMeta(
-            Window(0, seconds_text(every)),
+            Window(0, Duration(every)),
             "outcome",
             None,
             None,

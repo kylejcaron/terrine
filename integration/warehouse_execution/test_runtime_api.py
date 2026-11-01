@@ -572,3 +572,45 @@ def test_unknown_snapshot_refuses_only_retained_execution_before_source_work(tmp
                 restored.context["status"] = "verified"  # ty: ignore[invalid-assignment]
     finally:
         con.disconnect()
+
+
+@pytest.mark.parametrize(("at", "expected"), [(0, "baseline_binary"), ("1d", None)])
+def test_direct_and_staged_provenance_agree_for_treatment_offsets(tmp_path, at, expected):
+    import terrine as tr
+    from terrine.spec import Treatment
+
+    con = ibis.duckdb.connect(str(tmp_path / "treatment.duckdb"))
+    try:
+        con.create_table(
+            "customers", pa.table({"customer_id": ["a", "b"], "treated": [True, False]})
+        )
+        con.create_table(
+            "orders", pa.table({"customer_id": ["a"], "ordered_at": [datetime(2025, 1, 20)]})
+        )
+        model = tr.Model.from_tables(
+            con,
+            units={"customer": tr.UnitSource("customers", "customer_id", attributes=("treated",))},
+            events={
+                "orders": tr.Events(
+                    "orders",
+                    time="ordered_at",
+                    key="customer_id",
+                    metrics={"orders": tr.count()},
+                    complete=("2025-01-01", "2025-03-01"),
+                )
+            },
+        )
+        frame = Design(
+            "customer",
+            FixedDate("2025-02-01"),
+            features={"orders": agg("orders", window=("-30d", "0s"))},
+            treatment=Treatment("treated", at=at, known_at_t0=True),
+        ).build(model)
+        assert frame.materialize().provenance.treatment_design == expected
+        staged = frame.stage("treated")
+        reopened = tr.Dataset.open_generation(
+            "treated", staged.manifest.generation.generation_id, con=con, namespace="terrine_runtime"
+        )
+        assert reopened.manifest.frame_metadata["provenance"]["treatment_design"] == expected
+    finally:
+        con.disconnect()

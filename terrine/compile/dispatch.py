@@ -15,7 +15,6 @@ from terrine.spec.sequence import EventSequence
 from terrine.spec.state_panel import StatePanel
 from terrine.spec.trajectory import CohortSpec, LifeTable, TimeToEvent
 from terrine.spec.validate import ensure_runtime_shape_supported, resolve_unit
-from terrine.windows import seconds_text
 
 if TYPE_CHECKING:
     from terrine.model import Model
@@ -106,7 +105,7 @@ def _compile_design(
                 features=design.features,
                 eligibility=design.eligibility,
                 treatment=design.treatment,
-                gap=seconds_text(design.gap),
+                gap=design.gap,
                 shape=shape,
                 anchor_range=design.anchor_range,
                 sample=design.sample,

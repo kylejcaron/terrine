@@ -32,6 +32,7 @@ from terrine.spec.validate import (
     ensure_runtime_shape_supported,
     missing_reference,
 )
+from terrine.windows import Duration
 
 __all__ = ["AnchorTable", "compile_anchors"]
 
@@ -319,11 +320,11 @@ def _roster_anchors(
         count = schedule.count(model.day_boundary)
         sequence = integer_sequence(count, "ordinal", dialect=expression_dialect(model._engine))
         ordinal = sequence.ordinal
-        if schedule.every is not None:
+        if isinstance(schedule.every, Duration):
             start = model.day_boundary(schedule.start).astimezone(UTC)
             # An integer-seconds interval: Ibis lowers `interval * column` on BigQuery
             # through EXTRACT(SECOND ...), which normalizes 86400 s to zero.
-            t0 = ibis.literal(start) + (ordinal * schedule.every).as_interval("s")
+            t0 = ibis.literal(start) + (ordinal * schedule.every.seconds).as_interval("s")
         else:
             # Month arithmetic clamps differently across engines, so each anchor's
             # instant is computed here and the ordinal selects it.
@@ -438,11 +439,12 @@ def _event_anchors(model: Model, design: Design) -> tuple[ibis.Table, list[_Anch
     if precision is not None:
         checks.append(precision)
     base = _utc_column(model, base, "_raw_t0", "t0")
-    if anchor.offset:
+    offset = anchor.offset.seconds
+    if offset != 0:
         base = base.mutate(
-            t0=base.t0 + ibis.interval(seconds=anchor.offset),
-            anchor_id=base.anchor_id.concat(f":offset:{anchor.offset}"),
-            anchor_provenance=base.anchor_provenance.concat(f":offset:{anchor.offset}"),
+            t0=base.t0 + ibis.interval(seconds=offset),
+            anchor_id=base.anchor_id.concat(f":offset:{offset}"),
+            anchor_provenance=base.anchor_provenance.concat(f":offset:{offset}"),
         )
     if design.unit in model.units:
         candidates, roster_checks = _roster_candidates(

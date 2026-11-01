@@ -22,7 +22,7 @@ from terrine.spec.design import Design
 from terrine.spec.panels import CalendarComparisonSpec
 from terrine.spec.validate import _outcome_bounds, resolve_selector_source
 from terrine.temporal.aggregate import _Check
-from terrine.windows import seconds_text
+from terrine.windows import Duration, Months
 
 if TYPE_CHECKING:
     from terrine.model import Model
@@ -79,19 +79,20 @@ def _history_check(
     spec = design.shape
     assert isinstance(spec, CalendarComparisonSpec)
     anchor = design.anchor
-    assert isinstance(anchor, Schedule) and anchor.every is not None
+    assert isinstance(anchor, Schedule) and isinstance(anchor.every, Duration)
+    every = anchor.every.seconds
     selector = spec.cohort
     participants = rows
     if "__terrine_eligible" in rows.columns:
         participants = participants.filter(rows.__terrine_eligible)
-    reference_t0 = participants.cohort + ibis.interval(seconds=spec.reference_period * anchor.every)
+    reference_t0 = participants.cohort + ibis.interval(seconds=spec.reference_period * every)
     anticipation = max((abs(value) for value in spec.anticipation_periods), default=0)
     latest, exclusive = _followup_bound(
         participants.t0,
         reference_t0,
         outcome_window_end=outcome_window_end,
         outcome_cutoff=outcome_cutoff,
-        anticipation_seconds=anticipation * anchor.every,
+        anticipation_seconds=anticipation * every,
     )
     schedule_end = ibis.literal(model.day_boundary(anchor.end_exclusive))
     never_control = participants.control_eligible & ~participants.treatment
@@ -300,16 +301,16 @@ def compile_calendar_comparison(design: Design, model: Model) -> CompiledStudy:
     _validate_names(design)
     design.validate(model)
     schedule = design.anchor
-    if not isinstance(schedule, Schedule) or schedule.every is None:
+    if not isinstance(schedule, Schedule) or isinstance(schedule.every, Months):
         raise _UNSUPPORTED.error(reason="calendar comparisons require an elapsed schedule anchor")
-    every = schedule.every
+    every = schedule.every.seconds
     base = Design(
         design.unit,
         design.anchor,
         features=design.features,
         outcomes=design.outcomes,
         eligibility=design.eligibility,
-        gap=seconds_text(design.gap),
+        gap=design.gap,
         anchor_range=design.anchor_range,
     )
     compiled = compile_columns(base, model)

@@ -37,7 +37,7 @@ from terrine.spec.sequence import EventSequence
 from terrine.spec.state_panel import BinnedMetricState, StatePanel
 from terrine.spec.trajectory import CohortSpec, LifeTable, TimeToEvent
 from terrine.spec.validate import resolve_unit, validate_design
-from terrine.windows import Window, _duration, seconds_text
+from terrine.windows import Duration, Months, Window, _duration
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping
@@ -71,7 +71,8 @@ _OPERATORS = {
 type Line = tuple[str, str]
 
 
-def _offset(seconds: int, origin: str) -> str:
+def _offset(value: Duration, origin: str) -> str:
+    seconds = value.seconds
     if seconds == 0:
         return origin
     return f"{origin} {'+' if seconds > 0 else '-'} {_duration(seconds)}"
@@ -260,8 +261,8 @@ class _Renderer:
         if isinstance(expr, RetentionMetric):
             horizon = (
                 f"from {origin} until the end of complete coverage (exclusive)"
-                if expr.finite_horizon_seconds is None
-                else f"in {_window(Window(0, seconds_text(expr.finite_horizon_seconds)), origin)}"
+                if expr.horizon is None
+                else f"in {_window(Window(0, expr.horizon), origin)}"
             )
             thresholds = ", ".join(str(value) for value in expr.count_thresholds)
             return (
@@ -325,8 +326,8 @@ class _Renderer:
         else:
             occurrence = _ordinal(anchor.n) if anchor.occurrence == "nth" else "first"
             phrase = f"at its {occurrence} {anchor.event} event"
-        if anchor.offset:
-            phrase += f", shifted by +{_duration(anchor.offset)}"
+        if anchor.offset.seconds != 0:
+            phrase += f", shifted by +{_duration(anchor.offset.seconds)}"
         return phrase
 
     def _rows(self) -> Iterator[Line]:
@@ -335,7 +336,7 @@ class _Renderer:
             groups = f" per {_names(shape.group_by)}" if shape.group_by else ""
             yield (
                 "",
-                f"One row per {_duration(shape.bin)} time bin{groups}, counting "
+                f"One row per {_duration(shape.bin.seconds)} time bin{groups}, counting "
                 f"{self._who()} entries {self._at_anchor()}.",
             )
         elif isinstance(shape, EventSequence):
@@ -376,11 +377,11 @@ class _Renderer:
                     f"before {_instant(end)}" if isinstance(end, datetime) else f"through {end}"
                 )
             yield "", f"Anchors kept {' '.join(bounds)}."
-        if design.gap:
+        if design.gap.seconds != 0:
             yield (
                 "",
                 f"Gap: feature windows and as-of cutoffs end at least "
-                f"{_duration(design.gap)} before t0.",
+                f"{_duration(design.gap.seconds)} before t0.",
             )
         if design.sample is not None:
             sample = design.sample
@@ -407,13 +408,13 @@ class _Renderer:
             last = _wall_clock(schedule.instant(count - 1, boundary).astimezone(self.zone))
             listed += f", and {count - _LISTED_DATES} more through {last}"
         clock = f", at {instants[0].strftime('%H:%M')} {self.model.catalog.day_boundary}"
-        if schedule.months is not None:
-            years, months = divmod(schedule.months, 12)
-            every = _plural(years, "year") if months == 0 else _plural(schedule.months, "month")
+        if isinstance(schedule.every, Months):
+            months = schedule.every.months
+            years, remainder = divmod(months, 12)
+            every = _plural(years, "year") if remainder == 0 else _plural(months, "month")
         else:
-            assert schedule.every is not None
-            every = _duration(schedule.every, weeks=True)
-            if schedule.every % 86_400:
+            every = _duration(schedule.every.seconds, weeks=True)
+            if schedule.every.seconds % 86_400:
                 clock = ""
         yield (
             "",
@@ -463,8 +464,8 @@ class _Renderer:
                 f"Trials: each snapshot is a trial; treated = {self._initiation(shape.treatment)}",
                 f"reference period {_offset(shape.reference_period, 't0')}",
             ]
-            if shape.anticipation:
-                parts.append(f"anticipation {_duration(shape.anticipation)}")
+            if shape.anticipation.seconds != 0:
+                parts.append(f"anticipation {_duration(shape.anticipation.seconds)}")
             if shape.trial_weight is not None:
                 parts.append(f"{shape.trial_weight.kind.replace('_', ' ')} weights")
             yield "", "; ".join(parts) + "."
@@ -474,13 +475,13 @@ class _Renderer:
             periods = ", ".join(str(period) for period in shape.periods)
             yield (
                 "",
-                f"Panel: event_period values {periods} of {_duration(shape.period)} "
+                f"Panel: event_period values {periods} of {_duration(shape.period.seconds)} "
                 f"around parent_t0 (the selected {anchor.event} anchor), "
                 f"reference period {shape.reference_period}.",
             )
         elif isinstance(shape, CalendarComparisonSpec):
             anchor = self.design.anchor
-            assert isinstance(anchor, Schedule) and anchor.every is not None
+            assert isinstance(anchor, Schedule) and isinstance(anchor.every, Duration)
             parts = [
                 f"Calendar comparison: cohorts by {self._initiation(shape.cohort)}",
                 f"control {shape.control.replace('_', ' ')}",
@@ -490,7 +491,7 @@ class _Renderer:
             if shape.anticipation_periods:
                 listed = ", ".join(str(p) for p in shape.anticipation_periods)
                 parts.append(f"anticipation periods {listed}")
-            parts.append(f"each period {_duration(anchor.every)}")
+            parts.append(f"each period {_duration(anchor.every.seconds)}")
             yield "", "; ".join(parts) + "."
 
     def _censoring(self, shape: TimeToEvent) -> str:
@@ -521,7 +522,7 @@ class _Renderer:
                 "",
                 f"Trajectory: {kind} {trajectory.metric} ({self._metric(trajectory.metric)}) "
                 f"by age, {_plural(trajectory.periods, 'period')} "
-                f"of {_duration(trajectory.period)} "
+                f"of {_duration(trajectory.period.seconds)} "
                 f"starting at cohort_time = t0, selected from {shape.origin}.",
             )
         elif isinstance(shape, TimeToEvent):
@@ -539,12 +540,12 @@ class _Renderer:
             yield (
                 "",
                 f"Life table: time from t0 to the first {inner.end_event} in "
-                f"[entry_time, censor_time), binned by {_duration(shape.bin)}{groups}, "
+                f"[entry_time, censor_time), binned by {_duration(shape.bin.seconds)}{groups}, "
                 f"{self._censoring(inner)}.",
             )
         elif isinstance(shape, StatePanel):
             schedule = self.design.anchor
-            assert isinstance(schedule, Schedule) and schedule.every is not None
+            assert isinstance(schedule, Schedule) and isinstance(schedule.every, Duration)
             state = shape.state
             if isinstance(state, BinnedMetricState):
                 cutpoints = ", ".join(str(point) for point in state.cutpoints)
@@ -559,7 +560,7 @@ class _Renderer:
             yield (
                 "",
                 f"State panel: {' / '.join(state.levels)} from {origin}, observed every "
-                f"{_duration(schedule.every, weeks=True)} for up to "
+                f"{_duration(schedule.every.seconds, weeks=True)} for up to "
                 f"{_plural(shape.periods, 'period')}"
                 f"{qualifiers}.",
             )
@@ -575,12 +576,13 @@ class _Renderer:
             if shape.properties:
                 parts.append(f"properties {_names(shape.properties)}")
             if shape.sessions is not None:
-                parts.append(f"sessions split by gaps over {_duration(shape.sessions.gap_seconds)}")
+                gap = _duration(shape.sessions.gap.seconds)
+                parts.append(f"sessions split by gaps over {gap}")
             if shape.funnel is not None:
                 funnel = shape.funnel
                 within = (
-                    f" within {_duration(funnel.within_seconds)}"
-                    if funnel.within_seconds is not None
+                    f" within {_duration(funnel.within.seconds)}"
+                    if funnel.within is not None
                     else ""
                 )
                 parts.append(
@@ -599,7 +601,7 @@ class _Renderer:
             trajectory = design.shape.trajectory
             yield (
                 "period_value",
-                MetricAgg(trajectory.metric, Window(0, seconds_text(trajectory.period))),
+                MetricAgg(trajectory.metric, Window(0, trajectory.period)),
             )
 
     def _empty_windows(self) -> Iterator[Line]:

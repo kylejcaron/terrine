@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from terrine.spec.expressions import Expr
 from terrine.errors import RefusalSpec
 from terrine.spec.anchors import Schedule
+from terrine.windows import Duration, Months, Window
 
 _INVALID_SCHEDULE = RefusalSpec(
     "terrine.state_panel.invalid_schedule",
@@ -259,19 +260,20 @@ def schedule_periods(schedule: Schedule) -> int:
     span is exact day arithmetic; a span that is not a whole number of periods refuses
     rather than truncating.
     """
-    if schedule.every is None:
+    if isinstance(schedule.every, Months):
         raise _CALENDAR_SCHEDULE.error(
-            reason="calendar_months_unsupported", every=f"{schedule.months}mo", route="4w"
+            reason="calendar_months_unsupported", every=f"{schedule.every.months}mo", route="4w"
         )
+    every = schedule.every.seconds
     elapsed = (schedule.end_exclusive - schedule.start).days * 86_400
-    if elapsed % schedule.every:
+    if elapsed % every:
         raise _PARTIAL_PERIOD.error(
             reason="schedule_not_whole_periods",
-            every=schedule.every,
+            every=every,
             start=schedule.start.isoformat(),
             end=schedule.end.isoformat(),
         )
-    return elapsed // schedule.every
+    return elapsed // every
 
 
 def validate_state_panel(
@@ -280,7 +282,6 @@ def validate_state_panel(
     """Validate schedule shape and state-source references without reading rows."""
     from terrine.spec.expressions import MetricAgg
     from terrine.spec.validate import _expression, _required
-    from terrine.windows import Window, seconds_text
 
     panel = design.shape
     assert isinstance(panel, StatePanel)
@@ -316,9 +317,9 @@ def validate_state_panel(
             raise _INVALID_SOURCE.error(reason="state source lacks the requested unit mapping")
         _required(model, source.name, required)
     else:
-        assert schedule.every is not None
+        assert isinstance(schedule.every, Duration)
         _expression(
-            MetricAgg(panel.state.metric, Window(seconds_text(-schedule.every), 0)),
+            MetricAgg(panel.state.metric, Window(Duration(-schedule.every.seconds), 0)),
             "state",
             design,
             model,

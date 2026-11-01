@@ -28,7 +28,7 @@ __all__ = [
     "UNSUPPORTED_VIEW",
 ]
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 INVALID_DEFINITION = RefusalSpec(
     "terrine.dataset.invalid_definition", "Invalid dataset definition: {reason}"
