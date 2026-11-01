@@ -199,11 +199,26 @@ def test_frame_admission_witnesses_once_and_only_when_needed():
     assert closed.value.code == "terrine.execution.snapshot_unavailable"
 
 
-def test_inexact_decimal_witness_never_admits_user_query():
+@pytest.mark.parametrize(
+    ("name", "wrong_answer"),
+    [
+        ("positive_nano", Decimal(0)),
+        ("negative_nano", Decimal(0)),
+        ("positive_tie", Decimal("0.000976562")),
+        ("negative_tie", Decimal("-0.000976562")),
+    ],
+)
+def test_inexact_float_quantization_never_admits_user_query(name, wrong_answer):
+    from terrine.execution import _generic
+
     con = FailingBackend()
-    con.witness_answers = {"rounded": 0}
+    _, answers = _generic._decimal_witnesses()
+    con.witness_answers = answers.copy()
+    if name in answers:
+        con.witness_answers[name] = wrong_answer
     with context_for(con) as context, pytest.raises(TerrineError) as caught:
         context.execute(ibis.literal(Decimal("1.000000001"), type="decimal(38,9)"))
+    assert caught.value.code == "terrine.backend.capability_unavailable"
     assert caught.value.context["operation"] == "exact_state"
     assert caught.value.context["backend"] == "unregistered"
 

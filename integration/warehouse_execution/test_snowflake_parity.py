@@ -474,20 +474,6 @@ def test_float_window_failures_are_coded_refusals(
     assert error.value.context["reason"] == failure
 
 
-def test_float_sum_beyond_38_digits_is_an_exact_overflow(snowflake_scratch, tmp_path):  # noqa: F811
-    _load_windows(snowflake_scratch)
-    # Each scale-9 coefficient fits; their running sum leaves NUMBER(38, 0).
-    snowflake_scratch.sql(
-        "INSERT INTO events VALUES "
-        "('d', '2025-01-01 11:00:00 +0000', 1, 10, 9e28, NULL), "
-        "('d', '2025-01-01 12:00:00 +0000', 1, 10, 9e28, NULL)"
-    )
-    design = windows._design(value=tr.agg("weight", window=("-3d", "0s")))
-    with pytest.raises(TerrineError) as error:
-        windows._rows(windows._model(snowflake_scratch.con, tmp_path, "snowflake"), design)
-    assert error.value.code == "terrine.temporal.exact_overflow"
-
-
 def test_boundary_and_tied_first_events_match_duckdb(snowflake_scratch, tmp_path):  # noqa: F811
     """An order exactly at the anchor instant is the first one (the as-of join is
     inclusive there), and two orders at one instant are ordered by event id."""

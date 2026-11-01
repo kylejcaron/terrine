@@ -5,8 +5,14 @@ from fractions import Fraction
 import pyarrow as pa
 import pytest
 
+from integration.warehouse_execution.bigquery_fixtures import (
+    bigquery_scratch as bigquery_scratch,  # noqa: F401
+)
 from integration.warehouse_execution.postgres_fixtures import (
     postgres_scratch as postgres_scratch,  # noqa: F401
+)
+from integration.warehouse_execution.snowflake_fixtures import (
+    snowflake_scratch as snowflake_scratch,  # noqa: F401
 )
 from terrine.backends.numeric import decimal_coefficient, exact_sum, exact_to_float, quantized_float
 from tests._float_bound import window_sum_bound
@@ -59,9 +65,7 @@ def test_quantized_float_sums_meet_window_bound(connection):
         assert row["out_of_range"] is False
 
 
-@pytest.mark.postgres
-def test_postgres_float_quantization_keeps_boundary_coefficients_unbounded(postgres_scratch):
-    con = postgres_scratch.con
+def _assert_float_cast_rounds_to_nearest_nano_unit(con):
     values = [
         0.1,
         4e-10,
@@ -70,6 +74,11 @@ def test_postgres_float_quantization_keeps_boundary_coefficients_unbounded(postg
         -6e-10,
         1 / 1024,
         -1 / 1024,
+        *(
+            sign * float(f"1.23456789012345e{exponent}")
+            for exponent in (-9, -3, 0, 9, 16, 28)
+            for sign in (1, -1)
+        ),
         1e29,
         -1e29,
         math.nextafter(1e29, math.inf),
@@ -94,14 +103,31 @@ def test_postgres_float_quantization_keeps_boundary_coefficients_unbounded(postg
         Decimal("0.000976563"),
         Decimal("-0.000976563"),
     ]
-    for value, row in zip(values[:9], rows[:9], strict=True):
+    for value, row in zip(values[:-2], rows[:-2], strict=True):
         assert row["nonfinite"] is False and row["out_of_range"] is False
         assert abs(Fraction(Decimal(row["text"])) - Fraction(value)) <= window_sum_bound([value])
-    for row in rows[9:]:
+    for row in rows[-2:]:
         assert row["text"] is None
         assert row["nonfinite"] is False and row["out_of_range"] is True
 
-    boundary = table.filter(table["case"] == 7)
+    return table.filter(table["case"] == len(values) - 4), Decimal(rows[-4]["text"])
+
+
+@pytest.mark.parametrize(
+    "fixture",
+    [
+        pytest.param("bigquery_scratch", marks=pytest.mark.bigquery, id="bigquery"),
+        pytest.param("snowflake_scratch", marks=pytest.mark.snowflake, id="snowflake"),
+    ],
+)
+def test_float_cast_rounds_to_nearest_nano_unit(request, fixture):
+    _assert_float_cast_rounds_to_nearest_nano_unit(request.getfixturevalue(fixture).con)
+
+
+@pytest.mark.postgres
+def test_postgres_float_quantization_keeps_boundary_coefficients_unbounded(postgres_scratch):
+    con = postgres_scratch.con
+    boundary, quantized_boundary = _assert_float_cast_rounds_to_nearest_nano_unit(con)
     quantized, _, _ = quantized_float(boundary.value)
     state = boundary.mutate(coefficient=decimal_coefficient(quantized, 9))
     total = state.aggregate(coefficient=exact_sum(state.coefficient))
@@ -116,4 +142,12 @@ def test_postgres_float_quantization_keeps_boundary_coefficients_unbounded(postg
     ).to_pylist()[0]
     assert abs(Fraction(row["value"]) - Fraction(1e29)) <= window_sum_bound([1e29])
     assert row["nonfinite"] is False and row["out_of_range"] is False
-    assert int(Decimal(row["text"])) == int(Fraction(Decimal(rows[7]["text"])) * 10**9)
+    assert int(Decimal(row["text"])) == int(Fraction(quantized_boundary) * 10**9)
+
+    from terrine.execution._generic import NoSnapshotSession, _decimal_witnesses
+
+    session = NoSnapshotSession(con)
+    try:
+        session.admit_primitives(_decimal_witnesses()[0])
+    finally:
+        session.close()

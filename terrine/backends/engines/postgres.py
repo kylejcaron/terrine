@@ -139,6 +139,7 @@ class PostgresDialect(Dialect):
 
     def quantize_float(self, value: ir.FloatingValue) -> ir.DecimalValue:
         """Keep scale-9 rounding in NUMERIC without a fixed-precision boundary cast."""
+        # NUMERIC ties away: https://www.postgresql.org/docs/16/datatype-numeric.html
         return cast(ir.DecimalValue, _round_numeric(value.cast(_EXACT), 9))
 
     def binary64(self, text: ir.StringValue) -> ir.FloatingValue:

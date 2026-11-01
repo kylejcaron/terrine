@@ -26,6 +26,7 @@ from terrine.backends.extrema import greatest, least
 from terrine.backends.numeric import quantized_float
 from terrine.backends.registry import ENGINES
 from terrine.backends.timestamps import day_start, utc_instant, utc_wall_clock
+from terrine.errors import TerrineError
 from terrine.semantic.models import BoundDimension, BoundValidity, PropertyBinding, TableRef
 from terrine.spec import EventSequence, TimeToEvent
 from terrine.temporal.attributes import attribute_asof, validate_history
@@ -221,6 +222,27 @@ def test_window_sums_preserve_small_values_after_large_history(engine):
         [0.1, 0.2, 0.0]
     )
     assert row["amount"] == Decimal("0.03")
+
+
+def test_bounded_accumulation_refuses_exact_overflow(engine):
+    """Withhold scale-9 coefficients before a bounded accumulator can overflow."""
+    with dialect_scope(engine.name):
+        if not current_dialect().bounds_accumulations:
+            pytest.skip("The native coefficient domain admits this sum.")  # ty: ignore[too-many-positional-arguments]
+    events = _events(
+        [_ORIGIN + timedelta(hours=hour) for hour in (11, 12)], ["first", "second"]
+    ).append_column("weight", pa.array([9e28, 9e28], pa.float64()))
+    model = _model(engine, events)
+    design = tr.Design(
+        "user",
+        tr.FixedDate("2025-01-02"),
+        features={"weight": tr.agg("weight", window=("-1d", "0s"))},
+    )
+    materialized = []
+    with pytest.raises(TerrineError) as caught:
+        materialized.append(design.build(model).materialize(_BUDGET))
+    assert caught.value.code == "terrine.temporal.exact_overflow"
+    assert materialized == []
 
 
 def test_utc_conversions_ignore_session_time_zone(engine):

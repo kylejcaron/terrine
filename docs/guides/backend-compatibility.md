@@ -153,10 +153,12 @@ execution context is admitted when it is issued:
   do) first compiles and executes scalar known answers for scale-9 low digits
   at a large offset (`9007199254740993.000000001`), cancellation, the domain
   edges `±(10**29 - 10**-9)`, signed truncating quotients, both `int64`
-  endpoints and a 38-digit coefficient. A backend whose answers differ, or
-  whose decimals are stored by affinity (SQLite), refuses
-  `operation="exact_state"`; a query without decimal state, such as a roster
-  read, never runs this witness.
+  endpoints and a 38-digit coefficient. It also checks float quantization:
+  `±6e-10` must become `±1e-9`, and the exactly representable tie `±1/1024`
+  must become `±0.000976563`. A backend that truncates or rounds ties to even,
+  whose answers otherwise differ, or whose decimals are stored by affinity
+  (SQLite), refuses `operation="exact_state"`; a query without decimal state,
+  such as a roster read, never runs this witness.
 - A query carrying an aware-timestamp delta first reconstructs four known UTC
   wall clocks (2025-07-01, 2025-01-15, 1969-12-31 and 1850-06-01) through the
   portable conversion. Ibis lowers that delta through session wall clocks on
@@ -593,6 +595,8 @@ Python 3.14 distribution/tutorial checks above do not replace these operation te
 | --- | --- | --- | --- | --- | --- |
 | Read-only dialect admission, relation identity | [Verified][provider] | [Verified][postgres] | [Verified][snowflake-admission]; Snowflake identifier rules, identity re-verified after each read | [Verified][bigquery] | Use native local DuckDB, PostgreSQL, Snowflake or BigQuery; an Ibis dialect/name is not execution evidence |
 | Accepted UTC timestamps, exact decimals, strict t0 and SCD2 boundaries | [Verified][acceptance] | [Verified][postgres]; microsecond timestamps, declared `numeric(p, s)` | [Verified][snowflake]; nanosecond timestamps (Arrow outputs within 1677-2262), `NUMBER(p, s)` | [Verified][bigquery]; microsecond timestamps, `NUMERIC` read as `decimal(38, 9)` | Existing timestamp precision/domain and decimal overflow refusals remain active |
+| Scale-9 float quantization: signed sub-nanounit values, exact ties, magnitude bounds and admitted boundary | [Local probe](../../tests/backends/test_numeric.py) | [Live probe][float-quantization] on every push and weekly; unconstrained `NUMERIC` rounding | [Weekly live probe][float-quantization]; native `NUMBER` casts under the portable split-and-cap policy | [Weekly live probe][float-quantization]; native `NUMERIC` casts | Conversion error near halfway points is allowed only within the shared window-sum bound; the next binary64 above `1e29` refuses |
+| Bounded float coefficient accumulation (`9e28 + 9e28`) | [Forced portable-policy probe][conformance] on every push; native `BIGNUM` is unbounded | [Forced portable-policy live probe][conformance] on every push and weekly; native `NUMERIC` admits this sum | [Weekly live probe][conformance]; `NUMBER(38, 0)` refuses before returning output | Native `BIGNUMERIC` admits this sum | Bounded policies refuse with `terrine.temporal.exact_overflow`; no materialized result is returned |
 | Private transaction view and owned-session cleanup | [Verified][provider] | [Verified][postgres]; consistent `REPEATABLE READ` snapshot | [Verified][snowflake-admission]; Time Travel instant on the caller's connection, reads only | [Verified][bigquery]; session transaction snapshot | Does not promise a durable source snapshot or native query cancellation |
 | Retained immutable inputs and pinned generation reads | [Verified][acceptance] | Unverified | Unverified | Unverified | Use the owner-retained snapshot receipt; native source revisions remain unknown |
 | Table publication and atomic fenced manifest switch | [Verified][publication] | Unverified | Unverified | Unverified | Materialize a bounded Frame if publication is unavailable |
@@ -609,6 +613,10 @@ PostgreSQL evidence was measured on PostgreSQL 16, BigQuery evidence on the US
 multi-region with google-cloud-bigquery 3.46, and Snowflake evidence on an
 X-Small warehouse with snowflake-connector-python 5.1 through the
 `warehouse-backends` workflow (key-pair service user; no local credentials).
+The float-quantization and bounded-overflow rows identify scheduled live coverage,
+not a claim that the cloud probes ran locally. BigQuery and Snowflake probes run
+in the weekly `warehouse-backends` workflow; a manual dispatch incurs warehouse
+cost and requires the owner's approval.
 Unregistered backends refuse with an actionable local route before schema or
 source access unless a Model explicitly opts in; opted-in backends are not in
 this table, since their operations are admitted per statement, not verified.
@@ -647,3 +655,4 @@ without increment; unsupported semantic mappings are listed separately in the
 [conformance]: ../../integration/conformance/test_engines.py
 [generic-oracles]: ../../integration/backends/test_generic.py
 [generic-reads]: ../../integration/execution/test_generic_provider.py
+[float-quantization]: ../../integration/backends/test_numeric.py
