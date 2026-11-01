@@ -413,7 +413,7 @@ CASES = [
     ),
     (
         "terrine.design.invalid",
-        lambda: RetentionMetric("visit", "kind", "buy", (2, 1), None),
+        lambda: RetentionMetric("visit", "kind", "buy", (2, 1), "30d"),
         {"reason": "not_increasing", "field": "count_thresholds"},
     ),
     (

@@ -16,7 +16,6 @@ from terrine.spec.expressions import (
     gt,
     is_null,
 )
-from terrine.windows import Duration
 
 
 def test_durations_normalize_and_invalid_values_refuse():
@@ -33,7 +32,7 @@ def test_asof_cutoff_and_predicate_constructors_are_typed_and_immutable():
     metric = agg("sessions", window=("-7d", "0d"))
     cutoff = asof("plan_tier", before="0d")
     assert isinstance(metric, MetricAgg)
-    assert cutoff == AttributeAsOf(attribute="plan_tier", before=Duration(0))
+    assert cutoff == AttributeAsOf(attribute="plan_tier", before="0s")
     assert isinstance(gt(metric, 0), Gt)
     equal = eq(expr=cutoff, value="pro")
     assert equal == Eq(expr=cutoff, value="pro")

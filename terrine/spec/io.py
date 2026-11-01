@@ -46,7 +46,7 @@ from terrine.spec.state_panel import (
     encode_cutpoint,
 )
 from terrine.spec.trajectory import CohortSpec, LifeTable, TimeToEvent, Trajectory
-from terrine.windows import Window, duration
+from terrine.windows import Window
 
 __all__ = ["SCHEMA_VERSION", "canonical_json", "to_json", "from_json", "to_yaml", "from_yaml"]
 SCHEMA_VERSION = 4
@@ -640,9 +640,7 @@ def _node(value: Any) -> Any:
             item["label_property"],
             item["target_event"],
             tuple(item["count_thresholds"]),
-            None
-            if item["horizon"] is None
-            else duration(_duration_text(item["horizon"]), field="horizon"),
+            None if item["horizon"] is None else _duration_text(item["horizon"]),
         )
     if tag == "MetricAgg":
         item = _object(
@@ -663,7 +661,7 @@ def _node(value: Any) -> Any:
         )
         return AttributeAsOf(
             item["attribute"],
-            duration(_duration_text(item["before"]), field="before"),
+            _duration_text(item["before"]),
             None if item.get("relative_to") is None else _node(item["relative_to"]),
         )
     if tag == "EventTime":

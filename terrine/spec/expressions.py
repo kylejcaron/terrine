@@ -127,7 +127,7 @@ class ApproxMetricDistinct:
         _window(self.window)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class RetentionMetric:
     """Ordinal bands of distinct occurrence identities in a declared follow-up horizon."""
 
@@ -137,12 +137,23 @@ class RetentionMetric:
     count_thresholds: tuple[int, ...]
     horizon: Duration | None
 
-    def __post_init__(self) -> None:
-        for field in ("event", "label_property", "target_event"):
-            object.__setattr__(self, field, _name(getattr(self, field), field))
-        if not isinstance(self.count_thresholds, Iterable):
+    def __init__(
+        self,
+        event: str,
+        label_property: str,
+        target_event: str,
+        count_thresholds: tuple[int, ...],
+        horizon: str | Duration | Literal[0] | None,
+    ) -> None:
+        for field, value in (
+            ("event", event),
+            ("label_property", label_property),
+            ("target_event", target_event),
+        ):
+            object.__setattr__(self, field, _name(value, field))
+        if not isinstance(count_thresholds, Iterable):
             raise _INVALID.error(reason="wrong_type", field="count_thresholds")
-        thresholds = tuple(self.count_thresholds)
+        thresholds = tuple(count_thresholds)
         if not thresholds:
             raise _INVALID.error(reason="empty", field="count_thresholds")
         if any(type(value) is not int or not 0 < value < 2**63 for value in thresholds):
@@ -150,11 +161,10 @@ class RetentionMetric:
         if tuple(sorted(set(thresholds))) != thresholds:
             raise _INVALID.error(reason="not_increasing", field="count_thresholds")
         object.__setattr__(self, "count_thresholds", thresholds)
-        if self.horizon is not None:
-            horizon = duration(self.horizon, field="horizon")
-            if horizon.seconds <= 0:
-                raise _INVALID.error(reason="not_positive", field="horizon")
-            object.__setattr__(self, "horizon", horizon)
+        limit = None if horizon is None else duration(horizon, field="horizon")
+        if limit is not None and limit.seconds <= 0:
+            raise _INVALID.error(reason="not_positive", field="horizon")
+        object.__setattr__(self, "horizon", limit)
 
 
 type JsonScalar = None | bool | int | float | str
@@ -186,16 +196,22 @@ class MetricAgg:
         _relative_to(self.relative_to)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class AttributeAsOf:
     attribute: str
     before: Duration
-    relative_to: EventTime | None = None
+    relative_to: EventTime | None
 
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "attribute", _name(self.attribute, "attribute"))
-        object.__setattr__(self, "before", duration(self.before, field="before"))
-        _relative_to(self.relative_to)
+    def __init__(
+        self,
+        attribute: str,
+        before: str | Duration | Literal[0],
+        relative_to: EventTime | None = None,
+    ) -> None:
+        object.__setattr__(self, "attribute", _name(attribute, "attribute"))
+        object.__setattr__(self, "before", duration(before, field="before"))
+        _relative_to(relative_to)
+        object.__setattr__(self, "relative_to", relative_to)
 
 
 @dataclass(frozen=True, slots=True)
