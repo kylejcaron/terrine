@@ -14,8 +14,7 @@ from typing import Any
 from terrine.errors import INVALID_VIEW, RefusalSpec, freeze, parameter_names, thaw
 from terrine.spec.design import Design
 from terrine.spec.io import SCHEMA_VERSION as DESIGN_SCHEMA_VERSION
-from terrine.spec.io import canonical_json as design_json
-from terrine.spec.io import from_json as design_from_json
+from terrine.spec.io import _canonical_bytes, _design_payload, _load, canonical_digest
 from terrine.spec.transforms import Winsorization
 
 __all__ = [
@@ -40,12 +39,6 @@ UNSUPPORTED_VIEW = RefusalSpec(
     "terrine.dataset.unsupported_view",
     "Unsupported dataset view: {reason}.",
 )
-
-
-def _canonical(value: Any) -> bytes:
-    return json.dumps(
-        value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
-    ).encode("utf-8")
 
 
 def _validate_schema_version(value: Any) -> None:
@@ -122,19 +115,23 @@ class DatasetDefinition:
         object.__setattr__(self, "view", view)
         object.__setattr__(self, "transforms", transforms)
 
-    def canonical_json(self) -> bytes:
-        payload = {
+    def _payload(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
             "schema_version": SCHEMA_VERSION,
-            "base_design": json.loads(design_json(self.base_design))["design"],
-            "view": thaw(self.view),
+            "base_design": _design_payload(self.base_design),
         }
+        if self.view is not None:
+            payload["view"] = thaw(self.view)
         if self.transforms:
             payload["transforms"] = [item.to_record() for item in self.transforms]
-        return _canonical(payload)
+        return payload
+
+    def canonical_json(self) -> bytes:
+        return _canonical_bytes(self._payload())
 
     @property
     def digest(self) -> str:
-        return hashlib.sha256(self.canonical_json()).hexdigest()
+        return canonical_digest(self._payload())
 
     def resolve_unit(self, model: Any) -> DatasetDefinition:
         """Return this definition on its base design with the unit resolved against ``model``."""
@@ -190,21 +187,18 @@ class DatasetDefinition:
             payload = json.loads(
                 value, object_pairs_hook=_unique_pairs, parse_constant=_bad_constant
             )
-            if not isinstance(payload, dict) or set(payload) - {"transforms"} != {
+            if not isinstance(payload, dict) or set(payload) - {"view", "transforms"} != {
                 "schema_version",
                 "base_design",
-                "view",
             }:
                 raise ValueError("unknown definition fields")
             _validate_schema_version(payload["schema_version"])
-            design = design_from_json(
-                _canonical(
-                    {"schema_version": DESIGN_SCHEMA_VERSION, "design": payload["base_design"]}
-                )
+            design = _load(
+                {"schema_version": DESIGN_SCHEMA_VERSION, "design": payload["base_design"]}
             )
             return cls(
                 base_design=design,
-                view=payload["view"],
+                view=payload.get("view"),
                 transforms=tuple(
                     Winsorization.from_record(item) for item in payload.get("transforms", [])
                 ),
@@ -317,10 +311,7 @@ class DatasetDefinitionStore:
             ) from error
         if hashlib.sha256(content).hexdigest() != reference.digest:
             raise INVALID_DEFINITION.error(reason="definition reference digest mismatch")
-        definition = DatasetDefinition.from_json(content)
-        if definition.digest != reference.digest:
-            raise INVALID_DEFINITION.error(reason="definition reference digest mismatch")
-        return definition
+        return DatasetDefinition.from_json(content)
 
 
 def _unique_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:

@@ -28,6 +28,7 @@ from terrine.execution.inputs import (
 from terrine.model import Model
 from terrine.runtime.owner import RuntimeOwner
 from terrine.runtime.state import RuntimeStore
+from terrine.semantic.io import catalog_payload
 from terrine.semantic.models import Catalog
 from terrine.spec.anchors import EventAnchor
 from terrine.spec.design import Design
@@ -301,7 +302,7 @@ class SnapshotAuthority:
                     }
                 )
             catalog_json = json.dumps(
-                model.catalog.model_dump(mode="json"), sort_keys=True, separators=(",", ":")
+                catalog_payload(model.catalog), sort_keys=True, separators=(",", ":")
             )
             units_json = json.dumps(
                 {name: asdict(model.units[name]) for name in sorted(unit_names)},

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Mapping
 from datetime import UTC, date, datetime
@@ -48,11 +49,95 @@ from terrine.spec.state_panel import (
 from terrine.spec.trajectory import CohortSpec, LifeTable, TimeToEvent, Trajectory
 from terrine.windows import Window
 
-__all__ = ["SCHEMA_VERSION", "canonical_json", "to_json", "from_json", "to_yaml", "from_yaml"]
+__all__ = [
+    "SCHEMA_VERSION",
+    "canonical_digest",
+    "canonical_json",
+    "to_json",
+    "from_json",
+    "to_yaml",
+    "from_yaml",
+]
 SCHEMA_VERSION = 4
 
 _INVALID = RefusalSpec("terrine.design.invalid", "Design document is invalid: {reason}.")
 _INVALID_INPUT = RefusalSpec("terrine.design.invalid", "Design input {field} is invalid: {reason}.")
+
+# Encoded default of every optional document field, by node tag. Encoders omit a field equal to
+# its default and decoders supply it, so an optional field added later leaves existing documents
+# and digests unchanged. A default never changes within a document version.
+_DEFAULTS: Mapping[str, Mapping[str, Any]] = {
+    "Design": {
+        "features": {},
+        "outcomes": {},
+        "eligibility": {},
+        "treatment": None,
+        "gap": "0s",
+        "shape": "cross_section",
+        "anchor_range": None,
+        "sample": None,
+        "administrative_cutoff": None,
+    },
+    "EventAnchor": {"occurrence": "first", "n": None, "offset": "0s"},
+    "AnchorRange": {"start": None, "end": None},
+    "StateObservations": {"ordered": True, "absorbing": []},
+    "EventSequence": {
+        "representation": "positions",
+        "properties": [],
+        "label_property": None,
+        "sessions": None,
+        "funnel": None,
+    },
+    "FunnelSpec": {"within": None},
+    "StatePanel": {"baseline_features": {}},
+    "Initiation": {"knowledge": "recorded_at"},
+    "PersistentAdoption": {"persistence": "absorbing", "knowledge": "recorded_at"},
+    "TrialWeight": {"values": None},
+    "SequentialSpec": {"trial_weight": None, "anticipation": "0s", "reference_period": "-1d"},
+    "CalendarComparisonSpec": {"anticipation_periods": []},
+    "Trajectory": {"cumulative": False},
+    "TimeToEvent": {"exit_event": None, "entry_event": None, "delayed_entry": False},
+    "LifeTable": {"group_by": []},
+    "MetricQuantile": {"interpolation": "linear_type7"},
+    "MetricAgg": {"relative_to": None},
+    "AttributeAsOf": {"relative_to": None},
+    "EventTime": {
+        "label_property": None,
+        "equals": None,
+        "occurrence": "first",
+        "n": None,
+        "relative_to": None,
+        "measure": "time",
+    },
+    "IsNull": {"negate": False},
+    "Treatment": {"at": "0s", "known_at_t0": False},
+}
+
+
+def _canonical_bytes(payload: Any) -> bytes:
+    return json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
+    ).encode("utf-8")
+
+
+def canonical_digest(payload: Mapping[str, Any]) -> str:
+    """Return the SHA-256 digest of a stored JSON object under the canonical JSON rules.
+
+    Keys are sorted, separators compact, text UTF-8 and non-finite numbers refused, so a
+    stored record is verified by hashing its stored payload rather than re-encoding the object
+    decoded from it.
+    """
+    return hashlib.sha256(_canonical_bytes(payload)).hexdigest()
+
+
+def _omit_defaults(name: str, node: dict[str, Any]) -> dict[str, Any]:
+    defaults = _DEFAULTS.get(name, {})
+    return {key: item for key, item in node.items() if key not in defaults or item != defaults[key]}
+
+
+def _fields(value: Any, name: str, required: set[str]) -> dict[str, Any]:
+    defaults = _DEFAULTS[name]
+    return {**defaults, **_object(value, required | set(defaults), required)}
 
 
 class _UniqueSafeLoader(yaml.SafeLoader):
@@ -86,34 +171,41 @@ def _date_value(value: date | datetime) -> dict[str, str]:
 
 def _encode(value: Any) -> Any:
     if isinstance(value, Design):
-        return {
-            "unit": value.unit,
-            "anchor": _encode(value.anchor),
-            "features": {key: _encode(item) for key, item in value.features.items()},
-            "outcomes": {key: _encode(item) for key, item in value.outcomes.items()},
-            "eligibility": {key: _encode(item) for key, item in value.eligibility.items()},
-            "treatment": None if value.treatment is None else _encode(value.treatment),
-            "gap": str(value.gap),
-            "shape": _encode(value.shape),
-            "anchor_range": None if value.anchor_range is None else _encode(value.anchor_range),
-            "sample": None if value.sample is None else _encode(value.sample),
-            "administrative_cutoff": (
-                None
-                if value.administrative_cutoff is None
-                else _date_value(value.administrative_cutoff)
-            ),
-        }
+        return _omit_defaults(
+            "Design",
+            {
+                "unit": value.unit,
+                "anchor": _encode(value.anchor),
+                "features": {key: _encode(item) for key, item in value.features.items()},
+                "outcomes": {key: _encode(item) for key, item in value.outcomes.items()},
+                "eligibility": {key: _encode(item) for key, item in value.eligibility.items()},
+                "treatment": _encode(value.treatment),
+                "gap": str(value.gap),
+                "shape": _encode(value.shape),
+                "anchor_range": _encode(value.anchor_range),
+                "sample": _encode(value.sample),
+                "administrative_cutoff": (
+                    None
+                    if value.administrative_cutoff is None
+                    else _date_value(value.administrative_cutoff)
+                ),
+            },
+        )
     if isinstance(value, Window):
         return {"type": "Window", "start": str(value.start), "end": str(value.end)}
     if isinstance(value, FixedDate):
         return {"type": "FixedDate", "date": _date_value(value.date)}
     if isinstance(value, EventAnchor):
-        node = {"type": "EventAnchor", "event": value.event, "occurrence": value.occurrence}
-        if value.n is not None:
-            node["n"] = value.n
-        if value.offset.seconds != 0:
-            node["offset"] = str(value.offset)
-        return node
+        return _omit_defaults(
+            "EventAnchor",
+            {
+                "type": "EventAnchor",
+                "event": value.event,
+                "occurrence": value.occurrence,
+                "n": value.n,
+                "offset": str(value.offset),
+            },
+        )
     if isinstance(value, Schedule):
         return {
             "type": "Schedule",
@@ -122,19 +214,25 @@ def _encode(value: Any) -> Any:
             "end": _date_value(value.end),
         }
     if isinstance(value, AnchorRange):
-        return {
-            "type": "AnchorRange",
-            "start": None if value.start is None else _date_value(value.start),
-            "end": None if value.end is None else _date_value(value.end),
-        }
+        return _omit_defaults(
+            "AnchorRange",
+            {
+                "type": "AnchorRange",
+                "start": None if value.start is None else _date_value(value.start),
+                "end": None if value.end is None else _date_value(value.end),
+            },
+        )
     if isinstance(value, StateObservations):
-        return {
-            "type": "StateObservations",
-            "property": value.property,
-            "levels": list(value.levels),
-            "ordered": value.ordered,
-            "absorbing": list(value.absorbing),
-        }
+        return _omit_defaults(
+            "StateObservations",
+            {
+                "type": "StateObservations",
+                "property": value.property,
+                "levels": list(value.levels),
+                "ordered": value.ordered,
+                "absorbing": list(value.absorbing),
+            },
+        )
     if isinstance(value, BinnedMetricState):
         return {
             "type": "BinnedMetricState",
@@ -143,51 +241,66 @@ def _encode(value: Any) -> Any:
             "levels": list(value.levels),
         }
     if isinstance(value, EventSequence):
-        return {
-            "type": "EventSequence",
-            "event": value.event,
-            "window": _encode(value.window),
-            "max_events": value.max_events,
-            "representation": value.representation,
-            "properties": list(value.properties),
-            "label_property": value.label_property,
-            "sessions": None if value.sessions is None else _encode(value.sessions),
-            "funnel": None if value.funnel is None else _encode(value.funnel),
-        }
+        return _omit_defaults(
+            "EventSequence",
+            {
+                "type": "EventSequence",
+                "event": value.event,
+                "window": _encode(value.window),
+                "max_events": value.max_events,
+                "representation": value.representation,
+                "properties": list(value.properties),
+                "label_property": value.label_property,
+                "sessions": _encode(value.sessions),
+                "funnel": _encode(value.funnel),
+            },
+        )
     if isinstance(value, SessionSpec):
         return {"type": "SessionSpec", "gap": str(value.gap)}
     if isinstance(value, FunnelSpec):
-        return {
-            "type": "FunnelSpec",
-            "event_property": value.event_property,
-            "steps": list(value.steps),
-            "within": None if value.within is None else str(value.within),
-        }
-    if isinstance(value, StatePanel):
-        return {
-            "type": "StatePanel",
-            "state": _encode(value.state),
-            "periods": value.periods,
-            "baseline_features": {
-                key: _encode(item) for key, item in value.baseline_features.items()
+        return _omit_defaults(
+            "FunnelSpec",
+            {
+                "type": "FunnelSpec",
+                "event_property": value.event_property,
+                "steps": list(value.steps),
+                "within": None if value.within is None else str(value.within),
             },
-        }
+        )
+    if isinstance(value, StatePanel):
+        return _omit_defaults(
+            "StatePanel",
+            {
+                "type": "StatePanel",
+                "state": _encode(value.state),
+                "periods": value.periods,
+                "baseline_features": {
+                    key: _encode(item) for key, item in value.baseline_features.items()
+                },
+            },
+        )
     if isinstance(value, Initiation):
-        return {
-            "type": "Initiation",
-            "event": value.event,
-            "history_start": value.history_start.isoformat(),
-            "knowledge": value.knowledge,
-        }
+        return _omit_defaults(
+            "Initiation",
+            {
+                "type": "Initiation",
+                "event": value.event,
+                "history_start": value.history_start.isoformat(),
+                "knowledge": value.knowledge,
+            },
+        )
     if isinstance(value, PersistentAdoption):
-        return {
-            "type": "PersistentAdoption",
-            "event": value.event,
-            "adopted_value": value.adopted_value,
-            "history_start": value.history_start.isoformat(),
-            "persistence": value.persistence,
-            "knowledge": value.knowledge,
-        }
+        return _omit_defaults(
+            "PersistentAdoption",
+            {
+                "type": "PersistentAdoption",
+                "event": value.event,
+                "adopted_value": value.adopted_value,
+                "history_start": value.history_start.isoformat(),
+                "persistence": value.persistence,
+                "knowledge": value.knowledge,
+            },
+        )
     if isinstance(value, MatchedT0Sample):
         return {
             "type": "MatchedT0Sample",
@@ -196,19 +309,25 @@ def _encode(value: Any) -> Any:
             "seed": value.seed,
         }
     if isinstance(value, TrialWeight):
-        return {
-            "type": "TrialWeight",
-            "kind": value.kind,
-            "values": None if value.values is None else dict(value.values),
-        }
+        return _omit_defaults(
+            "TrialWeight",
+            {
+                "type": "TrialWeight",
+                "kind": value.kind,
+                "values": None if value.values is None else dict(value.values),
+            },
+        )
     if isinstance(value, SequentialSpec):
-        return {
-            "type": "SequentialSpec",
-            "treatment": _encode(value.treatment),
-            "trial_weight": None if value.trial_weight is None else _encode(value.trial_weight),
-            "anticipation": str(value.anticipation),
-            "reference_period": str(value.reference_period),
-        }
+        return _omit_defaults(
+            "SequentialSpec",
+            {
+                "type": "SequentialSpec",
+                "treatment": _encode(value.treatment),
+                "trial_weight": _encode(value.trial_weight),
+                "anticipation": str(value.anticipation),
+                "reference_period": str(value.reference_period),
+            },
+        )
     if isinstance(value, EventPanelSpec):
         return {
             "type": "EventPanelSpec",
@@ -217,14 +336,17 @@ def _encode(value: Any) -> Any:
             "reference_period": value.reference_period,
         }
     if isinstance(value, CalendarComparisonSpec):
-        return {
-            "type": "CalendarComparisonSpec",
-            "cohort": _encode(value.cohort),
-            "control": value.control,
-            "reference_period": value.reference_period,
-            "comparison_periods": list(value.comparison_periods),
-            "anticipation_periods": list(value.anticipation_periods),
-        }
+        return _omit_defaults(
+            "CalendarComparisonSpec",
+            {
+                "type": "CalendarComparisonSpec",
+                "cohort": _encode(value.cohort),
+                "control": value.control,
+                "reference_period": value.reference_period,
+                "comparison_periods": list(value.comparison_periods),
+                "anticipation_periods": list(value.anticipation_periods),
+            },
+        )
     if isinstance(value, CohortSpec):
         return {
             "type": "CohortSpec",
@@ -232,36 +354,48 @@ def _encode(value: Any) -> Any:
             "trajectory": _encode(value.trajectory),
         }
     if isinstance(value, TimeToEvent):
-        return {
-            "type": "TimeToEvent",
-            "end_event": value.end_event,
-            "exit_event": value.exit_event,
-            "entry_event": value.entry_event,
-            "delayed_entry": value.delayed_entry,
-        }
+        return _omit_defaults(
+            "TimeToEvent",
+            {
+                "type": "TimeToEvent",
+                "end_event": value.end_event,
+                "exit_event": value.exit_event,
+                "entry_event": value.entry_event,
+                "delayed_entry": value.delayed_entry,
+            },
+        )
     if isinstance(value, LifeTable):
-        return {
-            "type": "LifeTable",
-            "time_to_event": _encode(value.time_to_event),
-            "bin": str(value.bin),
-            "group_by": list(value.group_by),
-        }
+        return _omit_defaults(
+            "LifeTable",
+            {
+                "type": "LifeTable",
+                "time_to_event": _encode(value.time_to_event),
+                "bin": str(value.bin),
+                "group_by": list(value.group_by),
+            },
+        )
     if isinstance(value, Trajectory):
-        return {
-            "type": "Trajectory",
-            "metric": value.metric,
-            "period": str(value.period),
-            "periods": value.periods,
-            "cumulative": value.cumulative,
-        }
+        return _omit_defaults(
+            "Trajectory",
+            {
+                "type": "Trajectory",
+                "metric": value.metric,
+                "period": str(value.period),
+                "periods": value.periods,
+                "cumulative": value.cumulative,
+            },
+        )
     if isinstance(value, MetricQuantile):
-        return {
-            "type": "MetricQuantile",
-            "metric": value.metric,
-            "probability": str(value.probability),
-            "window": _encode(value.window),
-            "interpolation": value.interpolation,
-        }
+        return _omit_defaults(
+            "MetricQuantile",
+            {
+                "type": "MetricQuantile",
+                "metric": value.metric,
+                "probability": str(value.probability),
+                "window": _encode(value.window),
+                "interpolation": value.interpolation,
+            },
+        )
     if isinstance(value, ApproxMetricQuantile):
         return {
             "type": "ApproxMetricQuantile",
@@ -285,45 +419,60 @@ def _encode(value: Any) -> Any:
             "horizon": None if value.horizon is None else str(value.horizon),
         }
     if isinstance(value, MetricAgg):
-        node = {"type": "MetricAgg", "metric": value.metric, "window": _encode(value.window)}
-        if value.relative_to is not None:
-            node["relative_to"] = _encode(value.relative_to)
-        return node
+        return _omit_defaults(
+            "MetricAgg",
+            {
+                "type": "MetricAgg",
+                "metric": value.metric,
+                "window": _encode(value.window),
+                "relative_to": _encode(value.relative_to),
+            },
+        )
     if isinstance(value, AttributeAsOf):
-        node = {"type": "AttributeAsOf", "attribute": value.attribute, "before": str(value.before)}
-        if value.relative_to is not None:
-            node["relative_to"] = _encode(value.relative_to)
-        return node
+        return _omit_defaults(
+            "AttributeAsOf",
+            {
+                "type": "AttributeAsOf",
+                "attribute": value.attribute,
+                "before": str(value.before),
+                "relative_to": _encode(value.relative_to),
+            },
+        )
     if isinstance(value, EventTime):
-        node = {
-            "type": "EventTime",
-            "event": value.event,
-            "window": _encode(value.window),
-            "label_property": value.label_property,
-            "equals": value.equals,
-            "occurrence": value.occurrence,
-            "n": value.n,
-        }
-        if value.relative_to is not None:
-            node["relative_to"] = _encode(value.relative_to)
-        if value.measure != "time":
-            node["measure"] = value.measure
-        return node
+        return _omit_defaults(
+            "EventTime",
+            {
+                "type": "EventTime",
+                "event": value.event,
+                "window": _encode(value.window),
+                "label_property": value.label_property,
+                "equals": value.equals,
+                "occurrence": value.occurrence,
+                "n": value.n,
+                "relative_to": _encode(value.relative_to),
+                "measure": value.measure,
+            },
+        )
     if isinstance(value, Gt):
         return {"type": "Gt", "expr": _encode(value.expr), "value": value.value}
     if isinstance(value, Eq):
         return {"type": "Eq", "expr": _encode(value.expr), "value": value.value}
     if isinstance(value, IsNull):
-        return {"type": "IsNull", "expr": _encode(value.expr), "negate": value.negate}
+        return _omit_defaults(
+            "IsNull", {"type": "IsNull", "expr": _encode(value.expr), "negate": value.negate}
+        )
     if isinstance(value, And):
         return {"type": "And", "terms": [_encode(term) for term in value.terms]}
     if isinstance(value, Treatment):
-        return {
-            "type": "Treatment",
-            "attribute": value.attribute,
-            "at": str(value.at),
-            "known_at_t0": value.known_at_t0,
-        }
+        return _omit_defaults(
+            "Treatment",
+            {
+                "type": "Treatment",
+                "attribute": value.attribute,
+                "at": str(value.at),
+                "known_at_t0": value.known_at_t0,
+            },
+        )
     if value is None or isinstance(value, (str, bool, int)):
         return value
     if isinstance(value, float):
@@ -340,21 +489,14 @@ def _encode(value: Any) -> Any:
     raise TypeError(f"unsupported specification value: {type(value).__name__}")
 
 
-def _sort(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {key: _sort(value[key]) for key in sorted(value)}
-    if isinstance(value, list):
-        return [_sort(item) for item in value]
-    return value
+def _design_payload(design: Design) -> dict[str, Any]:
+    if not isinstance(design, Design):
+        raise _INVALID_INPUT.error(reason="wrong_type", field="design")
+    return _encode(design)
 
 
 def canonical_json(design: Design) -> bytes:
-    if not isinstance(design, Design):
-        raise _INVALID_INPUT.error(reason="wrong_type", field="design")
-    payload = {"schema_version": SCHEMA_VERSION, "design": _encode(design)}
-    return json.dumps(
-        _sort(payload), ensure_ascii=False, allow_nan=False, separators=(",", ":")
-    ).encode("utf-8")
+    return _canonical_bytes({"schema_version": SCHEMA_VERSION, "design": _design_payload(design)})
 
 
 def to_json(design: Design) -> str:
@@ -432,20 +574,7 @@ def _node(value: Any) -> Any:
         bound = _read_date(item["date"])
         return FixedDate(bound)
     if tag == "EventSequence":
-        item = _object(
-            value,
-            {
-                "type",
-                "event",
-                "window",
-                "max_events",
-                "representation",
-                "properties",
-                "label_property",
-                "sessions",
-                "funnel",
-            },
-        )
+        item = _fields(value, "EventSequence", {"type", "event", "window", "max_events"})
         return EventSequence(
             item["event"],
             _node(item["window"]),
@@ -460,21 +589,16 @@ def _node(value: Any) -> Any:
         item = _object(value, {"type", "gap"})
         return SessionSpec(_duration_text(item["gap"]))
     if tag == "FunnelSpec":
-        item = _object(value, {"type", "event_property", "steps", "within"})
+        item = _fields(value, "FunnelSpec", {"type", "event_property", "steps"})
         return FunnelSpec(
             item["event_property"],
             tuple(item["steps"]),
             None if item["within"] is None else _duration_text(item["within"]),
         )
     if tag == "EventAnchor":
-        item = _object(
-            value, {"type", "event", "occurrence", "n", "offset"}, {"type", "event", "occurrence"}
-        )
+        item = _fields(value, "EventAnchor", {"type", "event"})
         return EventAnchor(
-            item["event"],
-            item["occurrence"],
-            item.get("n"),
-            _duration_text(item.get("offset", "0s")),
+            item["event"], item["occurrence"], item["n"], _duration_text(item["offset"])
         )
     if tag == "Schedule":
         item = _object(value, {"type", "every", "start", "end"})
@@ -483,21 +607,14 @@ def _node(value: Any) -> Any:
             raise ValueError("Schedule bounds require dates")
         return Schedule(_duration_text(item["every"]), start, end)
     if tag == "AnchorRange":
-        item = _object(value, {"type", "start", "end"})
+        item = _fields(value, "AnchorRange", {"type"})
         start = None if item["start"] is None else _read_date(item["start"])
         end = None if item["end"] is None else _read_date(item["end"])
         return AnchorRange(start, end)
     if tag == "StateObservations":
-        item = _object(
-            value,
-            {"type", "property", "levels", "ordered", "absorbing"},
-            {"type", "property", "levels"},
-        )
+        item = _fields(value, "StateObservations", {"type", "property", "levels"})
         return StateObservations(
-            item["property"],
-            tuple(item["levels"]),
-            item.get("ordered", True),
-            tuple(item.get("absorbing", ())),
+            item["property"], tuple(item["levels"]), item["ordered"], tuple(item["absorbing"])
         )
     if tag == "BinnedMetricState":
         item = _object(value, {"type", "metric", "cutpoints", "levels"})
@@ -507,23 +624,22 @@ def _node(value: Any) -> Any:
             tuple(item["levels"]),
         )
     if tag == "StatePanel":
-        item = _object(value, {"type", "state", "periods", "baseline_features"})
+        item = _fields(value, "StatePanel", {"type", "state", "periods"})
         raw = item["baseline_features"]
         if not isinstance(raw, dict):
             raise ValueError("baseline_features must be a mapping")
         baseline = {key: _node(node) for key, node in raw.items()}
         return StatePanel(_node(item["state"]), periods=item["periods"], baseline_features=baseline)
     if tag == "Initiation":
-        item = _object(value, {"type", "event", "history_start", "knowledge"})
+        item = _fields(value, "Initiation", {"type", "event", "history_start"})
         return Initiation(
             item["event"],
             history_start=datetime.fromisoformat(item["history_start"]),
             knowledge=item["knowledge"],
         )
     if tag == "PersistentAdoption":
-        item = _object(
-            value,
-            {"type", "event", "adopted_value", "history_start", "persistence", "knowledge"},
+        item = _fields(
+            value, "PersistentAdoption", {"type", "event", "adopted_value", "history_start"}
         )
         return PersistentAdoption(
             item["event"],
@@ -536,19 +652,10 @@ def _node(value: Any) -> Any:
         item = _object(value, {"type", "strata", "controls_per_treated", "seed"})
         return MatchedT0Sample(tuple(item["strata"]), item["controls_per_treated"], item["seed"])
     if tag == "TrialWeight":
-        item = _object(value, {"type", "kind", "values"})
+        item = _fields(value, "TrialWeight", {"type", "kind"})
         return TrialWeight(item["kind"], item["values"])
     if tag == "SequentialSpec":
-        item = _object(
-            value,
-            {
-                "type",
-                "treatment",
-                "trial_weight",
-                "anticipation",
-                "reference_period",
-            },
-        )
+        item = _fields(value, "SequentialSpec", {"type", "treatment"})
         weight = None if item["trial_weight"] is None else _node(item["trial_weight"])
         return SequentialSpec(
             _node(item["treatment"]),
@@ -562,16 +669,10 @@ def _node(value: Any) -> Any:
             tuple(item["periods"]), _duration_text(item["period"]), item["reference_period"]
         )
     if tag == "CalendarComparisonSpec":
-        item = _object(
+        item = _fields(
             value,
-            {
-                "type",
-                "cohort",
-                "control",
-                "reference_period",
-                "comparison_periods",
-                "anticipation_periods",
-            },
+            "CalendarComparisonSpec",
+            {"type", "cohort", "control", "reference_period", "comparison_periods"},
         )
         return CalendarComparisonSpec(
             _node(item["cohort"]),
@@ -581,7 +682,7 @@ def _node(value: Any) -> Any:
             tuple(item["anticipation_periods"]),
         )
     if tag == "Trajectory":
-        item = _object(value, {"type", "metric", "period", "periods", "cumulative"})
+        item = _fields(value, "Trajectory", {"type", "metric", "period", "periods"})
         return Trajectory(
             item["metric"], _duration_text(item["period"]), item["periods"], item["cumulative"]
         )
@@ -589,7 +690,7 @@ def _node(value: Any) -> Any:
         item = _object(value, {"type", "origin", "trajectory"})
         return CohortSpec(item["origin"], _node(item["trajectory"]))
     if tag == "TimeToEvent":
-        item = _object(value, {"type", "end_event", "exit_event", "entry_event", "delayed_entry"})
+        item = _fields(value, "TimeToEvent", {"type", "end_event"})
         return TimeToEvent(
             item["end_event"],
             exit_event=item["exit_event"],
@@ -597,7 +698,7 @@ def _node(value: Any) -> Any:
             delayed_entry=item["delayed_entry"],
         )
     if tag == "LifeTable":
-        item = _object(value, {"type", "time_to_event", "bin", "group_by"})
+        item = _fields(value, "LifeTable", {"type", "time_to_event", "bin"})
         groups = item["group_by"]
         if not isinstance(groups, list) or any(not isinstance(name, str) for name in groups):
             raise ValueError("LifeTable group_by must be a list of feature names")
@@ -606,7 +707,7 @@ def _node(value: Any) -> Any:
         item = _object(value, {"type", "start", "end"})
         return Window(_duration_text(item["start"]), _duration_text(item["end"]))
     if tag == "MetricQuantile":
-        item = _object(value, {"type", "metric", "probability", "window", "interpolation"})
+        item = _fields(value, "MetricQuantile", {"type", "metric", "probability", "window"})
         return MetricQuantile(
             item["metric"],
             _decimal_string(item["probability"]),
@@ -643,43 +744,21 @@ def _node(value: Any) -> Any:
             None if item["horizon"] is None else _duration_text(item["horizon"]),
         )
     if tag == "MetricAgg":
-        item = _object(
-            value,
-            {"type", "metric", "window", "relative_to"},
-            {"type", "metric", "window"},
-        )
+        item = _fields(value, "MetricAgg", {"type", "metric", "window"})
         return MetricAgg(
             item["metric"],
             _node(item["window"]),
-            None if item.get("relative_to") is None else _node(item["relative_to"]),
+            None if item["relative_to"] is None else _node(item["relative_to"]),
         )
     if tag == "AttributeAsOf":
-        item = _object(
-            value,
-            {"type", "attribute", "before", "relative_to"},
-            {"type", "attribute", "before"},
-        )
+        item = _fields(value, "AttributeAsOf", {"type", "attribute", "before"})
         return AttributeAsOf(
             item["attribute"],
             _duration_text(item["before"]),
-            None if item.get("relative_to") is None else _node(item["relative_to"]),
+            None if item["relative_to"] is None else _node(item["relative_to"]),
         )
     if tag == "EventTime":
-        item = _object(
-            value,
-            {
-                "type",
-                "event",
-                "window",
-                "label_property",
-                "equals",
-                "occurrence",
-                "n",
-                "relative_to",
-                "measure",
-            },
-            {"type", "event", "window", "label_property", "equals", "occurrence", "n"},
-        )
+        item = _fields(value, "EventTime", {"type", "event", "window"})
         return EventTime(
             item["event"],
             _node(item["window"]),
@@ -687,8 +766,8 @@ def _node(value: Any) -> Any:
             item["equals"],
             item["occurrence"],
             item["n"],
-            None if item.get("relative_to") is None else _node(item["relative_to"]),
-            measure=item.get("measure", "time"),
+            None if item["relative_to"] is None else _node(item["relative_to"]),
+            measure=item["measure"],
         )
     if tag == "Gt":
         item = _object(value, {"type", "expr", "value"})
@@ -697,53 +776,21 @@ def _node(value: Any) -> Any:
         item = _object(value, {"type", "expr", "value"})
         return Eq(_node(item["expr"]), item["value"])
     if tag == "IsNull":
-        item = _object(value, {"type", "expr", "negate"}, {"type", "expr"})
-        return IsNull(_node(item["expr"]), item.get("negate", False))
+        item = _fields(value, "IsNull", {"type", "expr"})
+        return IsNull(_node(item["expr"]), item["negate"])
     if tag == "And":
         item = _object(value, {"type", "terms"})
         if not isinstance(item["terms"], list):
             raise ValueError("And terms must be a list")
         return And(tuple(_node(term) for term in item["terms"]))
     if tag == "Treatment":
-        item = _object(
-            value, {"type", "attribute", "at", "known_at_t0"}, {"type", "attribute", "known_at_t0"}
-        )
-        return Treatment(
-            item["attribute"], _duration_text(item.get("at", "0s")), item["known_at_t0"]
-        )
+        item = _fields(value, "Treatment", {"type", "attribute"})
+        return Treatment(item["attribute"], _duration_text(item["at"]), item["known_at_t0"])
     raise ValueError(f"unknown specification node: {tag}")
 
 
 def _design(value: Any) -> Design:
-    item = _object(
-        value,
-        {
-            "unit",
-            "anchor",
-            "features",
-            "outcomes",
-            "eligibility",
-            "treatment",
-            "gap",
-            "shape",
-            "anchor_range",
-            "sample",
-            "administrative_cutoff",
-        },
-        {"unit", "anchor"},
-    )
-    item = {
-        "features": {},
-        "outcomes": {},
-        "eligibility": {},
-        "treatment": None,
-        "gap": "0s",
-        "shape": "cross_section",
-        "anchor_range": None,
-        "sample": None,
-        "administrative_cutoff": None,
-        **item,
-    }
+    item = _fields(value, "Design", {"unit", "anchor"})
 
     def named(raw: Any, allowed: tuple[type, ...]) -> dict[str, Any]:
         if not isinstance(raw, dict):
@@ -851,6 +898,14 @@ def _reject_constant(item: str) -> Any:
     raise ValueError(item)
 
 
+def _parse_json(value: str | bytes) -> Any:
+    """Parse a JSON design document strictly, before any digest check or decoding."""
+    try:
+        return json.loads(value, object_pairs_hook=_pairs, parse_constant=_reject_constant)
+    except (TypeError, ValueError) as error:
+        raise _INVALID.error(reason="malformed_document") from error
+
+
 def from_json(value: str | bytes) -> Design:
     """Read a design from a supported versioned JSON document.
 
@@ -862,11 +917,7 @@ def from_json(value: str | bytes) -> Design:
 
     Example: spec.from_json(spec.to_json(design))
     """
-    try:
-        payload = json.loads(value, object_pairs_hook=_pairs, parse_constant=_reject_constant)
-    except (TypeError, ValueError) as error:
-        raise _INVALID.error(reason="malformed_document") from error
-    return _load(payload)
+    return _load(_parse_json(value))
 
 
 def from_yaml(value: str | bytes) -> Design:

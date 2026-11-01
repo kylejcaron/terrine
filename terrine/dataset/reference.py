@@ -26,7 +26,7 @@ from terrine.data import (
     output_sort_keys,
 )
 from terrine.dataset.manifest import DatasetManifest, ManifestColumn, ManifestGeneration
-from terrine.errors import INVALID_VIEW, RefusalSpec
+from terrine.errors import INVALID_VIEW, RefusalSpec, TerrineError
 from terrine.execution.backend import backend_capabilities, backend_provider
 from terrine.runtime.api import RunReceipt, run_serialized_plan
 from terrine.runtime.backends.base import PublicationReceipt
@@ -108,15 +108,14 @@ def _definition_for(frame: Any, *, include_transforms: bool = True) -> DatasetDe
             "split": None if training.split is None else training.split.to_record(),
         }
     elif frame._scoring_view is not None:
-        from terrine.spec.io import canonical_json
+        from terrine.spec.io import _encode
 
         scoring = frame._scoring_view
-        design_record = json.loads(canonical_json(frame._design))["design"]
         view = {
             "kind": "scoring",
             "features": list(scoring.features),
             "as_of": scoring.resolved_as_of.isoformat(),
-            "eligibility": design_record["eligibility"],
+            "eligibility": _encode(frame._design.eligibility),
             "parent_design_hash": scoring.parent_design_hash,
         }
     return DatasetDefinition(
@@ -239,12 +238,13 @@ class Dataset:
             "AND p.generation=d.generation AND r.published_generation=d.generation",
             [generation.dataset_id, generation.generation_id],
         ).fetchone()
-        if (
-            record is None
-            or record[2] != "succeeded"
-            or record[0].encode("utf-8")
-            != replace(self._manifest, definition_reference=None).to_json().encode("utf-8")
-        ):
+        if record is None or record[2] != "succeeded":
+            raise _GENERATION_INVALID.error()
+        try:
+            published = DatasetManifest.from_json(record[0])
+        except TerrineError as error:
+            raise _GENERATION_INVALID.error() from error
+        if published != replace(self._manifest, definition_reference=None):
             raise _GENERATION_INVALID.error()
         self._receipt = PublicationReceipt(
             generation.dataset_id, generation.generation_id, record[1], generation.output_refs

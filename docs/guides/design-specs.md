@@ -46,6 +46,8 @@ Dataset definitions also use version 4. Saved plans and dataset manifests keep
 their version-1 outer envelopes, while their nested designs and definitions
 must use version 4. Catalog documents remain version 2.
 
+Documents omit every field equal to its default: `Design("user", FixedDate("2025-03-01"))` saves only `unit` and `anchor`, and `Treatment("assigned")` saves only its `attribute`. Reading supplies each omitted default, and a document that spells a default out still loads. An optional field added later within version 4 is omitted while it holds its default, so existing documents and `spec_hash` values keep their identity; a default never changes within a document version. Editing a design, for example with `dataclasses.replace`, gives it a new `spec_hash`.
+
 Recipes and low-level shapes use the same names: `occurrence` on event anchors,
 `end_event`, `entry_event` and `exit_event` on `TimeToEvent`, `bin` on `LifeTable`,
 `periods` on `StatePanel`, `period` on event panels, and `anticipation` and

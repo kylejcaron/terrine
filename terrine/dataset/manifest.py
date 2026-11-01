@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -17,6 +18,7 @@ from terrine.spec.dataset import (
     _bad_constant,
     _unique_pairs,
 )
+from terrine.spec.io import _canonical_bytes, canonical_digest
 
 __all__ = ["DatasetManifest", "ManifestColumn", "ManifestGeneration"]
 
@@ -32,12 +34,6 @@ _INVALID_INPUT = RefusalSpec(
 def _name(value: object, field: str) -> None:
     if not isinstance(value, str) or not value:
         raise _INVALID_INPUT.error(reason="empty_name", field=field)
-
-
-def _canonical(value: Any) -> bytes:
-    return json.dumps(
-        value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
-    ).encode()
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,16 +95,24 @@ class DatasetManifest:
     compiler_version: str = "1"
     definition_reference: DatasetDefinitionReference | None = None
     frame_metadata: Any = None
+    # Digest recorded with a stored manifest; empty computes it from the definition.
+    definition_hash: str = ""
 
     def __post_init__(self) -> None:
         if self.schema_version != 1 or type(self.schema_version) is not int:
             raise _INVALID_INPUT.error(reason="unsupported_schema_version", field="schema_version")
         if not isinstance(self.definition, DatasetDefinition):
             raise _INVALID_INPUT.error(reason="wrong_type", field="definition")
+        if self.definition_hash == "":
+            object.__setattr__(self, "definition_hash", self.definition.digest)
+        elif not isinstance(self.definition_hash, str) or not re.fullmatch(
+            r"[0-9a-f]{64}", self.definition_hash
+        ):
+            raise _INVALID_INPUT.error(reason="invalid_digest", field="definition_hash")
         if self.definition_reference is not None:
             if (
                 not isinstance(self.definition_reference, DatasetDefinitionReference)
-                or self.definition_reference.digest != self.definition.digest
+                or self.definition_reference.digest != self.definition_hash
             ):
                 raise INVALID_DEFINITION.error(
                     reason="definition reference does not match manifest definition"
@@ -140,8 +144,8 @@ class DatasetManifest:
     def to_json(self) -> str:
         payload = {
             "schema_version": 1,
-            "definition": json.loads(self.definition.canonical_json()),
-            "definition_hash": self.definition.digest,
+            "definition": self.definition._payload(),
+            "definition_hash": self.definition_hash,
             "generation": {
                 "dataset_id": self.generation.dataset_id,
                 "generation_id": self.generation.generation_id,
@@ -174,7 +178,7 @@ class DatasetManifest:
                 "owner": self.definition_reference.owner,
                 "digest": self.definition_reference.digest,
             }
-        return _canonical(payload).decode("utf-8")
+        return _canonical_bytes(payload).decode("utf-8")
 
     @property
     def digest(self) -> str:
@@ -213,7 +217,7 @@ class DatasetManifest:
                 or type(payload["schema_version"]) is not int
             ):
                 raise _INVALID.error(reason="malformed_manifest")
-            reference = None
+            reference, recorded = None, payload["definition_hash"]
             if is_reference:
                 if definition_store is None:
                     raise _INVALID.error(reason="definition_storage_required")
@@ -221,11 +225,14 @@ class DatasetManifest:
                 if not isinstance(record, dict) or set(record) != {"owner", "digest"}:
                     raise _INVALID.error(reason="invalid_definition_reference")
                 reference = DatasetDefinitionReference(**record)
+                if reference.digest != recorded:
+                    raise _INVALID.error(reason="definition_digest_mismatch")
                 definition = definition_store.resolve(reference)
             else:
-                definition = DatasetDefinition.from_json(_canonical(payload["definition"]))
-            if definition.digest != payload["definition_hash"]:
-                raise _INVALID.error(reason="definition_digest_mismatch")
+                stored = payload["definition"]
+                if not isinstance(stored, dict) or canonical_digest(stored) != recorded:
+                    raise _INVALID.error(reason="definition_digest_mismatch")
+                definition = DatasetDefinition.from_json(_canonical_bytes(stored))
             gen = payload["generation"]
             if not isinstance(gen, dict) or set(gen) != {
                 "dataset_id",
@@ -252,6 +259,7 @@ class DatasetManifest:
                 payload["compiler_version"],
                 reference,
                 payload.get("frame_metadata"),
+                recorded,
             )
         except (KeyError, TypeError, ValueError, OverflowError) as error:
             if getattr(error, "code", None) == _INVALID.code:

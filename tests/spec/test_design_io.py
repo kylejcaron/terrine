@@ -74,6 +74,18 @@ def test_unit_null_round_trips():
     assert error.value.context["reason"] == "malformed_document"
 
 
+def test_canonical_document_omits_default_fields():
+    minimal = Design("user", FixedDate("2025-03-01"))
+    assert set(json.loads(to_json(minimal))["design"]) == {"unit", "anchor"}
+    nested = Design("user", EventAnchor("purchase"), treatment=Treatment("assigned"))
+    fields = json.loads(to_json(nested))["design"]
+    assert fields["anchor"] == {"type": "EventAnchor", "event": "purchase"}
+    assert fields["treatment"] == {"type": "Treatment", "attribute": "assigned"}
+    for design in (minimal, nested):
+        assert from_json(to_json(design)) == design
+        assert from_yaml(to_yaml(design)) == design
+
+
 def _versioned(design, version):
     document = json.loads(to_json(design))
     document["schema_version"] = version
@@ -98,14 +110,12 @@ def test_malformed_document_is_a_coded_refusal():
 
 def test_event_anchor_offset_preserves_saved_design_identity_and_round_trips():
     saved = (
-        '{"design":{"administrative_cutoff":null,"anchor":{"event":"purchase","n":2,'
-        '"occurrence":"nth","type":"EventAnchor"},"anchor_range":null,"eligibility":{},'
-        '"features":{},"gap":"0s","outcomes":{},"sample":null,"shape":"cross_section",'
-        '"treatment":null,"unit":"user"},"schema_version":4}'
+        '{"design":{"anchor":{"event":"purchase","n":2,"occurrence":"nth","type":"EventAnchor"},'
+        '"unit":"user"},"schema_version":4}'
     )
     original = from_json(saved)
     assert to_json(original) == saved
-    assert original.spec_hash == "2b0e73d65d4943580e094e86224e04b19d05e5b73b988ec8c8ffe709f8847662"
+    assert original.spec_hash == "a2e5cef62c23b649ae442d44ea684c1d7744e773c7853ea8bf6997c387daf06c"
     assert Design("user", EventAnchor("purchase", "nth", 2, offset="0d")) == original
 
     shifted = Design("user", EventAnchor("purchase", "nth", 2, offset="1d"))
@@ -155,7 +165,7 @@ def test_saved_design_documents_hold_canonical_duration_text(shape_name):
     assert fields["anchor"]["every" if shape_name == "sequential" else "offset"] == "1d"
     assert (fields["gap"], fields["features"]["visits"]["window"]["start"]) == ("1d", "-1d")
     assert fields["features"]["visits"]["window"]["end"] == "0s"
-    if fields["treatment"] is not None:
+    if "treatment" in fields:
         assert fields["treatment"]["at"] == "1d"
     for field, text in elapsed_fields.items():
         assert fields["shape"][field] == text

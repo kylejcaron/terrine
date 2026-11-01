@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from terrine.spec.io import SCHEMA_VERSION
+from terrine.spec.io import _DEFAULTS, SCHEMA_VERSION
 
 
 def design_schema() -> dict[str, Any]:
@@ -199,20 +199,10 @@ def design_schema() -> dict[str, Any]:
             "anticipation_periods": array(integer),
         },
     }
-    optional = {
-        "EventAnchor": {"n", "offset"},
-        "MetricAgg": {"relative_to"},
-        "AttributeAsOf": {"relative_to"},
-        "EventTime": {"relative_to", "measure"},
-        "IsNull": {"negate"},
-        "Treatment": {"at"},
-        "StateObservations": {"ordered", "absorbing"},
-    }
     for name, fields in nodes.items():
         properties = {"type": {"const": name}, **fields}
-        definitions[name] = obj(
-            properties, [key for key in properties if key not in optional.get(name, set())]
-        )
+        optional = _DEFAULTS.get(name, {})
+        definitions[name] = obj(properties, [key for key in properties if key not in optional])
     definitions["Design"] = obj(
         {
             "unit": nullable(text),

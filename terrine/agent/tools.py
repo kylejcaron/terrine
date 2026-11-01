@@ -44,7 +44,6 @@ from terrine.agent.schemas import (
     refusal_response,
 )
 from terrine.data import _OUTPUT_BYTES_EXCEEDED, _ROWS_EXCEEDED, Budget, Preview
-from terrine.dataset.manifest import DatasetManifest
 from terrine.dataset.reference import Dataset, dataset_from_run
 from terrine.errors import RefusalSpec, TerrineError
 from terrine.model import Model
@@ -754,16 +753,27 @@ class DatasetTools:
 
         return self._call("write", execute)
 
+    def _publication(self, dataset: Dataset) -> str:
+        generation = dataset.manifest.generation
+        record = self.model.con.con.execute(
+            f'SELECT manifest_json FROM "{self.namespace}".runtime_dataset_recipes '
+            "WHERE dataset=? AND generation=?",
+            [generation.dataset_id, generation.generation_id],
+        ).fetchone()
+        if record is None:
+            raise _RECEIPT.error()
+        return record[0]
+
     @staticmethod
-    def _dataset_reference(dataset: Dataset) -> AgentDatasetReference:
+    def _dataset_reference(dataset: Dataset, publication: str) -> AgentDatasetReference:
         manifest = dataset.manifest
         return AgentDatasetReference(
             dataset=manifest.generation.dataset_id,
             generation=manifest.generation.generation_id,
             definition_hash=manifest.design_hash,
             model_hash=manifest.model_hash,
-            manifest_hash=hashlib.sha256(manifest.to_json().encode("utf-8")).hexdigest(),
-            definition_reference=manifest.definition.digest,
+            manifest_hash=hashlib.sha256(publication.encode("utf-8")).hexdigest(),
+            definition_reference=manifest.definition_hash,
             row_count=manifest.generation.row_count,
             columns=tuple(
                 DatasetColumn(
@@ -804,13 +814,12 @@ class DatasetTools:
         self.policy.authorize(
             permission, sources=valid.required_sources, destination=saved.destination
         )
-        manifest = DatasetManifest.from_json(record[1])
-        if manifest.definition.digest != reference.definition_reference:
+        if hashlib.sha256(record[1].encode("utf-8")).hexdigest() != reference.manifest_hash:
             raise _RECEIPT.error()
         dataset = Dataset.open_generation(
             reference.dataset, reference.generation, con=self.model.con, namespace=self.namespace
         )
-        if self._dataset_reference(dataset) != reference:
+        if self._dataset_reference(dataset, record[1]) != reference:
             raise _RECEIPT.error()
         return dataset, saved
 
@@ -820,16 +829,15 @@ class DatasetTools:
         authority = self.policy.snapshot_authority
         if result.state != "succeeded" or authority is None:
             raise _RUN.error(route="Inspect the run state before requesting a committed dataset.")
-        return self._dataset_reference(
-            dataset_from_run(
-                saved,
-                result,
-                model=self.model,
-                namespace=self.namespace,
-                request_key=request_key,
-                snapshot_authority=authority,
-            )
+        dataset = dataset_from_run(
+            saved,
+            result,
+            model=self.model,
+            namespace=self.namespace,
+            request_key=request_key,
+            snapshot_authority=authority,
         )
+        return self._dataset_reference(dataset, self._publication(dataset))
 
     def stage(self, receipt: PlanReceipt, *, request_key: str) -> Response[AgentDatasetReference]:
         return self._call("write", lambda: self._stage(receipt, request_key=request_key))

@@ -164,13 +164,18 @@ Malformed, unknown-field and superseded manifest envelopes refuse with
 `terrine.dataset.invalid_manifest`; stage the definition again instead of
 rewriting an old manifest's fields.
 
-Bare definitions without transforms retain their canonical bytes and digest
-across the naming change. Fitted preprocessing records with superseded identity
-fields refuse with `terrine.dataset.invalid_definition`, whether embedded in a
-definition or loaded as a frozen transform. Refit from the original declared
-training population and save a new definition. Existing owner database table
-and column names are unchanged, so a new generation can be staged in the same
-database even when an old manifest cannot be reopened.
+A decoded manifest keeps the `definition_hash` recorded with it. Reading
+verifies it by hashing the stored definition JSON, or the stored bytes of a
+referenced definition, never by re-encoding the decoded definition, so a later
+encoder cannot invalidate a published generation. Reopening compares the
+decoded stored publication with the manifest being opened (ignoring only its
+`definition_reference`), so a manifest edited with `dataclasses.replace` refuses
+with `terrine.dataset.invalid_generation`.
+
+Fitted preprocessing records with unknown identity fields refuse with
+`terrine.dataset.invalid_definition`, whether embedded in a definition or loaded
+as a frozen transform. Refit from the original declared training population and
+save a new definition.
 
 Current `arrow-v2` publication checksums normalize timestamp instants to UTC and canonicalize nullable Arrow buffers before hashing, independently of the connection's display timezone or unused null-slot bytes. Recorded earlier checksums retain their original verification format; the original logical timezone remains in the Arrow schema. When consuming only part of a batch iterator, call its `close()` method or use `contextlib.closing`. Parquet export closes its iterator on both success and failure, while retaining only verified completed shards for retry.
 

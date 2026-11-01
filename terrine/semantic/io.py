@@ -5,13 +5,13 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 from yaml.resolver import BaseResolver
 
 from terrine.errors import RefusalSpec
 from terrine.semantic.models import Catalog
 
-__all__ = ["load_catalog", "load_catalog_text", "dump_catalog"]
+__all__ = ["load_catalog", "load_catalog_text", "dump_catalog", "catalog_payload"]
 
 _DUPLICATE = RefusalSpec(
     "terrine.catalog.duplicate_yaml_key",
@@ -146,8 +146,37 @@ def load_catalog_text(text: str) -> Catalog:
     return validate_catalog(value)
 
 
+def _without_defaults(value: Any, payload: Any) -> Any:
+    if isinstance(value, BaseModel):
+        fields = type(value).model_fields
+        return {
+            name: _without_defaults(getattr(value, name), item)
+            for name, item in payload.items()
+            if fields[name].is_required()
+            or getattr(value, name) != fields[name].get_default(call_default_factory=True)
+        }
+    if isinstance(value, Mapping):
+        return {key: _without_defaults(value[key], item) for key, item in payload.items()}
+    if isinstance(value, (list, tuple)):
+        return [
+            _without_defaults(item, dumped) for item, dumped in zip(value, payload, strict=True)
+        ]
+    return payload
+
+
+def catalog_payload(catalog: Catalog) -> dict[str, Any]:
+    """Return the canonical Catalog payload, omitting every field equal to its default.
+
+    Catalog documents, the model hash and model references all derive from this payload, so
+    a Catalog that gains a defaulted field keeps every identity derived from it. Records
+    serialize their sealed values through a field serializer, which pydantic's
+    ``exclude_defaults`` ignores, so defaults are pruned against the record fields here.
+    """
+    return _without_defaults(catalog, catalog.model_dump(mode="json"))
+
+
 def dump_catalog(catalog: Catalog) -> str:
     """Serialize a native Catalog using ordinary safe YAML values."""
     if not isinstance(catalog, Catalog):
         raise _INVALID_INPUT.error(reason="wrong_type", field="catalog")
-    return yaml.safe_dump(catalog.model_dump(mode="json"), sort_keys=False)
+    return yaml.safe_dump(catalog_payload(catalog), sort_keys=False)

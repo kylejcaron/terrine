@@ -70,8 +70,10 @@ validation also checks the existing lazy dataset view contracts without reading
 source rows. Named storage accepts either canonical Design or definition content.
 Proposal and validation outputs expose the canonical construction identity as
 `definition_digest`; prepared receipts carry `plan_hash`. Pinned dataset references
-use `definition_reference` for the construction digest, distinct from the base
-Design's `definition_hash`.
+use `definition_reference` for the construction digest recorded in the manifest,
+distinct from the base Design's `definition_hash`, and `manifest_hash` for the
+digest of the publication text stored by the owner; both are resolved against
+those stored values, not against a re-encoded manifest.
 
 All responses use schema version 1 and `ok`, `refused` or `pending` status.
 Refusals include stable codes, immutable JSON context and an actionable route.

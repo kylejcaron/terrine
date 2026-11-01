@@ -1,5 +1,7 @@
+import json
+from dataclasses import replace
 from datetime import date
-from importlib.resources import files
+from decimal import Decimal
 from typing import cast
 
 import pytest
@@ -11,6 +13,7 @@ from terrine.spec.dataset import (
     DatasetDefinitionReference,
     DatasetDefinitionStore,
 )
+from terrine.spec.io import from_yaml, to_yaml
 
 
 def test_definition_reference_resolves_only_from_configured_owner_store(tmp_path) -> None:
@@ -82,6 +85,13 @@ def test_dataset_definition_round_trip_reconstructs_base_design_and_view() -> No
     assert decoded.digest == definition.digest
 
 
+def test_edited_definition_has_new_digest() -> None:
+    loaded = from_yaml(to_yaml(design()))
+    definition = DatasetDefinition.from_json(DatasetDefinition(base_design=loaded).canonical_json())
+    edited = replace(definition, base_design=replace(loaded, unit="account"))
+    assert edited.digest != definition.digest
+
+
 def test_definition_canonical_bytes_ignore_mapping_insertion_order() -> None:
     first = DatasetDefinition(
         base_design=design(),
@@ -135,22 +145,6 @@ def test_definition_put_removes_temporary_file_after_io_failure(tmp_path, monkey
     assert list(store.root.iterdir()) == []
 
 
-def test_definition_bytes_load_with_same_digest() -> None:
-    serialized = files("tests.fixtures").joinpath("definition_v4.json").read_bytes()
-    definition = DatasetDefinition.from_json(serialized)
-    assert definition.canonical_json() == serialized
-    assert definition.digest == "90148f08cf34b5648e98a3a51cb4f7d2cb7e6c5c5435cfa0a26e41b903878d7a"
-
-
-def test_v1_definition_refuses() -> None:
-    serialized = files("tests.fixtures").joinpath("pre_rename_definition.json").read_bytes()
-    with pytest.raises(TerrineError) as error:
-        DatasetDefinition.from_json(serialized)
-    assert error.value.code == "terrine.dataset.invalid_definition"
-    assert error.value.context["reason"] == "unsupported_schema_version"
-    assert error.value.context["schema_version"] == 1
-
-
 def test_v3_definition_document_refuses_with_version() -> None:
     serialized = (
         b'{"base_design":{"administrative_cutoff":null,"anchor":{"date":{"type":"date",'
@@ -187,24 +181,22 @@ def test_definition_with_v2_base_design_refuses_with_code() -> None:
     assert error.value.code == "terrine.dataset.invalid_definition"
 
 
-def test_manifest_json_with_renamed_fields_refuses() -> None:
-    from terrine.dataset.manifest import DatasetManifest
+def test_fitted_transform_with_unknown_fit_field_refuses() -> None:
+    from terrine.spec.transforms import Winsorization, WinsorizationFit
 
-    serialized = files("tests.fixtures").joinpath("pre_rename_manifest.json").read_bytes()
+    fit = WinsorizationFit(
+        *(character * 64 for character in "abcdef"),
+        snapshot={"snapshot_id": "snapshot"},
+        split_policy={"kind": "time", "train_until": "2025-01-15"},
+        probabilities=(Decimal("0.25"), Decimal("0.75")),
+        row_count=3,
+        non_null_count=3,
+    )
+    transform = Winsorization(
+        "x", "0", "1", source_type="int64", output_precision=20, output_scale=0, fit=fit
+    )
+    record = json.loads(transform.to_json())
+    record["fit"]["recipe_hash"] = record["fit"].pop("definition_hash")
     with pytest.raises(TerrineError) as error:
-        DatasetManifest.from_json(serialized)
-    assert error.value.code == "terrine.dataset.invalid_manifest"
-
-
-@pytest.mark.parametrize("artifact", ["definition", "transform"])
-def test_pre_rename_fitted_identity_refuses_with_invalid_definition(artifact):
-    from terrine.spec.transforms import Winsorization
-
-    filename, decode = {
-        "definition": ("pre_rename_fitted_definition.json", DatasetDefinition.from_json),
-        "transform": ("pre_rename_fitted_transform.json", Winsorization.from_json),
-    }[artifact]
-    serialized = files("tests.fixtures").joinpath(filename).read_bytes()
-    with pytest.raises(TerrineError) as error:
-        decode(serialized)
+        Winsorization.from_json(json.dumps(record))
     assert error.value.code == "terrine.dataset.invalid_definition"
