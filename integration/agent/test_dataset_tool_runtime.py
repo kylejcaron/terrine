@@ -101,10 +101,11 @@ def shared_tools(owner_world, request):
         for character in request.node.name
     )
     reference = ModelReference.from_model(model, owner_key=owner.reference)
+    expected_reference = reference
 
     class Resolver:
-        def resolve(self, requested):
-            assert requested == reference
+        def resolve(self, reference):
+            assert reference == expected_reference
             return model
 
     policy = AgentPolicy(
