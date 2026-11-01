@@ -32,10 +32,10 @@ class ViewRecord(BaseModel):
 class GroupRecord(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
     kind: Literal["group"]
-    group: str
-    train_fraction: str
-    validation_fraction: str
-    seed: int
+    group: str = "unit"
+    train_fraction: str = "0.8"
+    validation_fraction: str = "0.1"
+    seed: int = 0
     codec: Literal["terrine.group.v1"]
 
 
@@ -43,16 +43,16 @@ class TimeRecord(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
     kind: Literal["time"]
     train_until: str
-    validation_until: str | None
-    embargo_microseconds: Annotated[int, Field(ge=0)]
-    groups: GroupRecord | None
+    validation_until: str | None = None
+    embargo_microseconds: Annotated[int, Field(ge=0)] = 0
+    groups: GroupRecord | None = None
 
 
 class TrainingView(ViewRecord):
     kind: Literal["training"]
     labels: Annotated[tuple[str, ...], Field(min_length=1)]
-    incomplete_labels: Literal["drop", "keep"]
-    split: Annotated[TimeRecord | GroupRecord, Field(discriminator="kind")] | None
+    incomplete_labels: Literal["drop", "keep"] = "drop"
+    split: Annotated[TimeRecord | GroupRecord, Field(discriminator="kind")] | None = None
 
     @field_validator("labels")
     @classmethod
@@ -63,7 +63,7 @@ class TrainingView(ViewRecord):
 class ScoringView(ViewRecord):
     kind: Literal["scoring"]
     as_of: str
-    eligibility: dict[str, Any]
+    eligibility: dict[str, Any] = Field(default_factory=dict)
     parent_design_hash: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 
     @field_validator("as_of")
@@ -78,25 +78,26 @@ _VIEW = TypeAdapter(Annotated[TrainingView | ScoringView, Field(discriminator="k
 
 def parse_definition(serialized: str, model: Model) -> DatasetDefinition:
     definition = DatasetDefinition.from_json(serialized).resolve_unit(model)
-    if definition.view is not None:
+    view = definition._complete_view()
+    if view is not None:
         try:
             _VIEW.validate_json(json.dumps(thaw(definition.view)))
-            if definition.view["kind"] == "training" and definition.view["split"] is not None:
+            if view["kind"] == "training" and view["split"] is not None:
                 with parameter_names(record="split"):
-                    policy_from_record(thaw(definition.view["split"]))
+                    policy_from_record(view["split"])
         except TerrineError:
             raise
         except (ValueError, OverflowError) as error:
             raise INVALID_DEFINITION.error(
                 reason="use the discovered typed training or scoring view"
             ) from error
-        if definition.view["kind"] == "scoring":
+        if view["kind"] == "scoring":
             design = definition.base_design
             if (
                 design.shape != "cross_section"
                 or not isinstance(design.anchor, FixedDate)
                 or design.outcomes
-                or set(definition.view["features"]) != set(design.features)
+                or set(view["features"]) != set(design.features)
             ):
                 raise INVALID_DEFINITION.error(
                     reason="scoring view must match its fixed feature-only base Design"
@@ -105,12 +106,12 @@ def parse_definition(serialized: str, model: Model) -> DatasetDefinition:
             resolved = (
                 utc_instant(anchor) if isinstance(anchor, datetime) else model.day_boundary(anchor)
             )
-            if utc_instant(definition.view["as_of"]) != resolved:
+            if utc_instant(view["as_of"]) != resolved:
                 raise INVALID_DEFINITION.error(
                     reason="scoring instant must match its base Design anchor"
                 )
             document = json.loads(definition.canonical_json())["base_design"]
-            document["eligibility"] = thaw(definition.view["eligibility"])
+            document["eligibility"] = view["eligibility"]
             try:
                 eligibility_design = from_json(
                     json.dumps({"schema_version": DESIGN_SCHEMA_VERSION, "design": document})
@@ -140,7 +141,7 @@ def definition_schema() -> dict[str, Any]:
         "$defs": definitions,
         "type": "object",
         "additionalProperties": False,
-        "required": ["schema_version", "base_design", "view"],
+        "required": ["schema_version", "base_design"],
         "properties": {
             "schema_version": {"const": SCHEMA_VERSION},
             "base_design": {"$ref": "#/$defs/Design"},

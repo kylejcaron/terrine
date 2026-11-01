@@ -6,7 +6,7 @@ import hashlib
 import json
 import os
 import tempfile
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -14,7 +14,13 @@ from typing import Any
 from terrine.errors import INVALID_VIEW, RefusalSpec, freeze, parameter_names, thaw
 from terrine.spec.design import Design
 from terrine.spec.io import SCHEMA_VERSION as DESIGN_SCHEMA_VERSION
-from terrine.spec.io import _canonical_bytes, _design_payload, _load, canonical_digest
+from terrine.spec.io import (
+    _canonical_bytes,
+    _design_payload,
+    _drop_defaults,
+    _load,
+    canonical_digest,
+)
 from terrine.spec.transforms import Winsorization
 
 __all__ = [
@@ -39,6 +45,11 @@ UNSUPPORTED_VIEW = RefusalSpec(
     "terrine.dataset.unsupported_view",
     "Unsupported dataset view: {reason}.",
 )
+# Encoded defaults of view fields: a view omits a field equal to its default.
+_VIEW_DEFAULTS: Mapping[str, Mapping[str, Any]] = {
+    "training": {"incomplete_labels": "drop", "split": None},
+    "scoring": {"eligibility": {}},
+}
 
 
 def _validate_schema_version(value: Any) -> None:
@@ -93,6 +104,12 @@ class DatasetDefinition:
             }
             if kind not in fields or set(view) - fields[kind]:
                 raise INVALID_DEFINITION.error(reason="unknown view tag or field")
+            view = _drop_defaults(view, _VIEW_DEFAULTS[kind])
+            if "split" in view:
+                from importlib import import_module
+
+                splits = import_module("terrine.dataset.splits")
+                view["split"] = splits._canonical_record(view["split"])
             try:
                 view = freeze(view)
             except (TypeError, ValueError) as error:
@@ -146,12 +163,18 @@ class DatasetDefinition:
             transforms=self.transforms,
         )
 
+    def _complete_view(self) -> dict[str, Any] | None:
+        """Return the recorded view with every omitted default supplied."""
+        if self.view is None:
+            return None
+        return thaw({**_VIEW_DEFAULTS[self.view["kind"]], **self.view})
+
     def build(self, model: Any):
         """Reconstruct the recorded view and frozen transforms without refitting."""
         frame = self.base_design.build(model)
-        view = thaw(self.view)
+        view = self._complete_view()
         if view is not None and view["kind"] == "training":
-            split = view.get("split")
+            split = view["split"]
             if split is not None:
                 from importlib import import_module
 

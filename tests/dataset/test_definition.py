@@ -85,6 +85,67 @@ def test_dataset_definition_round_trip_reconstructs_base_design_and_view() -> No
     assert decoded.digest == definition.digest
 
 
+def test_definition_nested_records_omit_default_fields() -> None:
+    from terrine.dataset.splits import GroupSplit, TimeSplit, policy_from_record
+    from terrine.spec.transforms import Winsorization
+
+    groups = {
+        "kind": "group",
+        "group": "unit",
+        "train_fraction": "0.8",
+        "validation_fraction": "0.1",
+        "seed": 0,
+        "codec": "terrine.group.v1",
+    }
+    split = {
+        "kind": "time",
+        "train_until": "2025-01-15",
+        "validation_until": None,
+        "embargo_microseconds": 0,
+        "groups": groups,
+    }
+    definition = DatasetDefinition(
+        base_design=design(),
+        view={
+            "kind": "training",
+            "features": ["x"],
+            "labels": ["y"],
+            "incomplete_labels": "drop",
+            "split": split,
+        },
+        transforms=(
+            Winsorization("x", "0", "1", source_type="int64", output_precision=20, output_scale=0),
+        ),
+    )
+    payload = json.loads(definition.canonical_json())
+    assert payload["view"] == {
+        "kind": "training",
+        "features": ["x"],
+        "labels": ["y"],
+        "split": {
+            "kind": "time",
+            "train_until": "2025-01-15",
+            "groups": {"kind": "group", "codec": "terrine.group.v1"},
+        },
+    }
+    assert payload["transforms"] == [
+        {
+            "kind": "winsorization",
+            "schema_version": 1,
+            "column": "x",
+            "lower": "0",
+            "upper": "1",
+            "source_type": "int64",
+            "output_precision": 20,
+            "output_scale": 0,
+        }
+    ]
+    assert DatasetDefinition.from_json(definition.canonical_json()) == definition
+    assert policy_from_record(payload["view"]["split"]) == TimeSplit(
+        train_until="2025-01-15", groups=GroupSplit()
+    )
+
+
 def test_edited_definition_has_new_digest() -> None:
     loaded = from_yaml(to_yaml(design()))
     definition = DatasetDefinition.from_json(DatasetDefinition(base_design=loaded).canonical_json())

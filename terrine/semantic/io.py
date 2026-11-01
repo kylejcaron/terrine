@@ -146,21 +146,29 @@ def load_catalog_text(text: str) -> Catalog:
     return validate_catalog(value)
 
 
-def _without_defaults(value: Any, payload: Any) -> Any:
+def _normalized(value: Any) -> Any:
+    """Compare sealed record values with declared defaults: sequences as tuples, maps as dicts."""
+    if isinstance(value, Mapping):
+        return {key: _normalized(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return tuple(_normalized(item) for item in value)
+    return value
+
+
+def _prune_defaults(value: Any, payload: Any) -> Any:
     if isinstance(value, BaseModel):
         fields = type(value).model_fields
         return {
-            name: _without_defaults(getattr(value, name), item)
+            name: _prune_defaults(getattr(value, name), item)
             for name, item in payload.items()
             if fields[name].is_required()
-            or getattr(value, name) != fields[name].get_default(call_default_factory=True)
+            or _normalized(getattr(value, name))
+            != _normalized(fields[name].get_default(call_default_factory=True))
         }
     if isinstance(value, Mapping):
-        return {key: _without_defaults(value[key], item) for key, item in payload.items()}
+        return {key: _prune_defaults(value[key], item) for key, item in payload.items()}
     if isinstance(value, (list, tuple)):
-        return [
-            _without_defaults(item, dumped) for item, dumped in zip(value, payload, strict=True)
-        ]
+        return [_prune_defaults(item, dumped) for item, dumped in zip(value, payload, strict=True)]
     return payload
 
 
@@ -172,7 +180,7 @@ def catalog_payload(catalog: Catalog) -> dict[str, Any]:
     serialize their sealed values through a field serializer, which pydantic's
     ``exclude_defaults`` ignores, so defaults are pruned against the record fields here.
     """
-    return _without_defaults(catalog, catalog.model_dump(mode="json"))
+    return _prune_defaults(catalog, catalog.model_dump(mode="json"))
 
 
 def dump_catalog(catalog: Catalog) -> str:

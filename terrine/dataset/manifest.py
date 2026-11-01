@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 import re
@@ -97,6 +98,9 @@ class DatasetManifest:
     frame_metadata: Any = None
     # Digest recorded with a stored manifest; empty computes it from the definition.
     definition_hash: str = ""
+    # Verified stored inline definition payload; set only on a manifest read by from_json, so an
+    # unchanged loaded manifest writes back the exact payload its recorded digest verifies.
+    _stored_definition: Any = dataclasses.field(default=None, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if self.schema_version != 1 or type(self.schema_version) is not int:
@@ -142,10 +146,8 @@ class DatasetManifest:
         object.__setattr__(self, "columns", tuple(self.columns))
 
     def to_json(self) -> str:
-        payload = {
+        payload: dict[str, Any] = {
             "schema_version": 1,
-            "definition": self.definition._payload(),
-            "definition_hash": self.definition_hash,
             "generation": {
                 "dataset_id": self.generation.dataset_id,
                 "generation_id": self.generation.generation_id,
@@ -173,11 +175,17 @@ class DatasetManifest:
         if self.frame_metadata is not None:
             payload["frame_metadata"] = thaw(self.frame_metadata)
         if self.definition_reference is not None:
-            del payload["definition"]
             payload["definition_reference"] = {
                 "owner": self.definition_reference.owner,
                 "digest": self.definition_reference.digest,
             }
+            payload["definition_hash"] = self.definition_hash
+        elif self._stored_definition is not None:
+            payload["definition"] = thaw(self._stored_definition)
+            payload["definition_hash"] = self.definition_hash
+        else:
+            payload["definition"] = self.definition._payload()
+            payload["definition_hash"] = canonical_digest(payload["definition"])
         return _canonical_bytes(payload).decode("utf-8")
 
     @property
@@ -217,7 +225,7 @@ class DatasetManifest:
                 or type(payload["schema_version"]) is not int
             ):
                 raise _INVALID.error(reason="malformed_manifest")
-            reference, recorded = None, payload["definition_hash"]
+            reference, recorded, stored = None, payload["definition_hash"], None
             if is_reference:
                 if definition_store is None:
                     raise _INVALID.error(reason="definition_storage_required")
@@ -245,7 +253,7 @@ class DatasetManifest:
             if not isinstance(payload["columns"], list):
                 raise _INVALID.error(reason="invalid_columns")
             columns = tuple(ManifestColumn(**col) for col in payload["columns"])
-            return cls(
+            manifest = cls(
                 definition,
                 ManifestGeneration(**gen),
                 columns,
@@ -261,6 +269,9 @@ class DatasetManifest:
                 payload.get("frame_metadata"),
                 recorded,
             )
+            if stored is not None:
+                object.__setattr__(manifest, "_stored_definition", freeze(stored))
+            return manifest
         except (KeyError, TypeError, ValueError, OverflowError) as error:
             if getattr(error, "code", None) == _INVALID.code:
                 raise

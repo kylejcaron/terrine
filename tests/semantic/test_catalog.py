@@ -81,6 +81,8 @@ def test_model_identity_survives_catalog_gaining_defaulted_field():
 
     class AnnotatedCatalog(Catalog):
         description: str | None = None
+        labels: list[str] = []
+        owners: dict[str, list[str]] = {}
 
     con = ibis.duckdb.connect()
     con.create_table(

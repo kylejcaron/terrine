@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta, tzinfo
 from decimal import Decimal
@@ -14,6 +15,7 @@ from typing import Any, Literal
 import terrine.reasons as reason_codes
 from terrine.errors import RefusalSpec, TerrineError
 from terrine.semantic.time import instant
+from terrine.spec.io import _drop_defaults
 
 __all__ = [
     "TimeSplit",
@@ -223,26 +225,63 @@ class GroupSplit:
         object.__setattr__(self, "seed", seed)
 
     def to_record(self) -> dict[str, Any]:
-        return {
-            "kind": "group",
-            "group": self.group,
-            "train_fraction": str(self.train_fraction),
-            "validation_fraction": str(self.validation_fraction),
-            "seed": self.seed,
-            "codec": "terrine.group.v1",
-        }
+        return _drop_defaults(
+            {
+                "kind": "group",
+                "group": self.group,
+                "train_fraction": str(self.train_fraction),
+                "validation_fraction": str(self.validation_fraction),
+                "seed": self.seed,
+                "codec": "terrine.group.v1",
+            },
+            _GROUP_DEFAULTS,
+        )
+
+
+# Encoded defaults: records omit a field equal to its default and decoders supply it.
+_GROUP_DEFAULTS: Mapping[str, Any] = {
+    "group": "unit",
+    "train_fraction": "0.8",
+    "validation_fraction": "0.1",
+    "seed": 0,
+}
+_TIME_DEFAULTS: Mapping[str, Any] = {
+    "validation_until": None,
+    "embargo_microseconds": 0,
+    "groups": None,
+}
 
 
 def _time_record(policy: TimeSplit) -> dict[str, Any]:
-    return {
-        "kind": "time",
-        "train_until": policy.train_until.isoformat(),
-        "validation_until": None
-        if policy.validation_until is None
-        else policy.validation_until.isoformat(),
-        "embargo_microseconds": policy.embargo // timedelta(microseconds=1),
-        "groups": None if policy.groups is None else policy.groups.to_record(),
-    }
+    return _drop_defaults(
+        {
+            "kind": "time",
+            "train_until": policy.train_until.isoformat(),
+            "validation_until": None
+            if policy.validation_until is None
+            else policy.validation_until.isoformat(),
+            "embargo_microseconds": policy.embargo // timedelta(microseconds=1),
+            "groups": None if policy.groups is None else policy.groups.to_record(),
+        },
+        _TIME_DEFAULTS,
+    )
+
+
+def _canonical_record(record: Any) -> Any:
+    """Return a split record with default-valued fields omitted, without validating it.
+
+    Values that are not recognizable split records pass through unchanged, so validation and
+    its refusals stay with ``policy_from_record``.
+    """
+    if not isinstance(record, Mapping):
+        return record
+    defaults = {"group": _GROUP_DEFAULTS, "time": _TIME_DEFAULTS}.get(record.get("kind"))
+    if defaults is None:
+        return record
+    canonical = _drop_defaults(record, defaults)
+    if "groups" in canonical:
+        canonical["groups"] = _canonical_record(canonical["groups"])
+    return canonical
 
 
 def policy_from_record(record: dict[str, Any]) -> TimeSplit | GroupSplit:
@@ -250,25 +289,24 @@ def policy_from_record(record: dict[str, Any]) -> TimeSplit | GroupSplit:
     if not isinstance(record, dict):
         raise _INVALID.error(reason="unknown_record", field="record")
     try:
+        group_fields = {"kind", "codec"}
         if (
             record.get("kind") == "group"
-            and set(record)
-            == {"kind", "group", "train_fraction", "validation_fraction", "seed", "codec"}
+            and group_fields <= set(record) <= group_fields | set(_GROUP_DEFAULTS)
             and record["codec"] == "terrine.group.v1"
         ):
+            record = {**_GROUP_DEFAULTS, **record}
             return GroupSplit(
                 group=record["group"],
                 train_fraction=float(record["train_fraction"]),
                 validation_fraction=float(record["validation_fraction"]),
                 seed=record["seed"],
             )
-        if record.get("kind") == "time" and set(record) == {
-            "kind",
-            "train_until",
-            "validation_until",
-            "embargo_microseconds",
-            "groups",
-        }:
+        time_fields = {"kind", "train_until"}
+        if record.get("kind") == "time" and time_fields <= set(record) <= time_fields | set(
+            _TIME_DEFAULTS
+        ):
+            record = {**_TIME_DEFAULTS, **record}
             groups = None if record["groups"] is None else policy_from_record(record["groups"])
             if groups is not None and not isinstance(groups, GroupSplit):
                 raise _INVALID.error(reason="unknown_record", field="groups")

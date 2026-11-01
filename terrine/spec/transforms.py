@@ -10,8 +10,19 @@ from decimal import Decimal, InvalidOperation
 from typing import Any, Literal
 
 from terrine.errors import RefusalSpec, TerrineError, freeze, thaw
+from terrine.spec.io import _drop_defaults
 
 __all__ = ["Winsorization", "WinsorizationFit"]
+
+# Encoded defaults: records omit a field equal to its default and decoders supply it.
+_FIT_DEFAULTS: Mapping[str, Any] = {"algorithm": "linear_type7", "version": "1"}
+_TRANSFORM_DEFAULTS: Mapping[str, Any] = {
+    "stage": "post_aggregation",
+    "source_type": None,
+    "output_precision": None,
+    "output_scale": None,
+    "fit": None,
+}
 
 INVALID_WINSORIZATION = RefusalSpec(
     "terrine.transform.invalid_winsorization", "Invalid winsorization: {reason}. {route}"
@@ -104,27 +115,30 @@ class WinsorizationFit:
         object.__setattr__(self, "split_policy", freeze(self.split_policy))
 
     def to_record(self) -> dict[str, Any]:
-        return {
-            "definition_hash": self.definition_hash,
-            "view_hash": self.view_hash,
-            "design_hash": self.design_hash,
-            "model_hash": self.model_hash,
-            "feature_definition_hash": self.feature_definition_hash,
-            "population_hash": self.population_hash,
-            "snapshot": thaw(self.snapshot),
-            "split_policy": thaw(self.split_policy),
-            "probabilities": [decimal_string(value) for value in self.probabilities],
-            "row_count": self.row_count,
-            "non_null_count": self.non_null_count,
-            "algorithm": self.algorithm,
-            "version": self.version,
-        }
+        return _drop_defaults(
+            {
+                "definition_hash": self.definition_hash,
+                "view_hash": self.view_hash,
+                "design_hash": self.design_hash,
+                "model_hash": self.model_hash,
+                "feature_definition_hash": self.feature_definition_hash,
+                "population_hash": self.population_hash,
+                "snapshot": thaw(self.snapshot),
+                "split_policy": thaw(self.split_policy),
+                "probabilities": [decimal_string(value) for value in self.probabilities],
+                "row_count": self.row_count,
+                "non_null_count": self.non_null_count,
+                "algorithm": self.algorithm,
+                "version": self.version,
+            },
+            _FIT_DEFAULTS,
+        )
 
     @classmethod
     def from_record(cls, value: Any) -> WinsorizationFit:
         from terrine.spec.dataset import INVALID_DEFINITION
 
-        fields = {
+        required = {
             "definition_hash",
             "view_hash",
             "design_hash",
@@ -136,10 +150,10 @@ class WinsorizationFit:
             "probabilities",
             "row_count",
             "non_null_count",
-            "algorithm",
-            "version",
         }
-        if not isinstance(value, dict) or set(value) != fields:
+        if not isinstance(value, dict) or not required <= set(value) <= required | set(
+            _FIT_DEFAULTS
+        ):
             raise INVALID_DEFINITION.error(reason="invalid fitted definition identity record")
         if (
             not isinstance(value["probabilities"], list)
@@ -147,7 +161,7 @@ class WinsorizationFit:
             or any(not isinstance(p, str) for p in value["probabilities"])
         ):
             raise _invalid("serialized probabilities must be two decimal strings")
-        record: dict[str, Any] = dict(value)
+        record: dict[str, Any] = {**_FIT_DEFAULTS, **value}
         record["probabilities"] = tuple(decimal_value(p) for p in value["probabilities"])
         return cls(**record)
 
@@ -220,18 +234,21 @@ class Winsorization:
         object.__setattr__(self, "upper", upper)
 
     def to_record(self) -> dict[str, Any]:
-        return {
-            "kind": "winsorization",
-            "schema_version": 1,
-            "column": self.column,
-            "lower": decimal_string(decimal_value(self.lower)),
-            "upper": decimal_string(decimal_value(self.upper)),
-            "stage": self.stage,
-            "source_type": self.source_type,
-            "output_precision": self.output_precision,
-            "output_scale": self.output_scale,
-            "fit": None if self.fit is None else self.fit.to_record(),
-        }
+        return _drop_defaults(
+            {
+                "kind": "winsorization",
+                "schema_version": 1,
+                "column": self.column,
+                "lower": decimal_string(decimal_value(self.lower)),
+                "upper": decimal_string(decimal_value(self.upper)),
+                "stage": self.stage,
+                "source_type": self.source_type,
+                "output_precision": self.output_precision,
+                "output_scale": self.output_scale,
+                "fit": None if self.fit is None else self.fit.to_record(),
+            },
+            _TRANSFORM_DEFAULTS,
+        )
 
     def to_json(self) -> bytes:
         return _canonical(self.to_record())
@@ -242,21 +259,10 @@ class Winsorization:
 
     @classmethod
     def from_record(cls, value: Any) -> Winsorization:
-        fields = {
-            "kind",
-            "schema_version",
-            "column",
-            "lower",
-            "upper",
-            "stage",
-            "source_type",
-            "output_precision",
-            "output_scale",
-            "fit",
-        }
+        required = {"kind", "schema_version", "column", "lower", "upper"}
         if (
             not isinstance(value, dict)
-            or set(value) != fields
+            or not required <= set(value) <= required | set(_TRANSFORM_DEFAULTS)
             or value["kind"] != "winsorization"
             or type(value["schema_version"]) is not int
             or value["schema_version"] != 1
@@ -264,6 +270,7 @@ class Winsorization:
             or not isinstance(value["upper"], str)
         ):
             raise _invalid("invalid transform record or version")
+        value = {**_TRANSFORM_DEFAULTS, **value}
         return cls(
             value["column"],
             lower=value["lower"],

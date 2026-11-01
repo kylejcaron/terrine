@@ -167,12 +167,18 @@ rewriting an old manifest's fields.
 A decoded manifest keeps the `definition_hash` recorded with it. Reading
 verifies it by hashing the stored definition JSON, or the stored bytes of a
 referenced definition, never by re-encoding the decoded definition, so a later
-encoder cannot invalidate a published generation. Reopening compares the
-decoded stored publication with the manifest being opened (ignoring only its
-`definition_reference`), so a manifest edited with `dataclasses.replace` refuses
-with `terrine.dataset.invalid_generation`.
+encoder cannot invalidate a published generation. `to_json()` on an unchanged
+loaded manifest writes back the stored definition its digest verifies; a
+manifest built or edited in memory writes its definition's current encoding and
+that encoding's digest. Reopening compares the decoded stored publication with
+the manifest being opened (ignoring only its `definition_reference`), so a
+manifest edited with `dataclasses.replace` refuses with
+`terrine.dataset.invalid_generation`.
 
-Fitted preprocessing records with unknown identity fields refuse with
+Definition documents omit default-valued fields throughout, including the view,
+its split policy and winsorization records (for example a `GroupSplit()` saves
+only its `kind` and `codec`); reading supplies the defaults. Fitted
+preprocessing records with unknown identity fields refuse with
 `terrine.dataset.invalid_definition`, whether embedded in a definition or loaded
 as a frozen transform. Refit from the original declared training population and
 save a new definition.

@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 from datetime import date
 from typing import Any, cast
 
@@ -155,6 +156,10 @@ def test_manifest_keeps_recorded_digest_of_its_stored_definition() -> None:
     reopened = DatasetManifest.from_json(json.dumps(payload))
     assert reopened.definition == manifest.definition
     assert reopened.definition_hash == payload["definition_hash"] != manifest.definition_hash
+    assert json.loads(reopened.to_json())["definition"] == payload["definition"]
+    assert DatasetManifest.from_json(reopened.to_json()) == reopened
+    edited = replace(reopened, columns=(ManifestColumn("unit", "string", "unit"),))
+    assert DatasetManifest.from_json(edited.to_json()).definition_hash == manifest.definition_hash
 
 
 @pytest.mark.parametrize(

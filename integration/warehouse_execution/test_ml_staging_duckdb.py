@@ -1158,7 +1158,7 @@ def test_percentile_threshold_fits_training_rows_only_and_freezes_definition(mod
     assert actual.table.equals(result.table)
     assert actual.columns == result.columns
     metadata = actual.columns["value"].transformation
-    assert metadata["stage"] == "post_aggregation"
+    assert Winsorization.from_record(thaw(metadata)) == fitted
     assert metadata["fit"]["definition_hash"] == fitted.fit.definition_hash
     assert actual.columns["label"] == result.columns["label"]
 

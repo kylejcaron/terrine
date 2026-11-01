@@ -130,9 +130,13 @@ def canonical_digest(payload: Mapping[str, Any]) -> str:
     return hashlib.sha256(_canonical_bytes(payload)).hexdigest()
 
 
-def _omit_defaults(name: str, node: dict[str, Any]) -> dict[str, Any]:
-    defaults = _DEFAULTS.get(name, {})
+def _drop_defaults(node: Mapping[str, Any], defaults: Mapping[str, Any]) -> dict[str, Any]:
+    """Omit every field of an encoded record whose value equals its encoded default."""
     return {key: item for key, item in node.items() if key not in defaults or item != defaults[key]}
+
+
+def _omit_defaults(name: str, node: dict[str, Any]) -> dict[str, Any]:
+    return _drop_defaults(node, _DEFAULTS.get(name, {}))
 
 
 def _fields(value: Any, name: str, required: set[str]) -> dict[str, Any]:

@@ -481,8 +481,8 @@ def test_winsorization_uses_frozen_explicit_bounds_at_declared_stage():
         assert metadata.window == original.columns["value"].window
         assert metadata.reason_column == original.columns["value"].reason_column
         assert metadata.complete_column == original.columns["value"].complete_column
-        assert metadata.transformation["stage"] == "post_aggregation"
-        assert metadata.transformation["fit"] is None
+        recorded = Winsorization.from_record(thaw(metadata.transformation))
+        assert (recorded.stage, recorded.fit) == ("post_aggregation", None)
         with pytest.raises(TerrineError) as escape:
             _ = transformed.expr
         assert escape.value.code == "terrine.transform.winsorization_expr_unsupported"
