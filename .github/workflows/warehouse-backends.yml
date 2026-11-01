@@ -63,7 +63,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: uv sync --locked --group dev --extra duckdb --extra postgres
-      - run: /usr/bin/time -f "terrine-pytest-cpu %U %S" make test-postgres
+      - run: PYTEST_TIME='/usr/bin/time -f "terrine-pytest-cpu %U %S"' make test-postgres
       - run: uv run python examples/postgres/dataset.py
         env:
           TERRINE_POSTGRES_URL: postgres://postgres:terrine@localhost:5432/terrine_test
@@ -94,7 +94,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: uv sync --locked --group dev --extra duckdb --extra snowflake
-      - run: /usr/bin/time -f "terrine-pytest-cpu %U %S" make test-snowflake
+      - run: PYTEST_TIME='/usr/bin/time -f "terrine-pytest-cpu %U %S"' make test-snowflake
       - run: uv run python examples/snowflake/dataset.py
 
   # Each probe owns a scratch dataset, but queries are billed: serialize runs.
@@ -123,5 +123,5 @@ jobs:
           echo "GOOGLE_APPLICATION_CREDENTIALS=$RUNNER_TEMP/gcp-sa.json" >> "$GITHUB_ENV"
         env: {SA_KEY: "${{ secrets.TERRINE_TEST_BIGQUERY_SA_KEY }}"}
       - run: uv sync --locked --group dev --extra duckdb --extra bigquery
-      - run: /usr/bin/time -f "terrine-pytest-cpu %U %S" make test-bigquery
+      - run: PYTEST_TIME='/usr/bin/time -f "terrine-pytest-cpu %U %S"' make test-bigquery
       - run: uv run python examples/bigquery/dataset.py

@@ -23,7 +23,11 @@ def test_summarize_adds_job_elapsed_and_pytest_cpu_markers():
         },
     ]
     logs = {
-        1: "x\nterrine-pytest-cpu 10.5 1.5\nterrine-pytest-cpu 2.0 0.0\n",
+        1: (
+            "x\n"
+            "2026-11-01T10:00:00.0000000Z terrine-pytest-cpu 10.5 1.5\n"
+            "2026-11-01T10:01:00.0000000Z terrine-pytest-cpu 2.0 0.0\n"
+        ),
         2: "no marker\n",
     }
 

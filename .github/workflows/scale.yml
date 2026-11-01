@@ -29,4 +29,4 @@ jobs:
         with:
           python-version: "3.12"
       - run: uv sync --locked --group dev --all-extras
-      - run: /usr/bin/time -f "terrine-pytest-cpu %U %S" make test-scale
+      - run: PYTEST_TIME='/usr/bin/time -f "terrine-pytest-cpu %U %S"' make test-scale

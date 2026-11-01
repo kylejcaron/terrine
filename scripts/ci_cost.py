@@ -13,7 +13,8 @@ from io import BytesIO
 from typing import Any
 
 _PYTEST_CPU_MARKER = re.compile(
-    r"^terrine-pytest-cpu ([0-9]+(?:\.[0-9]+)?) ([0-9]+(?:\.[0-9]+)?)$",
+    r"^(?:\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z )?"
+    r"terrine-pytest-cpu ([0-9]+(?:\.[0-9]+)?) ([0-9]+(?:\.[0-9]+)?)$",
     re.MULTILINE,
 )
 
