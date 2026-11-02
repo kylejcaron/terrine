@@ -27,6 +27,6 @@ jobs:
           enable-cache: true
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
+          python-version: "3.12"
       - run: uv sync --locked --group dev --all-extras
-      - run: make test-scale
+      - run: PYTEST_TIME='/usr/bin/time -f "terrine-pytest-cpu %U %S"' make test-scale

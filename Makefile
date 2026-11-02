@@ -5,6 +5,7 @@ SCALE_TESTS ?= integration
 MUTATION_CORES ?= 2
 MUTATION_SAMPLE ?= 1
 MUTATION_SEED ?= 20261025
+PYTEST_TIME ?=
 
 # Ordinary suite; scale checks are deselected by default.
 test:
@@ -22,7 +23,7 @@ mutate:
 
 # Scheduled scale tier: resource-bound scale, oracle and live-warehouse checks.
 test-scale:
-	uv run pytest $(SCALE_TESTS) -m scale
+	$(PYTEST_TIME) uv run pytest $(SCALE_TESTS) -m scale
 
 # Live PostgreSQL probes; requires TERRINE_TEST_POSTGRES_* settings and fails
 # without them. `uv run python -m tests.integration.postgres_scratch start` starts
@@ -30,21 +31,21 @@ test-scale:
 # and the DuckDB reference backend. The second run compiles the same conformance
 # known answers through the portable base expression policy on the server.
 test-postgres:
-	uv run --extra duckdb --extra postgres pytest integration -m postgres
-	uv run --extra duckdb --extra postgres pytest integration/conformance --generic-dialect -m postgres
+	$(PYTEST_TIME) uv run --extra duckdb --extra postgres pytest integration -m postgres
+	$(PYTEST_TIME) uv run --extra duckdb --extra postgres pytest integration/conformance --generic-dialect -m postgres
 
 # Live BigQuery probes; requires TERRINE_TEST_BIGQUERY_PROJECT/_DATASET and
 # credentials (GOOGLE_APPLICATION_CREDENTIALS, application-default, or
 # TERRINE_TEST_BIGQUERY_ACCESS_TOKEN="$(gcloud auth print-access-token)"), and
 # fails without them. Each probe creates and drops its own dataset.
 test-bigquery:
-	uv run --extra duckdb --extra bigquery pytest integration -m bigquery
+	$(PYTEST_TIME) uv run --extra duckdb --extra bigquery pytest integration -m bigquery
 
 # Live Snowflake probes; requires TERRINE_TEST_SNOWFLAKE_{ACCOUNT,USER,PRIVATE_KEY,
 # WAREHOUSE,DATABASE,SCHEMA} (key-pair service user) and fails without them. Each
 # probe creates and drops its own schema in the test database.
 test-snowflake:
-	uv run --extra duckdb --extra snowflake pytest integration -m snowflake
+	$(PYTEST_TIME) uv run --extra duckdb --extra snowflake pytest integration -m snowflake
 
 lint:
 	uv run ruff check terrine tests integration
