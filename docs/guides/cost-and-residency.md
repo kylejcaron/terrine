@@ -60,7 +60,7 @@ The [runtime guide](materialization-runtime.md) explains destination-scoped
 request replay, retained inputs, fencing and exact-generation reads. Executed
 local recovery cases live in
 [publication recovery](../../integration/warehouse_execution/test_duckdb_runtime_recovery.py)
-and [fresh-process dataset refresh](../../integration/warehouse_execution/test_ml_staging_duckdb.py).
+and [fresh-process dataset refresh](../../integration/warehouse_execution/test_ml_staging_exports.py).
 The [benchmark guide](../../benchmarks/README.md) links bounded local compiler
 measurements and the [saved local record](../../benchmarks/results/duckdb-scale-v2-small.json).
 These are measured workloads, not a promise of billion-row performance. Remote
