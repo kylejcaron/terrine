@@ -26,7 +26,7 @@ from terrine.data import (
     output_sort_keys,
 )
 from terrine.dataset.manifest import DatasetManifest, ManifestColumn, ManifestGeneration
-from terrine.errors import INVALID_VIEW, RefusalSpec
+from terrine.errors import INVALID_VIEW, RefusalSpec, TerrineError
 from terrine.execution.backend import backend_capabilities, backend_provider
 from terrine.runtime.api import RunReceipt, run_serialized_plan
 from terrine.runtime.backends.base import PublicationReceipt
@@ -41,6 +41,7 @@ from terrine.runtime.saved_plan import (
     SavedPlan,
     _bind_saved_plan,
 )
+from terrine.runtime.schema import check_runtime_schema, ensure_runtime_schema
 from terrine.runtime.snapshot import SnapshotAuthority
 from terrine.runtime.state import RuntimeStore
 from terrine.spec.dataset import DatasetDefinition
@@ -108,15 +109,14 @@ def _definition_for(frame: Any, *, include_transforms: bool = True) -> DatasetDe
             "split": None if training.split is None else training.split.to_record(),
         }
     elif frame._scoring_view is not None:
-        from terrine.spec.io import canonical_json
+        from terrine.spec.io import _encode
 
         scoring = frame._scoring_view
-        design_record = json.loads(canonical_json(frame._design))["design"]
         view = {
             "kind": "scoring",
             "features": list(scoring.features),
             "as_of": scoring.resolved_as_of.isoformat(),
-            "eligibility": design_record["eligibility"],
+            "eligibility": _encode(frame._design.eligibility),
             "parent_design_hash": scoring.parent_design_hash,
         }
     return DatasetDefinition(
@@ -191,6 +191,7 @@ class Dataset:
         if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", namespace):
             raise _GENERATION_INVALID.error()
         _require_runtime_reader(con)
+        check_runtime_schema(con.con, namespace)
         record = con.con.execute(
             f'SELECT manifest_json FROM "{namespace}".runtime_dataset_recipes '
             "WHERE dataset=? AND generation=?",
@@ -230,6 +231,7 @@ class Dataset:
         generation, namespace = self._manifest.generation, self._namespace
         if self._manifest.source_snapshots.get("owner") != _owner_for(self._con).reference:
             raise _GENERATION_INVALID.error()
+        check_runtime_schema(self._raw, namespace)
         record = self._raw.execute(
             "SELECT d.manifest_json,p.version,r.state "
             f'FROM "{namespace}".runtime_dataset_recipes d '
@@ -239,12 +241,13 @@ class Dataset:
             "AND p.generation=d.generation AND r.published_generation=d.generation",
             [generation.dataset_id, generation.generation_id],
         ).fetchone()
-        if (
-            record is None
-            or record[2] != "succeeded"
-            or record[0].encode("utf-8")
-            != replace(self._manifest, definition_reference=None).to_json().encode("utf-8")
-        ):
+        if record is None or record[2] != "succeeded":
+            raise _GENERATION_INVALID.error()
+        try:
+            published = DatasetManifest.from_json(record[0])
+        except TerrineError as error:
+            raise _GENERATION_INVALID.error() from error
+        if published != replace(self._manifest, definition_reference=None):
             raise _GENERATION_INVALID.error()
         self._receipt = PublicationReceipt(
             generation.dataset_id, generation.generation_id, record[1], generation.output_refs
@@ -619,10 +622,6 @@ def stage_frame(
     )
     saved.pin_snapshot(store)
     raw.execute(
-        f'CREATE TABLE IF NOT EXISTS "{namespace}".runtime_dataset_requests '
-        "(request_key VARCHAR PRIMARY KEY,recipe_json VARCHAR NOT NULL)"
-    )
-    raw.execute(
         f'INSERT INTO "{namespace}".runtime_dataset_requests VALUES (?,?)',
         [request_key, saved.to_json()],
     )
@@ -666,6 +665,7 @@ def dataset_from_run(
         raise _GENERATION_INVALID.error()
     table, raw = saved.destination.dataset, model.con.con
     plan = _bind_saved_plan(saved, namespace=namespace)
+    ensure_runtime_schema(raw, namespace)
     record = raw.execute(
         f"SELECT dataset,state,published_generation,request_key,fingerprint,destination_json "
         f'FROM "{namespace}".runtime_runs WHERE run_id=?',
@@ -684,19 +684,13 @@ def dataset_from_run(
         or ModelReference.from_model(model, owner_key=saved.model.owner_key) != saved.model
     ):
         raise _GENERATION_INVALID.error()
-    exists = raw.execute(
-        "SELECT 1 FROM information_schema.tables WHERE lower(table_schema)=lower(?) "
-        "AND table_name='runtime_dataset_recipes'",
-        [namespace],
+    prior = raw.execute(
+        f'SELECT manifest_json FROM "{namespace}".runtime_dataset_recipes '
+        "WHERE dataset=? AND generation=?",
+        [table, receipt.published_generation],
     ).fetchone()
-    if exists is not None:
-        prior = raw.execute(
-            f'SELECT manifest_json FROM "{namespace}".runtime_dataset_recipes '
-            "WHERE dataset=? AND generation=?",
-            [table, receipt.published_generation],
-        ).fetchone()
-        if prior is not None:
-            return Dataset(DatasetManifest.from_json(prior[0]), con=model.con, namespace=namespace)
+    if prior is not None:
+        return Dataset(DatasetManifest.from_json(prior[0]), con=model.con, namespace=namespace)
     definition = saved.restore_dataset_definition()
     if definition is None:
         raise _GENERATION_INVALID.error()
@@ -757,11 +751,6 @@ def dataset_from_run(
         coverage,
         None if definition.view is None else definition.view.get("split"),
         frame_metadata=metadata.to_metadata(),
-    )
-    raw.execute(
-        f'CREATE TABLE IF NOT EXISTS "{namespace}".runtime_dataset_recipes '
-        "(dataset VARCHAR,generation VARCHAR,recipe_json VARCHAR,request_key VARCHAR,"
-        "manifest_json VARCHAR,PRIMARY KEY(dataset,generation))"
     )
     raw.execute(
         f'INSERT INTO "{namespace}".runtime_dataset_recipes VALUES (?,?,?,?,?) '

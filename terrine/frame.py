@@ -285,7 +285,7 @@ def _feature_definition_hash(design: Design, features: tuple[str, ...], model: M
     payload = {
         "unit": record["unit"],
         "unit_binding": _definition_record(model.units.get(design.unit)),
-        "gap": record["gap"],
+        "gap": str(design.gap),
         "features": selected_records,
         "semantic": semantic,
     }

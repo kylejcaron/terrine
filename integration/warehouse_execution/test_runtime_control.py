@@ -17,28 +17,16 @@ def test_separate_process_status_and_cancel_use_owner_connection(tmp_path):
     con = duckdb.connect(str(database))
     store = RuntimeStore(con, namespace="owner")
     store.initialize()
-    from terrine.runtime.leases import LeaseStore
-
-    LeaseStore(con, namespace="owner").initialize()
-    con.execute(
-        "CREATE TABLE owner.runtime_runs (run_id VARCHAR PRIMARY KEY, dataset VARCHAR NOT NULL, "
-        "fingerprint VARCHAR NOT NULL, state VARCHAR NOT NULL, published_generation VARCHAR, "
-        "attempt_fence BIGINT)"
-    )
     # Model an active owner run so startup recovery does not mark it interrupted.
-    from terrine.runtime.leases import LeaseStore
-
-    LeaseStore(con, namespace="owner").initialize()
-    con.execute("INSERT INTO owner.runtime_runs VALUES ('r1','d','f','running',NULL,1)")
+    con.execute(
+        "INSERT INTO owner.runtime_runs "
+        "(run_id, dataset, fingerprint, state, attempt_fence, request_key, destination_json) "
+        "VALUES ('r1','d','f','running',1,?,?)",
+        ["req", '{"database":"out.duckdb","dataset":"d","schema":"analytics"}'],
+    )
     con.execute(
         "INSERT INTO owner.runtime_leases VALUES "
         "('dataset:d','r1',1,current_timestamp + INTERVAL '1 day')"
-    )
-    con.execute("ALTER TABLE owner.runtime_runs ADD COLUMN request_key VARCHAR")
-    con.execute("ALTER TABLE owner.runtime_runs ADD COLUMN destination_json VARCHAR")
-    con.execute(
-        "UPDATE owner.runtime_runs SET request_key=?, destination_json=?",
-        ["req", '{"database":"out.duckdb","dataset":"d","schema":"analytics"}'],
     )
     endpoint = ControlEndpoint(Path(f"/tmp/terrine-control-{os.getpid()}.sock"))
     server = ControlServer(store, namespace="owner", endpoint=endpoint)

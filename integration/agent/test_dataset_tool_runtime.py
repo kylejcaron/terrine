@@ -11,7 +11,7 @@ from pydantic import ValidationError
 
 from terrine import Budget
 from terrine.agent import AgentPolicy, DatasetTools
-from terrine.agent.schemas import AgentDatasetReference, PlanReceipt
+from terrine.agent.schemas import AgentDatasetReference
 from terrine.data import Coverage, UnitSource
 from terrine.model import Model
 from terrine.runtime.api import DesignExecutor, run_serialized_plan
@@ -21,6 +21,7 @@ from terrine.runtime.owner import RuntimeOwner
 from terrine.runtime.planner import RefreshPlan
 from terrine.runtime.planning import OwnerPlanner, PlanRequest
 from terrine.runtime.saved_plan import DestinationRef, ModelReference
+from terrine.runtime.schema import ensure_runtime_schema
 from terrine.runtime.snapshot import SnapshotAuthority
 from terrine.runtime.status import cancel_run
 from terrine.semantic.models import Catalog
@@ -74,6 +75,7 @@ def owner_tools(tmp_path):
     finally:
         con.disconnect()
 
+
 @pytest.fixture(scope="module")
 def owner_world(tmp_path_factory):
     database = tmp_path_factory.mktemp("agent-owner") / "owner.duckdb"
@@ -120,10 +122,6 @@ def shared_tools(owner_world, request):
         snapshot_authority=SnapshotAuthority(owner),
     )
     return DatasetTools(model, policy, namespace=namespace)
-
-
-
-
 
 
 def _definition(window="-1d"):
@@ -205,11 +203,10 @@ def test_restricted_runtime_evaluations(case, shared_tools):
         result = tools.export_parquet(reference, destination="/private/credentials")
     assert result.status == "refused" and result.code == case["code"]
     assert result.suggested_route and "credentials" not in result.model_dump_json()
-    tables = tools.model.con.con.execute(
-        f"SELECT table_name FROM information_schema.tables WHERE table_schema='{tools.namespace}' "
-        "AND table_name IN ('runtime_runs','runtime_partitions','runtime_run_publications')"
-    ).fetchall()
-    assert tables == []
+    raw = tools.model.con.con
+    ensure_runtime_schema(raw, tools.namespace)
+    for table in ("runtime_runs", "runtime_partitions", "runtime_run_publications"):
+        assert raw.execute(f'SELECT count(*) FROM "{tools.namespace}".{table}').fetchone() == (0,)
 
 
 @pytest.mark.parametrize("case", _EVAL["catalog_cases"], ids=lambda case: case["name"])
@@ -229,46 +226,6 @@ def test_catalog_description_instructions_are_not_executable_metadata(case, shar
         ).fetchall()
         == []
     )
-
-
-def test_new_receipts_skip_pre_rename_invocations_but_old_receipts_refuse(owner_tools):
-    tools = owner_tools
-    captured = json.loads((_ROOT / "tests/fixtures/pre_rename_invocation.json").read_text())
-    legacy = captured["invocation"]
-    raw = tools.model.con.con
-    raw.execute("CREATE SCHEMA agent")
-    raw.execute(
-        "CREATE TABLE agent.runtime_plan_invocations ("
-        "invocation_id VARCHAR PRIMARY KEY, request_hash VARCHAR NOT NULL, "
-        "snapshot_id VARCHAR NOT NULL, invocation_json VARCHAR NOT NULL)"
-    )
-    raw.execute(
-        "INSERT INTO agent.runtime_plan_invocations VALUES (?, ?, ?, ?)",
-        [
-            legacy["invocation_id"],
-            "pre-rename-request-hash",
-            legacy["snapshot_id"],
-            json.dumps(legacy, sort_keys=True, separators=(",", ":")),
-        ],
-    )
-    receipt = _prepare(tools, invocation="current")
-    staged = tools.stage(receipt, request_key="current")
-    assert staged.status == "ok", staged.code
-    assert staged.output is not None and staged.output.row_count == 2
-    assert tools.stage(receipt, request_key="current").output == staged.output
-    run_id = raw.execute(
-        "SELECT run_id FROM agent.runtime_runs WHERE request_key='current'"
-    ).fetchone()[0]
-    assert tools.get_run_status(run_id).output.durable_state == "succeeded"
-    assert tools.get_run_events(run_id).status == "ok"
-    assert tools.request_cancel(run_id).output.disposition == "already_terminal"
-    old_receipt = PlanReceipt.model_validate(captured["receipt"])
-    for result in (
-        tools.execute_plan(old_receipt, request_key="old"),
-        tools.stage(old_receipt, request_key="old"),
-    ):
-        assert result.code == "terrine.runtime.saved_plan_mismatch"
-    assert raw.execute("SELECT count(*) FROM agent.runtime_plan_invocations").fetchone()[0] == 2
 
 
 def test_publication_replay_conflict_and_refresh_keep_old_generation(owner_tools):

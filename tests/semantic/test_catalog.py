@@ -74,6 +74,36 @@ def test_from_catalog_mapping_binds_same_model_as_catalog():
     assert error.value.context == {"reason": "wrong_type", "field": "event_ids"}
 
 
+def test_model_identity_survives_catalog_gaining_defaulted_field():
+    import ibis
+
+    from terrine.runtime.saved_plan import ModelReference
+
+    class AnnotatedCatalog(Catalog):
+        description: str | None = None
+        labels: list[str] = []
+        owners: dict[str, list[str]] = {}
+
+    con = ibis.duckdb.connect()
+    con.create_table(
+        "events",
+        schema=ibis.schema({"ts": "timestamp", "user_id": "int64", "workspace_id": "int64"}),
+    )
+    con.create_table(
+        "accounts", schema=ibis.schema({"workspace_id": "int64", "changed_at": "timestamp"})
+    )
+    readiness = {"events": Coverage("2025-01-01", "2025-02-01")}
+    plain = Model.from_catalog(Catalog.model_validate(CATALOG), con=con, readiness=readiness)
+    annotated = Model.from_catalog(
+        AnnotatedCatalog.model_validate(CATALOG), con=con, readiness=readiness
+    )
+    assert annotated.model_hash == plain.model_hash
+    assert ModelReference.from_model(annotated, owner_key="owner") == ModelReference.from_model(
+        plain, owner_key="owner"
+    )
+    assert dump_catalog(annotated.catalog) == dump_catalog(plain.catalog)
+
+
 @pytest.mark.parametrize("version", [1, 3, "2", None])
 def test_unsupported_schema_version_refuses_before_field_diagnostics(version):
     document = {**CATALOG, "schema_version": version, "surprise": True}

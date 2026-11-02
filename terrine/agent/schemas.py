@@ -199,6 +199,12 @@ class Response[T](Record):
 
 
 _CONTEXT_FIELDS = frozenset({"operation", "kind", "name", "role", "gap", "shape", "limit", "route"})
+# Fixed-vocabulary facts that let an agent tell apart the variants of one refusal.
+_CODE_CONTEXT_FIELDS = {
+    "terrine.runtime.schema_unsupported": frozenset(
+        {"namespace", "reason", "found_version", "supported_version"}
+    ),
+}
 _ROUTES = {
     "terrine.design.invalid": "Use get_design_schema and design_example to construct a Design.",
     "terrine.design.missing_reference": "Choose a name from inspect_catalog.",
@@ -213,12 +219,17 @@ _ROUTES = {
     "terrine.agent.request_limit": (
         "Ask the owner to create a new tool session with an approved request budget."
     ),
+    "terrine.runtime.schema_unsupported": (
+        "Ask the owner to stage again into a new runtime namespace or owner database, "
+        "or to open a newer namespace with the release that wrote it."
+    ),
 }
 
 
 def refusal_response(error: TerrineError) -> Response[Any]:
     """Project stable refusal fields without backend messages or arbitrary context."""
-    context = {key: value for key, value in error.context.items() if key in _CONTEXT_FIELDS}
+    allowed = _CONTEXT_FIELDS | _CODE_CONTEXT_FIELDS.get(error.code, frozenset())
+    context = {key: value for key, value in error.context.items() if key in allowed}
     route = context.get("route")
     return Response(
         status="refused",

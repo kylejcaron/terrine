@@ -175,7 +175,10 @@ units=model.units, readiness=model.readiness, event_ids=model.event_ids)` to
 bind the same model with an equal `model_hash`. A catalog contains only source,
 event, property, dimension, measure and metric definitions; it excludes
 `units`, `readiness` and `event_ids`, which are provided separately when
-binding.
+binding. Catalog YAML, `model_hash` and owner model references all derive from
+one canonical catalog payload that omits fields equal to their defaults, so a
+catalog that gains a defaulted field keeps its model hash, saved plans and agent
+references.
 `Model.from_catalog` also accepts a `Path` or a single-line string as a file
 path. Choose it directly for SQL relations, multi-unit sources or explicit
 catalog names; those are richer source declarations, not options inferred from

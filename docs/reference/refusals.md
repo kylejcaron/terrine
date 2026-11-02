@@ -412,6 +412,7 @@ Inspect authoritative run state. Replay unchanged requests; replan changed input
 | `terrine.runtime.saved_plan_mismatch` | <code>Saved plan reconstruction failed verification (retained snapshot Model declaration differs).</code> | None | [terrine/runtime/api.py](../../terrine/runtime/api.py) |
 | `terrine.runtime.saved_plan_mismatch` | <code>Saved plan reconstruction failed verification ({reason}).</code> | `reason` | [terrine/runtime/planner.py](../../terrine/runtime/planner.py) |
 | `terrine.runtime.saved_plan_mismatch` | <code>Saved plan reconstruction failed verification ({reason}).</code> | `reason` | [terrine/runtime/saved_plan.py](../../terrine/runtime/saved_plan.py) |
+| `terrine.runtime.schema_unsupported` | <code>Runtime namespace {namespace!r} holds {reason} runtime metadata that this release (schema version {supported_version}) cannot read; stage into a new namespace or owner database, or open it with the release that wrote it.</code> | `namespace`, `reason`, `supported_version` | [terrine/runtime/schema.py](../../terrine/runtime/schema.py) |
 | `terrine.runtime.sketch_sidecar_unavailable` | <code>Approximate quantile sidecars are unavailable in runtime planning and composition; use ordinary Frame materialization.</code> | None | [terrine/runtime/materialize.py](../../terrine/runtime/materialize.py) |
 | `terrine.runtime.snapshot_invalid` | <code>Runtime snapshot receipt is invalid: {reason}.</code> | `reason` | [terrine/runtime/snapshot.py](../../terrine/runtime/snapshot.py) |
 

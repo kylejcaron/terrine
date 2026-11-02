@@ -125,6 +125,7 @@ CODES: frozenset[str] = frozenset(
         "terrine.runtime.request_key_conflict",
         "terrine.runtime.run_unavailable",
         "terrine.runtime.saved_plan_mismatch",
+        "terrine.runtime.schema_unsupported",
         "terrine.runtime.sketch_sidecar_unavailable",
         "terrine.runtime.snapshot_invalid",
         "terrine.semantic.ambiguous_column",

@@ -22,6 +22,7 @@ from terrine.runtime.backends.base import (
 from terrine.runtime.cost import ScanEvidence
 from terrine.runtime.leases import _INVALID_NAMESPACE, LeaseStore
 from terrine.runtime.planner import TaskSpec
+from terrine.runtime.schema import ensure_runtime_schema
 from terrine.runtime.state import RuntimeStore, snapshot_manifest_reference
 
 __all__ = ["DuckDBBackend"]
@@ -55,55 +56,8 @@ class DuckDBBackend:
         )
 
     def initialize(self) -> None:
-        self.con.execute(f"CREATE SCHEMA IF NOT EXISTS {self._schema}")
-        self.con.execute(
-            f"CREATE TABLE IF NOT EXISTS {self._schema}.runtime_manifests ("
-            "dataset VARCHAR PRIMARY KEY, generation VARCHAR NOT NULL, version BIGINT NOT NULL, "
-            "snapshot_id VARCHAR)"
-        )
-        self.con.execute(
-            f"ALTER TABLE {self._schema}.runtime_manifests "
-            "ADD COLUMN IF NOT EXISTS snapshot_id VARCHAR"
-        )
-        self.con.execute(
-            f"CREATE TABLE IF NOT EXISTS {self._schema}.runtime_publications ("
-            "dataset VARCHAR NOT NULL, generation VARCHAR NOT NULL, version BIGINT NOT NULL, "
-            "PRIMARY KEY(dataset, generation))"
-        )
-        self.con.execute(
-            f"CREATE TABLE IF NOT EXISTS {self._schema}.runtime_run_publications ("
-            "run_id VARCHAR PRIMARY KEY, dataset VARCHAR NOT NULL, generation VARCHAR NOT NULL, "
-            "version BIGINT NOT NULL)"
-        )
-        self.con.execute(
-            f"CREATE TABLE IF NOT EXISTS {self._schema}.runtime_partitions ("
-            "dataset VARCHAR NOT NULL, generation VARCHAR NOT NULL, "
-            "partition VARCHAR NOT NULL, table_name VARCHAR NOT NULL, "
-            "digest VARCHAR NOT NULL, PRIMARY KEY(dataset, generation, partition))"
-        )
-        self.con.execute(
-            f"CREATE TABLE IF NOT EXISTS {self._schema}.runtime_partition_metadata ("
-            "dataset VARCHAR NOT NULL, generation VARCHAR NOT NULL, partition VARCHAR NOT NULL, "
-            "schema_metadata BLOB NOT NULL, PRIMARY KEY(dataset, generation, partition))"
-        )
-        self.con.execute(
-            f"CREATE TABLE IF NOT EXISTS {self._schema}.runtime_snapshot_references ("
-            "snapshot_id VARCHAR NOT NULL, kind VARCHAR NOT NULL, reference VARCHAR NOT NULL, "
-            "PRIMARY KEY(snapshot_id, kind, reference))"
-        )
-        self.con.execute(
-            f"CREATE TABLE IF NOT EXISTS {self._schema}.runtime_snapshot_gc ("
-            "snapshot_id VARCHAR PRIMARY KEY)"
-        )
-        self.con.execute(
-            f"CREATE TABLE IF NOT EXISTS {self._schema}.runtime_snapshot_guards ("
-            "snapshot_id VARCHAR PRIMARY KEY, guard_version BIGINT NOT NULL)"
-        )
-        self.con.execute(
-            f"CREATE TABLE IF NOT EXISTS {self._schema}.runtime_snapshot_manifests ("
-            "dataset VARCHAR PRIMARY KEY, generation VARCHAR NOT NULL, snapshot_id VARCHAR)"
-        )
-        LeaseStore(self.con, namespace=self.namespace).initialize()
+        """Create the namespace's runtime metadata, refusing unsupported schema versions."""
+        ensure_runtime_schema(self.con, self.namespace)
 
     def publish_generation(
         self,

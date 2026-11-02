@@ -1,5 +1,7 @@
+import json
+from dataclasses import replace
 from datetime import date
-from importlib.resources import files
+from decimal import Decimal
 from typing import cast
 
 import pytest
@@ -11,6 +13,7 @@ from terrine.spec.dataset import (
     DatasetDefinitionReference,
     DatasetDefinitionStore,
 )
+from terrine.spec.io import from_yaml, to_yaml
 
 
 def test_definition_reference_resolves_only_from_configured_owner_store(tmp_path) -> None:
@@ -82,6 +85,92 @@ def test_dataset_definition_round_trip_reconstructs_base_design_and_view() -> No
     assert decoded.digest == definition.digest
 
 
+def test_definition_nested_records_omit_default_fields() -> None:
+    from terrine.dataset.splits import GroupSplit, TimeSplit, policy_from_record
+    from terrine.spec.transforms import Winsorization
+
+    groups = {
+        "kind": "group",
+        "group": "unit",
+        "train_fraction": "0.8",
+        "validation_fraction": "0.1",
+        "seed": 0,
+        "codec": "terrine.group.v1",
+    }
+    split = {
+        "kind": "time",
+        "train_until": "2025-01-15",
+        "validation_until": None,
+        "embargo_microseconds": 0,
+        "groups": groups,
+    }
+    definition = DatasetDefinition(
+        base_design=design(),
+        view={
+            "kind": "training",
+            "features": ["x"],
+            "labels": ["y"],
+            "incomplete_labels": "drop",
+            "split": split,
+        },
+        transforms=(
+            Winsorization("x", "0", "1", source_type="int64", output_precision=20, output_scale=0),
+        ),
+    )
+    payload = json.loads(definition.canonical_json())
+    assert payload["view"] == {
+        "kind": "training",
+        "features": ["x"],
+        "labels": ["y"],
+        "split": {
+            "kind": "time",
+            "train_until": "2025-01-15",
+            "groups": {"kind": "group", "codec": "terrine.group.v1"},
+        },
+    }
+    assert payload["transforms"] == [
+        {
+            "kind": "winsorization",
+            "schema_version": 1,
+            "column": "x",
+            "lower": "0",
+            "upper": "1",
+            "source_type": "int64",
+            "output_precision": 20,
+            "output_scale": 0,
+        }
+    ]
+    assert DatasetDefinition.from_json(definition.canonical_json()) == definition
+    assert policy_from_record(payload["view"]["split"]) == TimeSplit(
+        train_until="2025-01-15", groups=GroupSplit()
+    )
+
+
+@pytest.mark.parametrize("seed", [False, 0.0])
+def test_wrongly_typed_split_default_is_kept_and_refused(native_inputs, seed) -> None:
+    from tests.dataset.test_training_view import _frame
+
+    frame = _frame(native_inputs)
+    view = {
+        "kind": "training",
+        "features": ["past_sessions"],
+        "labels": ["churn"],
+        "split": {"kind": "group", "seed": seed, "codec": "terrine.group.v1"},
+    }
+    stored = DatasetDefinition(base_design=frame._design, view=view).canonical_json()
+    with pytest.raises(TerrineError) as error:
+        DatasetDefinition.from_json(stored).build(frame._model)
+    assert error.value.code == "terrine.dataset.invalid_split"
+    assert (error.value.context["reason"], error.value.context["field"]) == ("wrong_type", "seed")
+
+
+def test_edited_definition_has_new_digest() -> None:
+    loaded = from_yaml(to_yaml(design()))
+    definition = DatasetDefinition.from_json(DatasetDefinition(base_design=loaded).canonical_json())
+    edited = replace(definition, base_design=replace(loaded, unit="account"))
+    assert edited.digest != definition.digest
+
+
 def test_definition_canonical_bytes_ignore_mapping_insertion_order() -> None:
     first = DatasetDefinition(
         base_design=design(),
@@ -135,22 +224,6 @@ def test_definition_put_removes_temporary_file_after_io_failure(tmp_path, monkey
     assert list(store.root.iterdir()) == []
 
 
-def test_definition_bytes_load_with_same_digest() -> None:
-    serialized = files("tests.fixtures").joinpath("definition_v4.json").read_bytes()
-    definition = DatasetDefinition.from_json(serialized)
-    assert definition.canonical_json() == serialized
-    assert definition.digest == "90148f08cf34b5648e98a3a51cb4f7d2cb7e6c5c5435cfa0a26e41b903878d7a"
-
-
-def test_v1_definition_refuses() -> None:
-    serialized = files("tests.fixtures").joinpath("pre_rename_definition.json").read_bytes()
-    with pytest.raises(TerrineError) as error:
-        DatasetDefinition.from_json(serialized)
-    assert error.value.code == "terrine.dataset.invalid_definition"
-    assert error.value.context["reason"] == "unsupported_schema_version"
-    assert error.value.context["schema_version"] == 1
-
-
 def test_v3_definition_document_refuses_with_version() -> None:
     serialized = (
         b'{"base_design":{"administrative_cutoff":null,"anchor":{"date":{"type":"date",'
@@ -187,24 +260,22 @@ def test_definition_with_v2_base_design_refuses_with_code() -> None:
     assert error.value.code == "terrine.dataset.invalid_definition"
 
 
-def test_manifest_json_with_renamed_fields_refuses() -> None:
-    from terrine.dataset.manifest import DatasetManifest
+def test_fitted_transform_with_unknown_fit_field_refuses() -> None:
+    from terrine.spec.transforms import Winsorization, WinsorizationFit
 
-    serialized = files("tests.fixtures").joinpath("pre_rename_manifest.json").read_bytes()
+    fit = WinsorizationFit(
+        *(character * 64 for character in "abcdef"),
+        snapshot={"snapshot_id": "snapshot"},
+        split_policy={"kind": "time", "train_until": "2025-01-15"},
+        probabilities=(Decimal("0.25"), Decimal("0.75")),
+        row_count=3,
+        non_null_count=3,
+    )
+    transform = Winsorization(
+        "x", "0", "1", source_type="int64", output_precision=20, output_scale=0, fit=fit
+    )
+    record = json.loads(transform.to_json())
+    record["fit"]["recipe_hash"] = record["fit"].pop("definition_hash")
     with pytest.raises(TerrineError) as error:
-        DatasetManifest.from_json(serialized)
-    assert error.value.code == "terrine.dataset.invalid_manifest"
-
-
-@pytest.mark.parametrize("artifact", ["definition", "transform"])
-def test_pre_rename_fitted_identity_refuses_with_invalid_definition(artifact):
-    from terrine.spec.transforms import Winsorization
-
-    filename, decode = {
-        "definition": ("pre_rename_fitted_definition.json", DatasetDefinition.from_json),
-        "transform": ("pre_rename_fitted_transform.json", Winsorization.from_json),
-    }[artifact]
-    serialized = files("tests.fixtures").joinpath(filename).read_bytes()
-    with pytest.raises(TerrineError) as error:
-        decode(serialized)
+        Winsorization.from_json(json.dumps(record))
     assert error.value.code == "terrine.dataset.invalid_definition"

@@ -36,14 +36,16 @@ def test_propose_design_from_discovered_schema(tools):
     example = tools.design_example().output
     document = json.loads(example.serialized)
     metric = tools.inspect_catalog().output.metrics[0].name
-    document["design"]["features"]["history"] = {
-        "type": "MetricAgg",
-        "metric": metric,
-        "window": {"type": "Window", "start": "-1d", "end": "0s"},
+    document["design"]["features"] = {
+        "history": {
+            "type": "MetricAgg",
+            "metric": metric,
+            "window": {"type": "Window", "start": "-1d", "end": "0s"},
+        }
     }
     proposed = tools.propose_design(json.dumps(document), base=example.serialized)
     assert proposed.status == "ok"
-    assert proposed.output.changed_paths == ("/design/features/history",)
+    assert proposed.output.changed_paths == ("/design/features",)
     assert proposed.output.spec_hash == from_json(proposed.output.serialized).spec_hash
     assert (
         tools.propose_design(proposed.output.serialized).output.serialized

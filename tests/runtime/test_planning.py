@@ -233,16 +233,9 @@ def test_owner_planning_refuses_before_staging_on_pinned_inputs(tmp_path, monkey
             assert not RuntimeStore(connection.con, namespace="owner").snapshot_references(
                 snapshots[0].snapshot_id
             )
-        assert connection.con.execute(
-            "SELECT count(*) FROM owner.runtime_plan_invocations"
-        ).fetchone() == (0,)
-        assert (
-            connection.con.execute(
-                "SELECT table_name FROM information_schema.tables WHERE table_schema='owner' "
-                "AND table_name IN ('runtime_runs', 'runtime_partitions', 'runtime_manifests')"
-            ).fetchall()
-            == []
-        )
+        for table in ("plan_invocations", "runs", "partitions", "manifests"):
+            count = connection.con.execute(f"SELECT count(*) FROM owner.runtime_{table}")
+            assert count.fetchone() == (0,)
     finally:
         connection.disconnect()
 

@@ -28,6 +28,17 @@
   older documents refuse: reconstruct and save the design or definition.
   Catalog documents stay at version 2; manifest and saved-plan outer envelopes
   stay at version 1, with version-4 nested designs and definitions.
+- Design, dataset-definition and Catalog documents omit fields equal to their
+  defaults (a minimal Design saves only `unit` and `anchor`), including the
+  training and scoring views, split policies and winsorization records inside a
+  definition, so an optional field added later keeps existing documents and
+  identities. Column `transformation` metadata uses the same winsorization
+  record: decode it with `Winsorization.from_record`. `spec_hash`, definition
+  digests, `model_hash` and model references therefore differ from earlier
+  builds; documents that spell out default values still load. The agent Design
+  and definition schemas mark those fields optional, and adding the first entry
+  to an omitted mapping reports the mapping's path (for example
+  `/design/features`) in `changed_paths`.
 - The package root is limited to the everyday workflow: import
   `DatasetDefinition`, `EventSequence`, `EventTime`, `FunnelSpec`, `SessionSpec`,
   `Treatment`, `retention`, `quantile`, `approx_quantile`, `approx_distinct`,
@@ -98,6 +109,11 @@
 - DuckDB runtime prefix layers store counts as Arrow `decimal128(38, 0)`:
   read newly written layers with this version or newer; older layers still
   restore and compose.
+- Runtime owner namespaces record a metadata schema version. Namespaces created
+  by earlier pre-releases refuse with `terrine.runtime.schema_unsupported`
+  (`reason="unversioned"`) before any write, including when reopening their
+  datasets: stage again into a new namespace or owner database. Their stored
+  timestamp and column layouts are no longer upgraded in place.
 
 ### Additions
 
@@ -171,6 +187,15 @@
 - Temporal union/window lookups refuse incompatible unit-key types with
   `terrine.compile.incompatible_unit_keys` and a route to align source key types,
   instead of exposing internal set-operation errors.
+- Stored records keep the digests recorded with them: manifests, definition
+  references and saved plans verify those digests by hashing the stored JSON
+  rather than re-encoding the decoded object, so an encoder change cannot
+  invalidate a published generation, and a loaded manifest writes back the
+  stored definition its digest verifies. Reopening compares the decoded stored
+  publication with the manifest as objects, so a manifest edited with `replace`
+  still refuses with `terrine.dataset.invalid_generation`. Agent dataset
+  references carry the recorded definition digest and the digest of the stored
+  publication text.
 
 ### Performance
 

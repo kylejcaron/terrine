@@ -484,11 +484,6 @@ def test_owner_planner_persists_same_snapshot_and_manifest_by_invocation(tmp_pat
                 namespace="runtime",
             )
         raw_connection.execute(
-            "CREATE TABLE runtime.runtime_manifests "
-            "(dataset VARCHAR PRIMARY KEY, generation VARCHAR NOT NULL, version BIGINT, "
-            "snapshot_id VARCHAR)"
-        )
-        raw_connection.execute(
             "INSERT INTO runtime.runtime_manifests VALUES ('study', 'generation-current', 1, NULL)"
         )
         raw_connection.execute(
@@ -574,6 +569,28 @@ def test_unknown_snapshot_refuses_only_retained_execution_before_source_work(tmp
         con.disconnect()
 
 
+def _customer_orders_model(con):
+    import terrine as tr
+
+    con.create_table("customers", pa.table({"customer_id": ["a", "b"], "treated": [True, False]}))
+    con.create_table(
+        "orders", pa.table({"customer_id": ["a"], "ordered_at": [datetime(2025, 1, 20)]})
+    )
+    return tr.Model.from_tables(
+        con,
+        units={"customer": tr.UnitSource("customers", "customer_id", attributes=("treated",))},
+        events={
+            "orders": tr.Events(
+                "orders",
+                time="ordered_at",
+                key="customer_id",
+                metrics={"orders": tr.count()},
+                complete=("2025-01-01", "2025-03-01"),
+            )
+        },
+    )
+
+
 @pytest.mark.parametrize(("at", "expected"), [(0, "baseline_binary"), ("1d", None)])
 def test_direct_and_staged_provenance_agree_for_treatment_offsets(tmp_path, at, expected):
     import terrine as tr
@@ -581,31 +598,12 @@ def test_direct_and_staged_provenance_agree_for_treatment_offsets(tmp_path, at, 
 
     con = ibis.duckdb.connect(str(tmp_path / "treatment.duckdb"))
     try:
-        con.create_table(
-            "customers", pa.table({"customer_id": ["a", "b"], "treated": [True, False]})
-        )
-        con.create_table(
-            "orders", pa.table({"customer_id": ["a"], "ordered_at": [datetime(2025, 1, 20)]})
-        )
-        model = tr.Model.from_tables(
-            con,
-            units={"customer": tr.UnitSource("customers", "customer_id", attributes=("treated",))},
-            events={
-                "orders": tr.Events(
-                    "orders",
-                    time="ordered_at",
-                    key="customer_id",
-                    metrics={"orders": tr.count()},
-                    complete=("2025-01-01", "2025-03-01"),
-                )
-            },
-        )
         frame = Design(
             "customer",
             FixedDate("2025-02-01"),
             features={"orders": agg("orders", window=("-30d", "0s"))},
             treatment=Treatment("treated", at=at, known_at_t0=True),
-        ).build(model)
+        ).build(_customer_orders_model(con))
         assert frame.materialize().provenance.treatment_design == expected
         staged = frame.stage("treated")
         reopened = tr.Dataset.open_generation(
@@ -615,5 +613,70 @@ def test_direct_and_staged_provenance_agree_for_treatment_offsets(tmp_path, at, 
             namespace="terrine_runtime",
         )
         assert reopened.manifest.frame_metadata["provenance"]["treatment_design"] == expected
+    finally:
+        con.disconnect()
+
+
+def test_reopening_unsupported_namespace_refuses_without_changes(tmp_path):
+    import terrine as tr
+
+    con = ibis.duckdb.connect(str(tmp_path / "owner.duckdb"))
+    raw = con.con
+
+    def runtime_state():
+        tables = raw.execute(
+            "SELECT table_name FROM information_schema.tables "
+            "WHERE table_schema='terrine_runtime' ORDER BY table_name"
+        ).fetchall()
+        rows = tuple(
+            (name, raw.execute(f'SELECT count(*) FROM terrine_runtime."{name}"').fetchone())
+            for (name,) in tables
+        )
+        snapshots = sorted(RuntimeOwner.from_connection(con).snapshot_root.rglob("*"))
+        return rows, snapshots
+
+    def refusals(reason, *attempts):
+        for attempt in attempts:
+            with pytest.raises(TerrineError) as error:
+                attempt()
+            assert error.value.code == "terrine.runtime.schema_unsupported"
+            assert dict(error.value.context) == {
+                "namespace": "terrine_runtime",
+                "reason": reason,
+                "found_version": 2 if reason == "newer" else None,
+                "supported_version": 1,
+            }
+
+    try:
+        frame = Design(
+            "customer",
+            FixedDate("2025-02-01"),
+            features={"orders": agg("orders", window=("-30d", "0s"))},
+        ).build(_customer_orders_model(con))
+        staged = frame.stage("orders")
+        generation = staged.manifest.generation.generation_id
+
+        def reopen():
+            return tr.Dataset.open_generation(
+                "orders", generation, con=con, namespace="terrine_runtime"
+            )
+
+        raw.execute("UPDATE terrine_runtime.runtime_schema_version SET version=2")
+        before = runtime_state()
+        refusals("newer", reopen)
+        assert runtime_state() == before
+        assert raw.execute(
+            "SELECT version FROM terrine_runtime.runtime_schema_version"
+        ).fetchall() == [(2,)]
+
+        raw.execute("DROP TABLE terrine_runtime.runtime_schema_version")
+        before = runtime_state()
+        refusals(
+            "unversioned",
+            reopen,
+            lambda: tr.Dataset.from_manifest(staged.manifest, con=con, namespace="terrine_runtime"),
+            lambda: frame.stage("orders"),
+        )
+        assert runtime_state() == before
     finally:
         con.disconnect()

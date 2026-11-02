@@ -24,6 +24,7 @@ from terrine.runtime.saved_plan import (
     _bind_saved_plan,
     resolve_plan,
 )
+from terrine.runtime.schema import check_runtime_schema
 from terrine.runtime.snapshot import SnapshotAuthority
 from terrine.runtime.state import RuntimeStore
 from terrine.runtime.status import _recover_interrupted_runs, cancel_run, get_run
@@ -283,17 +284,6 @@ def find_run_by_request_key(
     store = RuntimeStore(con, namespace=namespace)
     store.initialize()
     schema = store._schema
-    table = con.execute(
-        "SELECT 1 FROM information_schema.tables "
-        "WHERE lower(table_schema)=lower(?) AND table_name='runtime_runs'",
-        [namespace],
-    ).fetchone()
-    if table is None:
-        return None
-    con.execute(f"ALTER TABLE {schema}.runtime_runs ADD COLUMN IF NOT EXISTS request_key VARCHAR")
-    con.execute(
-        f"ALTER TABLE {schema}.runtime_runs ADD COLUMN IF NOT EXISTS destination_json VARCHAR"
-    )
     _recover_interrupted_runs(con, namespace=namespace)
     destination_json = json.dumps(destination.to_dict(), sort_keys=True, separators=(",", ":"))
     row = con.execute(
@@ -312,10 +302,6 @@ def _record_result_partitions(
     store = RuntimeStore(con, namespace=namespace)
     store.initialize()
     schema = store._schema
-    con.execute(
-        f"CREATE TABLE IF NOT EXISTS {schema}.runtime_run_results "
-        "(run_id VARCHAR NOT NULL, partition VARCHAR NOT NULL, PRIMARY KEY(run_id,partition))"
-    )
     dependencies = {dependency for task in plan.tasks for dependency in task.dependencies}
     results = sorted(task.task_id for task in plan.tasks if task.task_id not in dependencies)
     if not results:
@@ -334,7 +320,7 @@ def open_published_generation(receipt: RunReceipt, *, con: Any, namespace: str) 
     if receipt.published_generation is None:
         raise ValueError("run receipt has no published generation")
     store = RuntimeStore(con, namespace=namespace)
-    store.initialize()
+    check_runtime_schema(con, namespace)
     schema = store._schema
     row = con.execute(
         f"SELECT dataset,state,published_generation FROM {schema}.runtime_runs WHERE run_id=?",
@@ -781,7 +767,7 @@ def open_published_frame(receipt: RunReceipt, *, con: Any, namespace: str):
     if receipt.published_generation is None:
         raise ValueError("run receipt has no published generation")
     store = RuntimeStore(con, namespace=namespace)
-    store.initialize()
+    check_runtime_schema(con, namespace)
     schema = store._schema
     run = con.execute(
         f"SELECT dataset,state,published_generation FROM {schema}.runtime_runs WHERE run_id=?",

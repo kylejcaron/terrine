@@ -1,4 +1,5 @@
 import os
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import duckdb
@@ -7,19 +8,26 @@ import pytest
 from terrine.errors import TerrineError
 from terrine.runtime.control import ControlClient, ControlEndpoint, ControlServer
 from terrine.runtime.events import record_run_event
+from terrine.runtime.leases import LeaseStore
 from terrine.runtime.state import RuntimeStore
+
+
+def _running_run(con) -> None:
+    lease = LeaseStore(con, namespace="owner").acquire(
+        "dataset:d", "r1", ttl=timedelta(minutes=5), now=datetime.now(UTC)
+    )
+    con.execute(
+        "INSERT INTO owner.runtime_runs (run_id, dataset, fingerprint, state, attempt_fence) "
+        "VALUES ('r1','d','f','running',?)",
+        [lease.fence],
+    )
 
 
 def test_control_endpoint_lifetime_and_client_uses_owner_connection(tmp_path):
     con = duckdb.connect(":memory:")
     store = RuntimeStore(con, namespace="owner")
     store.initialize()
-    con.execute(
-        "CREATE TABLE owner.runtime_runs (run_id VARCHAR PRIMARY KEY, dataset VARCHAR NOT NULL, "
-        "fingerprint VARCHAR NOT NULL, state VARCHAR NOT NULL, published_generation VARCHAR, "
-        "attempt_fence BIGINT)"
-    )
-    con.execute("INSERT INTO owner.runtime_runs VALUES ('r1','d','f','running',NULL,1)")
+    _running_run(con)
     endpoint = ControlEndpoint(Path(f"/tmp/terrine-control-{os.getpid()}.sock"))
     server = ControlServer(store, namespace="owner", endpoint=endpoint)
     server.start()
@@ -89,20 +97,13 @@ def test_control_returns_full_bounded_event_page():
 
 
 def test_control_client_returns_typed_run_status_and_event_page(tmp_path):
-    from datetime import UTC
-
     from terrine.runtime.events import EventPage, RunEvent
     from terrine.runtime.status import RunStatus
 
     con = duckdb.connect(":memory:")
     store = RuntimeStore(con, namespace="owner")
     store.initialize()
-    con.execute(
-        "CREATE TABLE owner.runtime_runs (run_id VARCHAR PRIMARY KEY, dataset VARCHAR NOT NULL, "
-        "fingerprint VARCHAR NOT NULL, state VARCHAR NOT NULL, published_generation VARCHAR, "
-        "attempt_fence BIGINT)"
-    )
-    con.execute("INSERT INTO owner.runtime_runs VALUES ('r1','d','f','running',NULL,1)")
+    _running_run(con)
     record_run_event("r1", "lifecycle", {"state": "running"}, con=con, namespace="owner")
     endpoint = ControlEndpoint(Path(f"/tmp/terrine-typed-{os.getpid()}.sock"))
     server = ControlServer(store, namespace="owner", endpoint=endpoint)

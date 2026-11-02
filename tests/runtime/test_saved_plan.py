@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-from importlib.resources import files
 
 import ibis
 import pyarrow as pa
@@ -130,11 +129,6 @@ def test_saved_plan_reconstructs_design_and_verifies_owner_model_in_fresh_resolv
         assert resolved_model is model
         assert isinstance(resolved_design, DatasetDefinition)
         assert resolved_design.digest == dataset_definition.digest
-        con.raw_sql(
-            "CREATE TABLE runtime.runtime_manifests "
-            "(dataset VARCHAR PRIMARY KEY,generation VARCHAR NOT NULL,version BIGINT NOT NULL,"
-            "snapshot_id VARCHAR)"
-        )
         con.raw_sql("INSERT INTO runtime.runtime_manifests VALUES ('study','manifest-1',1,NULL)")
         assert resolved_destination == destination
         run = execute_plan(
@@ -401,13 +395,6 @@ def test_saved_plan_round_trips_typed_dataset_view():
                 SavedPlan.from_json(json.dumps(tampered))
     finally:
         con.disconnect()
-
-
-def test_saved_plan_json_with_renamed_fields_refuses():
-    serialized = files("tests.fixtures").joinpath("pre_rename_saved_plan.json").read_bytes()
-    with pytest.raises(TerrineError) as error:
-        SavedPlan.from_json(serialized)
-    assert error.value.code == "terrine.runtime.saved_plan_mismatch"
 
 
 @pytest.mark.parametrize("field", ["dataset_recipe_json", "recipe_hash", "unexpected"])

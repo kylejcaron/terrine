@@ -23,6 +23,7 @@ from terrine.data import Budget, ExecutionSnapshot
 from terrine.errors import RefusalSpec
 from terrine.execution import _native
 from terrine.execution._metadata import invalidate_metadata, metadata_fact, metadata_operation
+from terrine.semantic.io import catalog_payload
 from terrine.semantic.models import Catalog, RelationSpec, TableRef
 from terrine.semantic.sql import admit_read_query
 
@@ -203,7 +204,7 @@ def _hash(value: Any) -> str:
 
 
 def _catalog_hash(catalog: Catalog) -> str:
-    return _hash(catalog.model_dump(mode="json"))
+    return _hash(catalog_payload(catalog))
 
 
 def _units_hash(units: Mapping[str, Any] | None) -> str:

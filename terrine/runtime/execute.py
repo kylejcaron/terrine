@@ -49,57 +49,6 @@ class RunReceipt:
     published_generation: str | None
 
 
-def _ensure_run_tables(con: Any, schema: str) -> None:
-    """Create or upgrade the run, task and result tables.
-
-    The owner calls this before serving requests: concurrent requests that add
-    the same missing column conflict in DuckDB's catalog, while additions of
-    columns that already exist do not.
-
-    Args:
-        con: Connection holding the runtime store.
-        schema: Quoted runtime namespace schema.
-    """
-    con.execute(
-        f"CREATE TABLE IF NOT EXISTS {schema}.runtime_runs ("
-        "run_id VARCHAR PRIMARY KEY, dataset VARCHAR NOT NULL, fingerprint VARCHAR NOT NULL, "
-        "state VARCHAR NOT NULL, published_generation VARCHAR, attempt_fence BIGINT, "
-        "updated_at TIMESTAMP, heartbeat_at TIMESTAMP)"
-    )
-    con.execute(f"ALTER TABLE {schema}.runtime_runs ADD COLUMN IF NOT EXISTS attempt_fence BIGINT")
-    con.execute(f"ALTER TABLE {schema}.runtime_runs ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP")
-    con.execute(
-        f"ALTER TABLE {schema}.runtime_runs ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMP"
-    )
-    for column in ("snapshot_id VARCHAR", "task_count BIGINT", "error_code VARCHAR"):
-        con.execute(f"ALTER TABLE {schema}.runtime_runs ADD COLUMN IF NOT EXISTS {column}")
-    con.execute(f"ALTER TABLE {schema}.runtime_runs ADD COLUMN IF NOT EXISTS request_key VARCHAR")
-    con.execute(
-        f"ALTER TABLE {schema}.runtime_runs ADD COLUMN IF NOT EXISTS destination_json VARCHAR"
-    )
-    con.execute(
-        f"CREATE UNIQUE INDEX IF NOT EXISTS runtime_runs_request_destination "
-        f"ON {schema}.runtime_runs (request_key, destination_json)"
-    )
-    con.execute(
-        f"CREATE TABLE IF NOT EXISTS {schema}.runtime_tasks ("
-        "run_id VARCHAR NOT NULL, task_id VARCHAR NOT NULL, status VARCHAR NOT NULL, "
-        "output_blob BLOB, task_fence BIGINT, PRIMARY KEY(run_id, task_id))"
-    )
-    con.execute(f"ALTER TABLE {schema}.runtime_tasks ADD COLUMN IF NOT EXISTS task_fence BIGINT")
-    for column, dtype in (
-        ("attempts", "BIGINT DEFAULT 0"),
-        ("layer", "VARCHAR"),
-        ("output_rows", "BIGINT"),
-        ("output_bytes", "BIGINT"),
-    ):
-        con.execute(f"ALTER TABLE {schema}.runtime_tasks ADD COLUMN IF NOT EXISTS {column} {dtype}")
-    con.execute(
-        f"CREATE TABLE IF NOT EXISTS {schema}.runtime_run_results "
-        "(run_id VARCHAR NOT NULL, partition VARCHAR NOT NULL, PRIMARY KEY(run_id,partition))"
-    )
-
-
 def execute_plan(
     plan: RefreshPlan,
     *,
@@ -152,12 +101,10 @@ def execute_plan(
     runtime_store.initialize()
     leases = LeaseStore(con, namespace=namespace)
     schema = leases._schema
-    _ensure_run_tables(con, schema)
     dependencies = {dependency for task in plan.tasks for dependency in task.dependencies}
     result_partitions = sorted(
         task.task_id for task in plan.tasks if task.task_id not in dependencies
     )
-    leases.initialize()
     _recover_interrupted_runs(con, namespace=namespace)
     lease = None
     existing_request = None
@@ -571,19 +518,10 @@ def execute_plan(
                 leases=leases,
             )
     except Exception as error:
-        publication_table = con.execute(
-            "SELECT 1 FROM information_schema.tables "
-            "WHERE lower(table_schema)=lower(?) AND table_name='runtime_run_publications'",
-            [namespace],
+        publication = con.execute(
+            f"SELECT generation FROM {schema}.runtime_run_publications WHERE run_id=?",
+            [run_id],
         ).fetchone()
-        publication = (
-            con.execute(
-                f"SELECT generation FROM {schema}.runtime_run_publications WHERE run_id=?",
-                [run_id],
-            ).fetchone()
-            if publication_table is not None
-            else None
-        )
         if publication is not None:
             generation = publication[0]
             if plan.tasks:
@@ -668,13 +606,6 @@ def _reconcile_committed_publication(
     schema: str,
     namespace: str,
 ) -> RunReceipt | None:
-    table = con.execute(
-        "SELECT 1 FROM information_schema.tables "
-        "WHERE lower(table_schema)=lower(?) AND table_name='runtime_run_publications'",
-        [namespace],
-    ).fetchone()
-    if table is None:
-        return None
     publication = con.execute(
         f"SELECT generation FROM {schema}.runtime_run_publications WHERE run_id=?", [run_id]
     ).fetchone()
@@ -721,19 +652,10 @@ def _reconcile_committed_publication(
 def _check_expected_base_manifest(plan: RefreshPlan, *, con: Any, namespace: str) -> None:
     if not plan.expected_base_manifest_bound:
         return
-    exists = con.execute(
-        "SELECT 1 FROM information_schema.tables "
-        "WHERE lower(table_schema)=lower(?) AND table_name='runtime_manifests'",
-        [namespace],
+    current = con.execute(
+        f'SELECT generation FROM "{namespace}".runtime_manifests WHERE dataset=?',
+        [plan.dataset],
     ).fetchone()
-    current = (
-        con.execute(
-            f'SELECT generation FROM "{namespace}".runtime_manifests WHERE dataset=?',
-            [plan.dataset],
-        ).fetchone()
-        if exists is not None
-        else None
-    )
     actual = current[0] if current is not None else None
     if actual != plan.expected_base_manifest:
         raise ValueError("expected base manifest does not match current publication")
@@ -891,20 +813,10 @@ def _finish_run(
         dependencies = {dependency for task in plan.tasks for dependency in task.dependencies}
         has_results = any(task.task_id not in dependencies for task in plan.tasks)
         if not has_results:
-            publication_table = con.execute(
-                "SELECT 1 FROM information_schema.tables "
-                "WHERE lower(table_schema)=lower(?) AND table_name='runtime_run_publications'",
-                [runtime_store.namespace],
+            publication = con.execute(
+                f"SELECT dataset,generation FROM {schema}.runtime_run_publications WHERE run_id=?",
+                [run_id],
             ).fetchone()
-            publication = (
-                con.execute(
-                    f"SELECT dataset,generation FROM {schema}.runtime_run_publications "
-                    "WHERE run_id=?",
-                    [run_id],
-                ).fetchone()
-                if publication_table is not None
-                else None
-            )
             if publication is not None:
                 _copy_result_partitions(
                     con,

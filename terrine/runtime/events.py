@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+from terrine.runtime.schema import check_runtime_schema
 from terrine.runtime.state import RuntimeStore
 
 __all__ = ["RunEvent", "EventPage", "read_run_events", "record_run_event"]
@@ -33,21 +34,12 @@ class EventPage:
     cursor_gap: bool
 
 
-def _ensure_events(con: Any, schema: str) -> None:
-    con.execute(
-        f"CREATE TABLE IF NOT EXISTS {schema}.runtime_run_events ("
-        "run_id VARCHAR NOT NULL, sequence BIGINT NOT NULL, event_at TIMESTAMP NOT NULL, "
-        "kind VARCHAR NOT NULL, payload VARCHAR NOT NULL, PRIMARY KEY(run_id, sequence))"
-    )
-
-
 @contextmanager
 def event_transaction(con: Any, *, namespace: str):
     """Serialize owner event writes with the state changes they describe."""
     store = RuntimeStore(con, namespace=namespace)
     with _EVENT_WRITE_LOCK:
         store.initialize()
-        _ensure_events(con, store._schema)
         con.execute("BEGIN TRANSACTION")
         try:
             yield
@@ -64,7 +56,6 @@ def event_read_transaction(con: Any, *, namespace: str):
     store = RuntimeStore(con, namespace=namespace)
     with _EVENT_WRITE_LOCK:
         store.initialize()
-        _ensure_events(con, store._schema)
         con.execute("BEGIN TRANSACTION")
         try:
             yield
@@ -144,6 +135,7 @@ def read_run_events(
     if not run_id or isinstance(limit, bool) or limit < 1:
         raise ValueError("run_id and positive event limit are required")
     schema = RuntimeStore(con, namespace=namespace)._schema
+    check_runtime_schema(con, namespace)
 
     after_sequence = 0
     cursor_gap = False
@@ -181,7 +173,6 @@ def _latest_event_cursor(run_id: str, *, con: Any, namespace: str) -> str | None
     store = RuntimeStore(con, namespace=namespace)
     with _EVENT_WRITE_LOCK:
         store.initialize()
-        _ensure_events(con, store._schema)
         sequence = con.execute(
             f"SELECT max(sequence) FROM {store._schema}.runtime_run_events WHERE run_id=?",
             [run_id],

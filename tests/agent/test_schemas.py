@@ -166,5 +166,5 @@ def test_discovery_schema_matches_existing_tagged_codec(variant):
     validator.validate(payload)
     assert from_json(json.dumps(payload)).spec_hash == design.spec_hash
     if variant == "event_time":
-        del payload["design"]["features"]["when"]["n"]
+        del payload["design"]["features"]["when"]["window"]
         assert not validator.is_valid(payload)

@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from terrine.errors import RefusalSpec
+from terrine.runtime.schema import ensure_runtime_schema
 
 __all__ = ["Lease", "LeaseStore"]
 
@@ -34,32 +35,8 @@ class LeaseStore:
         self._schema = f'"{namespace}"'
 
     def initialize(self) -> None:
-        self.con.execute(f"CREATE SCHEMA IF NOT EXISTS {self._schema}")
-        self.con.execute(
-            f"CREATE TABLE IF NOT EXISTS {self._schema}.runtime_leases ("
-            "resource VARCHAR PRIMARY KEY, owner VARCHAR NOT NULL, fence BIGINT NOT NULL, "
-            "expires_at TIMESTAMP NOT NULL)"
-        )
-        column_type = self.con.execute(
-            "SELECT data_type FROM information_schema.columns "
-            "WHERE lower(table_schema)=lower(?) "
-            "AND table_name='runtime_leases' AND column_name='expires_at'",
-            [self.namespace],
-        ).fetchone()[0]
-        if column_type != "TIMESTAMP":
-            self.con.execute(
-                f"ALTER TABLE {self._schema}.runtime_leases "
-                "ALTER COLUMN expires_at SET DATA TYPE TIMESTAMP USING "
-                "CAST(CAST(expires_at AS TIMESTAMPTZ) AT TIME ZONE 'UTC' AS TIMESTAMP)"
-            )
-        self.con.execute(
-            f"CREATE TABLE IF NOT EXISTS {self._schema}.runtime_lease_fences ("
-            "resource VARCHAR PRIMARY KEY, last_fence BIGINT NOT NULL)"
-        )
-        self.con.execute(
-            f"CREATE TABLE IF NOT EXISTS {self._schema}.runtime_resource_guards ("
-            "resource VARCHAR PRIMARY KEY, guard_version BIGINT NOT NULL)"
-        )
+        """Create the namespace's runtime metadata, refusing unsupported schema versions."""
+        ensure_runtime_schema(self.con, self.namespace)
 
     def acquire(
         self,

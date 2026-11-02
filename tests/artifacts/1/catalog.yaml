@@ -1,0 +1,59 @@
+schema_version: 2
+day_boundary: UTC
+dialect: duckdb
+sources:
+  orders:
+    relation:
+      kind: table
+      name: orders
+    time: ordered_at
+    units:
+      customer: customer_id
+    events:
+    - orders
+    - orders_amount
+    properties:
+    - status
+    dimensions: []
+events:
+  orders:
+    source: orders
+    column: null
+  orders_amount:
+    source: orders
+    column: amount
+properties:
+  status:
+    source: orders
+    column: status
+    dtype: string
+    as_of: event_time
+dimensions: {}
+measures:
+  orders:
+    event: orders
+    aggregation: count
+  refunds:
+    event: orders
+    aggregation: count
+    filters:
+    - property: status
+      op: equals
+      values:
+      - refunded
+  spend:
+    event: orders_amount
+    aggregation: sum
+metrics:
+  orders:
+    kind: mean
+    unit: customer
+    measure: orders
+  refunds:
+    kind: mean
+    unit: customer
+    measure: refunds
+  spend:
+    kind: mean
+    unit: customer
+    measure: spend

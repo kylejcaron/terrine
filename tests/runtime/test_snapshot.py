@@ -178,6 +178,33 @@ def test_capture_budget_refuses_unknown_scan_before_creating_snapshot(tmp_path):
         con.disconnect()
 
 
+def test_capture_refuses_unsupported_runtime_namespace_before_retaining_inputs(tmp_path):
+    state_path = tmp_path / "owner.duckdb"
+    owner = RuntimeOwner(state_path=state_path, snapshot_root=tmp_path / "snapshots")
+    con = ibis.duckdb.connect(str(state_path))
+    try:
+        con.raw_sql("CREATE TABLE events (ts TIMESTAMP, user_id INTEGER, value INTEGER)")
+        con.raw_sql("CREATE SCHEMA runtime")
+        con.raw_sql("CREATE TABLE runtime.runtime_runs (run_id VARCHAR)")
+        model = Model.from_catalog(
+            _catalog(), con=con, readiness={"events": Coverage("2025-01-01", "2025-02-01")}
+        )
+        with pytest.raises(TerrineError) as error:
+            SnapshotAuthority(owner).capture(
+                model,
+                design=_design(),
+                con=con,
+                namespace="runtime",
+                run_id="run-1",
+                budget=Budget(),
+            )
+        assert error.value.code == "terrine.runtime.schema_unsupported"
+        assert error.value.context["reason"] == "unversioned"
+        assert not owner.snapshot_root.exists()
+    finally:
+        con.disconnect()
+
+
 def test_snapshot_reopen_refuses_modified_retained_inputs(tmp_path):
     import duckdb
 

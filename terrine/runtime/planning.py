@@ -243,7 +243,6 @@ class OwnerPlanner:
     def _plan(self, request: PlanRequest, *, con: Any, namespace: str) -> PlanInvocation:
         store = RuntimeStore(con, namespace=namespace)
         store.initialize()
-        _initialize_invocations(con, store._schema)
         request_json = _canonical(request.to_dict())
         request_hash = hashlib.sha256(request_json.encode()).hexdigest()
         prior = con.execute(
@@ -256,19 +255,10 @@ class OwnerPlanner:
                 raise _INVOCATION_CONFLICT.error()
             return PlanInvocation.from_dict(json.loads(prior[1]))
 
-        manifest_table = con.execute(
-            "SELECT 1 FROM information_schema.tables "
-            "WHERE lower(table_schema)=lower(?) AND lower(table_name)='runtime_manifests'",
-            [namespace],
+        expected = con.execute(
+            f"SELECT generation FROM {store._schema}.runtime_manifests WHERE dataset=?",
+            [request.destination.dataset],
         ).fetchone()
-        expected = (
-            con.execute(
-                f"SELECT generation FROM {store._schema}.runtime_manifests WHERE dataset=?",
-                [request.destination.dataset],
-            ).fetchone()
-            if manifest_table is not None
-            else None
-        )
         expected_manifest = expected[0] if expected is not None else None
         if request.bind_base_manifest and expected_manifest != request.expected_base_manifest:
             raise _INVALID_REQUEST.error(reason="pinned base generation is no longer current")
@@ -388,11 +378,3 @@ class OwnerPlanner:
 
 def _range_json(value: tuple[datetime, datetime] | None) -> list[str] | None:
     return [item.isoformat() for item in value] if value is not None else None
-
-
-def _initialize_invocations(con: Any, schema: str) -> None:
-    con.execute(
-        f"CREATE TABLE IF NOT EXISTS {schema}.runtime_plan_invocations ("
-        "invocation_id VARCHAR PRIMARY KEY, request_hash VARCHAR NOT NULL, "
-        "snapshot_id VARCHAR NOT NULL, invocation_json VARCHAR NOT NULL)"
-    )

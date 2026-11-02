@@ -23,7 +23,13 @@ from terrine.execution._native import _ascii_key
 from terrine.metrics import _filters
 from terrine.semantic.attributes import RosterAttributes
 from terrine.semantic.bind import _KEY_SCHEMA, _SCHEMA, _relation, bind_metric, normalize_source
-from terrine.semantic.io import dump_catalog, load_catalog, load_catalog_text, validate_catalog
+from terrine.semantic.io import (
+    catalog_payload,
+    dump_catalog,
+    load_catalog,
+    load_catalog_text,
+    validate_catalog,
+)
 from terrine.semantic.models import BoundMetric, BoundSource, Catalog, RelationSpec, TableRef
 from terrine.semantic.time import boundary_timezone
 from terrine.temporal.readiness import Readiness
@@ -387,7 +393,7 @@ class Model:
         object.__setattr__(self, "_resolver", resolver)
         object.__setattr__(self, "_engine", engine)
         declarations = {
-            "catalog": catalog.model_dump(mode="json"),
+            "catalog": catalog_payload(catalog),
             "units": {name: asdict(unit) for name, unit in self.units.items()},
             "event_ids": dict(self.event_ids),
             "readiness": {

@@ -12,9 +12,10 @@ from terrine.model import Model
 from terrine.runtime.materialize import ensure_runtime_expressions_supported
 from terrine.runtime.planner import RefreshPlan
 from terrine.runtime.state import RuntimeStore
+from terrine.semantic.io import catalog_payload
 from terrine.spec.dataset import DatasetDefinition
 from terrine.spec.design import Design
-from terrine.spec.io import canonical_json, from_json, to_json
+from terrine.spec.io import _load, _parse_json, canonical_digest, from_json, to_json
 
 __all__ = [
     "DestinationRef",
@@ -87,7 +88,7 @@ class ModelReference:
         }
         return cls(
             owner_key,
-            _digest(model.catalog.model_dump(mode="json")),
+            _digest(catalog_payload(model.catalog)),
             model.model_hash,
             _digest(
                 {
@@ -154,10 +155,10 @@ class SavedPlan:
             raise _INVALID_INPUT.error(reason="malformed_plan", field="plan_json") from exc
         canonical_plan = json.dumps(parsed_plan, sort_keys=True, separators=(",", ":"))
         design_json = to_json(design)
-        design_hash = hashlib.sha256(canonical_json(design)).hexdigest()
+        design_hash = design.spec_hash
         if dataset_definition is not None and (
             not isinstance(dataset_definition, DatasetDefinition)
-            or canonical_json(dataset_definition.base_design) != canonical_json(design)
+            or dataset_definition.base_design.spec_hash != design_hash
         ):
             raise _INVALID_INPUT.error(reason="design_mismatch", field="dataset_definition")
         dataset_definition_json = (
@@ -296,19 +297,24 @@ class SavedPlan:
             raise _INVALID.error(reason="saved plan checksum mismatch")
         try:
             RefreshPlan.deserialize(saved_plan.plan_json)
-            design = from_json(saved_plan.design_json)
+            design_document = _parse_json(saved_plan.design_json)
+            design_digest = canonical_digest(design_document)
         except TerrineError:
             raise
         except (ValueError, TypeError) as exc:
             raise _INVALID.error(reason="plan or Design payload is invalid") from exc
-        if hashlib.sha256(canonical_json(design)).hexdigest() != saved_plan.design_hash:
+        if design_digest != saved_plan.design_hash:
             raise _INVALID.error(reason="Design hash mismatch")
+        _load(design_document)
         if saved_plan.dataset_definition_json is not None:
             try:
-                dataset_definition = DatasetDefinition.from_json(saved_plan.dataset_definition_json)
+                DatasetDefinition.from_json(saved_plan.dataset_definition_json)
             except (ValueError, TypeError) as exc:
                 raise _INVALID.error(reason="dataset definition is invalid") from exc
-            if canonical_json(dataset_definition.base_design) != canonical_json(design):
+            stored_definition = json.loads(saved_plan.dataset_definition_json)
+            if canonical_digest(stored_definition["base_design"]) != canonical_digest(
+                design_document["design"]
+            ):
                 raise _INVALID.error(reason="dataset definition Design differs")
         return saved_plan
 

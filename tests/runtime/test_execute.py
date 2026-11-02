@@ -5,6 +5,7 @@ import pytest
 from terrine.runtime.execute import execute_plan
 from terrine.runtime.graph import dependency_graph
 from terrine.runtime.planner import plan_refresh
+from terrine.runtime.schema import ensure_runtime_schema
 from tests._timing import HANG_GUARD_SECONDS
 
 
@@ -176,11 +177,6 @@ def test_post_commit_empty_refresh_restores_previous_result_partitions():
         ),
     )
     assert first.state == "succeeded"
-    con.execute(
-        "CREATE TABLE IF NOT EXISTS owner.runtime_run_results "
-        "(run_id VARCHAR NOT NULL, partition VARCHAR NOT NULL, "
-        "PRIMARY KEY(run_id,partition))"
-    )
     con.execute("INSERT INTO owner.runtime_run_results VALUES ('prior-run','all')")
     assert con.execute(
         "SELECT dataset,generation FROM owner.runtime_run_publications WHERE run_id='prior-run'"
@@ -252,11 +248,11 @@ def test_post_commit_empty_refresh_restores_previous_result_partitions():
 def test_expected_base_manifest_mismatch_refuses_before_source_work():
     con = duckdb.connect(":memory:")
     plan = _plan().bind_base_manifest("generation-1")
+    ensure_runtime_schema(con, "owner")
     con.execute(
-        "CREATE SCHEMA owner; CREATE TABLE owner.runtime_manifests "
-        "(dataset VARCHAR PRIMARY KEY,generation VARCHAR NOT NULL,version BIGINT NOT NULL)"
+        "INSERT INTO owner.runtime_manifests (dataset, generation, version) "
+        "VALUES ('orders','generation-2',2)"
     )
-    con.execute("INSERT INTO owner.runtime_manifests VALUES ('orders','generation-2',2)")
     work = []
     with pytest.raises(ValueError):
         execute_plan(
@@ -279,11 +275,11 @@ def test_overlapping_saved_base_replay_returns_terminal_receipt(monkeypatch):
 
     con = duckdb.connect(":memory:")
     plan = _plan().bind_base_manifest("generation-1")
+    ensure_runtime_schema(con, "owner")
     con.execute(
-        "CREATE SCHEMA owner; CREATE TABLE owner.runtime_manifests "
-        "(dataset VARCHAR PRIMARY KEY,generation VARCHAR NOT NULL,version BIGINT NOT NULL)"
+        "INSERT INTO owner.runtime_manifests (dataset, generation, version) "
+        "VALUES ('orders','generation-1',1)"
     )
-    con.execute("INSERT INTO owner.runtime_manifests VALUES ('orders','generation-1',1)")
     acquire = LeaseStore.acquire
 
     def finish_before_lease(self, resource, owner, **kwargs):
@@ -325,18 +321,14 @@ def test_retry_reconciles_publication_before_rejecting_its_own_manifest():
     con = duckdb.connect(":memory:")
     plan = _plan().bind_base_manifest("generation-1")
     backend = DuckDBBackend(con, namespace="owner")
-    backend.initialize()
-    con.execute(
-        "CREATE TABLE owner.runtime_runs (run_id VARCHAR PRIMARY KEY,dataset VARCHAR,"
-        "fingerprint VARCHAR,state VARCHAR,published_generation VARCHAR,attempt_fence BIGINT)"
-    )
     con.execute(
         "INSERT INTO owner.runtime_manifests "
         "(dataset,generation,version,snapshot_id) VALUES ('orders','generation-1',1,NULL)"
     )
     con.execute("INSERT INTO owner.runtime_publications VALUES ('orders','generation-1',1)")
     con.execute(
-        "INSERT INTO owner.runtime_runs VALUES ('ambiguous','orders',?,'running',NULL,1)",
+        "INSERT INTO owner.runtime_runs (run_id, dataset, fingerprint, state, attempt_fence) "
+        "VALUES ('ambiguous','orders',?,'running',1)",
         [plan.definition.fingerprint],
     )
     leases = LeaseStore(con, namespace="owner")

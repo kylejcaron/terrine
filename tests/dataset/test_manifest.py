@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 from datetime import date
 from typing import Any, cast
 
@@ -144,6 +145,23 @@ _DEFINITION = DatasetDefinition(base_design=Design("unit", FixedDate(date(2025, 
 _GENERATION = ManifestGeneration("ds", "g1", ("table:g1",), ("sha256:x",), 0)
 
 
+def test_manifest_keeps_recorded_digest_of_its_stored_definition() -> None:
+    from terrine.spec.io import canonical_digest
+
+    manifest = DatasetManifest(_DEFINITION, _GENERATION, (), "design", "model", {}, {})
+    payload = json.loads(manifest.to_json())
+    payload["definition"]["view"] = None
+    payload["definition"]["base_design"]["treatment"] = None
+    payload["definition_hash"] = canonical_digest(payload["definition"])
+    reopened = DatasetManifest.from_json(json.dumps(payload))
+    assert reopened.definition == manifest.definition
+    assert reopened.definition_hash == payload["definition_hash"] != manifest.definition_hash
+    assert json.loads(reopened.to_json())["definition"] == payload["definition"]
+    assert DatasetManifest.from_json(reopened.to_json()) == reopened
+    edited = replace(reopened, columns=(ManifestColumn("unit", "string", "unit"),))
+    assert DatasetManifest.from_json(edited.to_json()).definition_hash == manifest.definition_hash
+
+
 @pytest.mark.parametrize(
     ("code", "build", "context"),
     [
@@ -171,6 +189,13 @@ _GENERATION = ManifestGeneration("ds", "g1", ("table:g1",), ("sha256:x",), 0)
             "terrine.dataset.invalid_manifest",
             lambda: DatasetManifest(_DEFINITION, _GENERATION, cast(Any, 5), "d", "m", {}, {}),
             {"reason": "wrong_type", "field": "columns"},
+        ),
+        (
+            "terrine.dataset.invalid_manifest",
+            lambda: DatasetManifest(
+                _DEFINITION, _GENERATION, (), "d", "m", {}, {}, definition_hash="corrupt"
+            ),
+            {"reason": "invalid_digest", "field": "definition_hash"},
         ),
         (
             "terrine.dataset.invalid_manifest",
