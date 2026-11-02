@@ -95,8 +95,6 @@
 - Calendar-date `Schedule.end` and `AnchorRange.end` are inclusive: account for
   the final day's anchors. Aware datetime ends remain exact exclusive instants;
   relative windows and `TimeSplit` are unchanged.
-- Normalized `Schedule.every` is `int | None`, and calendar schedules use
-  `months`: read the non-null field when inspecting or decoding a schedule.
 - `life_table(features=...)` becomes `life_table(group_by=...)`: rename the
   keyword. `state_panel(periods=None)` derives whole periods from the schedule;
   use an explicit count only as a cap, not permission to truncate.

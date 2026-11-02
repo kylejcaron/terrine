@@ -57,11 +57,18 @@ Before tagging a release:
    uv run python scripts/api_check.py
    ```
 
-3. Run the release-upgrade test:
+3. Run the release-upgrade test when `tests/artifacts/RELEASES` lists earlier 1.x
+   releases:
 
    ```sh
    uv run pytest -n 0 -m scale integration/test_release_upgrade.py
    ```
+
+   For the first 1.x release, `RELEASES` is empty and the test collects no
+   cases. Validate the producer once against the locally built wheel instead:
+   run `uv build`, add the wheel's absolute path as one line in
+   `tests/artifacts/RELEASES`, run the command above, then empty `RELEASES`
+   again.
 
 4. If a saved format changed, add a generation to the artifact corpus:
 
