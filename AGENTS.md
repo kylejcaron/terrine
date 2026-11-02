@@ -65,20 +65,19 @@ Reached schedules and deadlines use notify.* for the current owner, or the autho
 
 - `uv sync --extra duckdb --extra pandas --extra polars` installs the local
   reference backend and dataframe extras with development dependencies.
-- `make check TESTS="<affected paths>"` runs static gates and focused tests;
-  run it before each commit. `make fmt` formats source/tests; `uv build` builds
-  local distributions.
+- `make check TESTS="<affected paths>"` runs static gates and focused tests in
+  one process; `make test` does the same for focused paths and uses `-n auto`
+  for the complete `tests/` tier. Run it before each commit. `make fmt` formats
+  source/tests; `uv build` builds local distributions.
 - `make test-scale` runs the scheduled scale tier (`SCALE_TESTS` overrides the
   `integration/` default); `make complexity` reports without gating. The
-  integration tier, the smoke script and examples run in CI on every push and
-  before merges; the scale tier runs weekly and on demand.
+  integration tier runs in CI on every push and before merges; examples are
+  executed by `integration/test_examples.py`. The scale tier runs weekly and on demand.
 - CI splits the integration tier into balanced groups from
   `integration/.test_durations`. Tests without a stored time still run (they
-  are assigned the average); after large changes refresh it with
-  `uv run pytest integration --store-durations --durations-path integration/.test_durations`.
-  CI splits the unit tier into four groups balanced from `tests/.test_durations`.
-  Run the full unit tier locally with `uv run pytest tests`; refresh its
-  durations with `uv run pytest tests --store-durations --durations-path tests/.test_durations`.
+  are assigned the average). CI splits the unit tier into four groups balanced
+  from `tests/.test_durations`. Run the full unit tier locally with
+  `make test`; refresh both files by dispatching the `durations` workflow.
 - `make mutate MODULE=terrine/backends/numeric.py MUTATION_TESTS="tests/backends/test_numeric.py integration/backends/test_numeric.py"`
   runs an on-demand, single-module mutation campaign and prints every result.
   `MUTATION_CORES` defaults to 2; execution uses at most the cores agent-slots
@@ -150,9 +149,10 @@ Reached schedules and deadlines use notify.* for the current owner, or the autho
 - Put each test in the cheapest tier that can show its behavior. Tiers are
   defined by when they run:
   - **Unit** (`tests/`, default): one rule at the function that owns it, a few
-    rows of input, in-process unless the rule is process isolation itself.
-    Unit tests MUST NOT use the network or a real warehouse. Typically
-    milliseconds; under about 2 s alone. Runs on every local check and push.
+    rows of input, in-process for focused selections and parallel (`-n auto`)
+    for the full tier. Unit tests MUST NOT use the network or a real warehouse.
+    Typically milliseconds; under about 2 s alone. Runs on every local check
+    and push.
   - **Integration** (`integration/`): composition across subsystems, processes
     or real libraries, such as Model→snapshot→stage→publish→read-back, crash
     recovery, orchestrators and library hand-offs. One end-to-end test per

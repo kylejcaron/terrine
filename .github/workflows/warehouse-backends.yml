@@ -53,7 +53,6 @@ jobs:
       TERRINE_TEST_POSTGRES_USER: postgres
       TERRINE_TEST_POSTGRES_PASSWORD: terrine
       TERRINE_TEST_POSTGRES_DB: terrine_test
-      PYTEST_ADDOPTS: -n auto
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
@@ -84,7 +83,6 @@ jobs:
       TERRINE_TEST_SNOWFLAKE_DATABASE: ${{ secrets.TERRINE_TEST_SNOWFLAKE_DATABASE }}
       TERRINE_TEST_SNOWFLAKE_SCHEMA: ${{ secrets.TERRINE_TEST_SNOWFLAKE_SCHEMA }}
       TERRINE_TEST_SNOWFLAKE_PRIVATE_KEY_PASSPHRASE: ${{ secrets.TERRINE_TEST_SNOWFLAKE_PRIVATE_KEY_PASSPHRASE }}
-      PYTEST_ADDOPTS: -n 4
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
@@ -94,7 +92,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: uv sync --locked --group dev --extra duckdb --extra snowflake
-      - run: PYTEST_TIME='/usr/bin/time -f "terrine-pytest-cpu %U %S"' make test-snowflake
+      - run: WAREHOUSE_WORKERS=4 PYTEST_TIME='/usr/bin/time -f "terrine-pytest-cpu %U %S"' make test-snowflake
       - run: uv run python examples/snowflake/dataset.py
 
   # Each probe owns a scratch dataset, but queries are billed: serialize runs.
@@ -108,7 +106,6 @@ jobs:
     env:
       TERRINE_TEST_BIGQUERY_PROJECT: ${{ secrets.TERRINE_TEST_BIGQUERY_PROJECT }}
       TERRINE_TEST_BIGQUERY_DATASET: ${{ secrets.TERRINE_TEST_BIGQUERY_DATASET }}
-      PYTEST_ADDOPTS: -n 4
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
@@ -123,5 +120,5 @@ jobs:
           echo "GOOGLE_APPLICATION_CREDENTIALS=$RUNNER_TEMP/gcp-sa.json" >> "$GITHUB_ENV"
         env: {SA_KEY: "${{ secrets.TERRINE_TEST_BIGQUERY_SA_KEY }}"}
       - run: uv sync --locked --group dev --extra duckdb --extra bigquery
-      - run: PYTEST_TIME='/usr/bin/time -f "terrine-pytest-cpu %U %S"' make test-bigquery
+      - run: WAREHOUSE_WORKERS=4 PYTEST_TIME='/usr/bin/time -f "terrine-pytest-cpu %U %S"' make test-bigquery
       - run: uv run python examples/bigquery/dataset.py
