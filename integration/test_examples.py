@@ -11,13 +11,17 @@ CONTRACT_TESTED: frozenset[str] = frozenset(
     {"ml_staging.py", "batch_scoring.py", "dataset_agent_tools.py", "materialization_runtime.py"}
 )
 EXAMPLES = sorted(p for p in (ROOT / "examples").glob("*.py") if p.name not in CONTRACT_TESTED)
+# The tutorial runs on every push; the other examples run in the weekly scale tier.
+EVERY_PUSH = "first_dataset.py"
 
 
 # distinct scripts, not values on one path
 @pytest.mark.parametrize(
     "script",
-    EXAMPLES,
-    ids=lambda p: p.stem,
+    [
+        pytest.param(p, id=p.stem, marks=() if p.name == EVERY_PUSH else pytest.mark.scale)
+        for p in EXAMPLES
+    ],
 )
 def test_example_script_exits_cleanly(script):
     result = subprocess.run([sys.executable, str(script)], cwd=ROOT, capture_output=True, text=True)

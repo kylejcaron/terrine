@@ -77,7 +77,7 @@ testpaths = ["tests"]
 addopts = "-ra --strict-markers --strict-config --durations=0 --durations-min=5.0 -m 'not scale and not postgres and not bigquery and not snowflake'"
 xfail_strict = true
 markers = [
-    "scale: resource-bound scale, oracle and live-warehouse checks; scheduled tier only",
+    "scale: resource-bound scale, oracle, live-warehouse and example-script checks; scheduled tier only",
     "postgres: live PostgreSQL probes; need TERRINE_TEST_POSTGRES_* settings",
     "bigquery: live BigQuery probes; need TERRINE_TEST_BIGQUERY_* settings and credentials",
     "snowflake: live Snowflake probes; need TERRINE_TEST_SNOWFLAKE_* settings",

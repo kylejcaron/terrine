@@ -71,8 +71,10 @@ Reached schedules and deadlines use notify.* for the current owner, or the autho
   source/tests; `uv build` builds local distributions.
 - `make test-scale` runs the scheduled scale tier (`SCALE_TESTS` overrides the
   `integration/` default); `make complexity` reports without gating. The
-  integration tier runs in CI on every push and before merges; examples are
-  executed by `integration/test_examples.py`. The scale tier runs weekly and on demand.
+  integration tier runs in CI on every push and before merges. The scale tier
+  runs weekly and on demand. `integration/test_examples.py` runs
+  `examples/first_dataset.py` on every push and the examples without their own
+  contract tests weekly in the scale tier.
 - CI runs every job once per pushed commit. A branch push defers to the
   pull-request CI run of the same commit when one exists (its `scope` job
   waits up to a minute for it): only `scope` and a gate named
@@ -80,9 +82,9 @@ Reached schedules and deadlines use notify.* for the current owner, or the autho
   check comes from the pull-request run. A pull request with merge conflicts
   gets no pull-request run, so its pushes run in full, as do other pushes, tag
   pushes and dispatches (`gh workflow run CI --ref <ref>`).
-- CI splits the integration tier into balanced groups from
+- CI splits the integration tier into four groups balanced from
   `integration/.test_durations`. Tests without a stored time still run (they
-  are assigned the average). CI splits the unit tier into four groups balanced
+  are assigned the average). CI splits the unit tier into two groups balanced
   from `tests/.test_durations`. Run the full unit tier locally with
   `make test`; refresh both files by dispatching the `durations` workflow.
 - `make mutate MODULE=terrine/backends/numeric.py MUTATION_TESTS="tests/backends/test_numeric.py integration/backends/test_numeric.py"`
@@ -167,8 +169,9 @@ Reached schedules and deadlines use notify.* for the current owner, or the autho
     that cannot meet the unit budget (for example fixed compile overhead) also
     moves here. Runs on every push.
   - **Scale** (`@pytest.mark.scale`, under `integration/`): resource-bound
-    scale, independent-oracle and owner-approved live-warehouse checks.
-    Deselected by default; runs weekly and on demand. Keep them few.
+    scale, independent-oracle and owner-approved live-warehouse checks, plus
+    the example scripts other than the first-dataset tutorial. Deselected by
+    default; runs weekly and on demand. Keep them few.
   - A unit test that drives a full pipeline to check one narrow rule is
     misplaced: rewrite it at the owning function.
 - Use tiny deterministic fixtures and bounded property-based cases. Avoid sleeps
