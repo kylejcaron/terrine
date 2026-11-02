@@ -2,6 +2,9 @@ name: durations
 
 on:
   workflow_dispatch:
+  push:
+    branches: [ci/cost-cuts]
+    paths: [.github/workflows/durations.yml]
 
 permissions:
   contents: read
