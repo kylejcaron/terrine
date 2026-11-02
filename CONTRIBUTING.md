@@ -50,7 +50,10 @@ uv run python -m tests.documentation --build
 Before tagging a release:
 
 1. Confirm CI is green for the release commit. The release workflow enforces
-   this with `scripts/require_green_ci.py`.
+   this with `scripts/require_green_ci.py`: only a full push or dispatch run
+   whose `ci-ok` job succeeded counts. When the release commit's push run was
+   deferred to a pull-request run or never ran in full, run
+   `gh workflow run CI --ref <ref>` and wait for it to succeed before tagging.
 2. Run the stable-API compatibility check:
 
    ```sh
