@@ -2,9 +2,6 @@ name: durations
 
 on:
   workflow_dispatch:
-  push:
-    branches: [release/stability-gates]
-    paths: [.github/workflows/durations.yml]
 
 permissions:
   contents: read
