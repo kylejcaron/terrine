@@ -506,6 +506,8 @@ def approx_quantile(
 ) -> ApproxMetricQuantile:
     """Request an approximate event-value quantile using the installed t-digest package.
 
+    Provisional: this expression may change in a minor release, with a changelog entry.
+
     Args:
         metric: Name of a metric declared in the model.
         probability: Decimal or decimal string in [0, 1]; binary floating-point inputs are refused.
@@ -529,6 +531,8 @@ def approx_distinct(
     metric: str, *, window: tuple[str | Duration | Literal[0], str | Duration | Literal[0]]
 ) -> ApproxMetricDistinct:
     """Request an approximate distinct-value count for a metric over a window.
+
+    Provisional: this expression may change in a minor release, with a changelog entry.
 
     Args:
         metric: Name of a metric declared in the model.

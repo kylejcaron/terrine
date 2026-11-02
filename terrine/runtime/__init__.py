@@ -1,3 +1,9 @@
+"""Owner-side planning, saved plans, runs and reads of published generations.
+
+Provisional: this package and its modules may change in a minor release, with a
+changelog entry.
+"""
+
 from terrine.runtime.api import (
     CostProvider,
     DesignExecutor,

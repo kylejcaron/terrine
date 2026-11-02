@@ -28,6 +28,7 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
+      actions: read
     outputs:
       version: ${{ steps.check.outputs.version }}
       prerelease: ${{ steps.check.outputs.prerelease }}
@@ -50,7 +51,17 @@ jobs:
         with:
           enable-cache: true
 
+      - name: Require successful CI for this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/require_green_ci.py --sha "$GITHUB_SHA"
+
       - run: uv build --sdist --wheel --out-dir dist
+
+      - name: Verify distributions
+        run: |
+          uv run --no-project --python 3.12 python -m tests.integration.distribution_smoke \
+            --wheel dist/*.whl --sdist dist/*.tar.gz --python 3.12 --resolution highest
 
       - name: Verify built version matches the tag
         id: check

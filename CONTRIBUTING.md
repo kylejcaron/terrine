@@ -45,6 +45,46 @@ uv run pytest -q tests/test_documentation.py
 uv run python -m tests.documentation --build
 ```
 
+## Releasing
+
+Before tagging a release:
+
+1. Confirm CI is green for the release commit. The release workflow enforces
+   this with `scripts/require_green_ci.py`.
+2. Run the stable-API compatibility check:
+
+   ```sh
+   uv run python scripts/api_check.py
+   ```
+
+3. Run the release-upgrade test when `tests/artifacts/RELEASES` lists earlier 1.x
+   releases:
+
+   ```sh
+   uv run pytest -n 0 -m scale integration/test_release_upgrade.py
+   ```
+
+   For the first 1.x release, `RELEASES` is empty and the test collects no
+   cases. Validate the producer once against the locally built wheel instead:
+   run `uv build`, add the wheel's absolute path as one line in
+   `tests/artifacts/RELEASES`, run the command above, then empty `RELEASES`
+   again.
+
+4. If a saved format changed, add a generation to the artifact corpus:
+
+   ```sh
+   uv run python scripts/write_artifact_corpus.py --generation <name>
+   ```
+
+5. After publishing, add the released version to `tests/artifacts/RELEASES` so
+   later upgrade checks include it.
+6. For the 1.0.0 release candidate, replace the README's pre-alpha warning with:
+
+   > [!NOTE]
+   > Terrine 1.0.0rc1 is a release candidate for the 1.0 series. Stable APIs follow the documented stability policy; provisional and internal APIs may change. This is not the final 1.0.0 release.
+
+7. Tag the release.
+
 ## License and the CLA
 
 terrine is licensed under the [Apache License 2.0](LICENSE).
