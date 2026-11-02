@@ -474,8 +474,8 @@ def aggregate_window(
     domain_context = {
         "metric": metric.name,
         "output": output,
-        "window_start": window.start,
-        "window_end": window.end,
+        "window_start": window.start.seconds,
+        "window_end": window.end.seconds,
         "boundary": boundary,
         "phase": "pre_output",
     }
@@ -483,8 +483,8 @@ def aggregate_window(
         if calendar_average_alignment(window, anchor=None, day_boundary=boundary) == "unaligned":
             raise UNALIGNED_CALENDAR_AVERAGE.error(measure=measure.event, **domain_context)
     builder = _Builder(anchors, output)
-    start = builder.put("start", anchors.t0 + ibis.interval(seconds=window.start))
-    end = builder.put("end", builder.table.t0 + ibis.interval(seconds=window.end))
+    start = builder.put("start", anchors.t0 + ibis.interval(seconds=window.start.seconds))
+    end = builder.put("end", builder.table.t0 + ibis.interval(seconds=window.end.seconds))
     row_checks: list[RowCheck] = []
     if calendars or resolution == "day":
         invalid = builder.put(
@@ -578,7 +578,7 @@ def aggregate_window(
                 measure,
                 first.columns,
                 second.columns,
-                days=(window.end - window.start) // 86400,
+                days=(window.end.seconds - window.start.seconds) // 86400,
                 conversion=conversion,
                 context=context,
             )

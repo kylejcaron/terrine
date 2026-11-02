@@ -43,7 +43,7 @@ from terrine.spec.expressions import (
 from terrine.spec.sequence import EventSequence
 from terrine.spec.state_panel import StatePanel
 from terrine.spec.trajectory import CohortSpec, LifeTable, TimeToEvent
-from terrine.windows import duration, seconds_text
+from terrine.windows import Duration, duration
 
 _RESERVED_OUTPUT_NAME = RefusalSpec(
     "terrine.spec.reserved_output_name",
@@ -119,13 +119,14 @@ class Treatment:
 
     Args:
         attribute: Declared static roster attribute, event label or history attribute name.
-        at: Elapsed duration string (see `terrine.windows`); "0d" reads treatment at the t0 cutoff.
+        at: Elapsed duration string (see `terrine.windows`) or Duration; "0d" reads treatment at
+            the t0 cutoff.
         known_at_t0: Whether to declare treatment known at baseline; False makes no such
             declaration.
 
     Attributes:
         attribute: Declared static roster attribute, event label or history attribute name.
-        at: Treatment cutoff offset stored as exact integer seconds.
+        at: Treatment cutoff offset as a Duration.
         known_at_t0: Whether to declare treatment known at baseline; False makes no such
             declaration.
 
@@ -133,11 +134,11 @@ class Treatment:
     """
 
     attribute: str
-    at: int
+    at: Duration
     known_at_t0: bool
 
     def __init__(
-        self, attribute: str, at: str | Literal[0] = "0d", known_at_t0: bool = False
+        self, attribute: str, at: str | Duration | Literal[0] = "0d", known_at_t0: bool = False
     ) -> None:
         if not isinstance(attribute, str) or not attribute.strip():
             raise _INVALID.error(reason="empty_name", field="attribute")
@@ -161,7 +162,8 @@ class Design:
             outcomes.
         eligibility: Mapping of rule names to predicates; None applies no eligibility rules.
         treatment: Treatment declaration; None produces no treatment column.
-        gap: Nonnegative duration string (see `terrine.windows`); "0d" leaves no feature-to-t0 gap.
+        gap: Nonnegative duration string (see `terrine.windows`) or Duration; "0d" leaves no
+            feature-to-t0 gap.
         shape: "cross_section" or a specialized shape declaration; "cross_section" gives one row per
             anchor.
         anchor_range: AnchorRange restricting row t0 values; None keeps all generated anchors.
@@ -177,7 +179,7 @@ class Design:
             outcomes.
         eligibility: Mapping of rule names to predicates; None applies no eligibility rules.
         treatment: Treatment declaration; None produces no treatment column.
-        gap: Minimum feature-to-t0 gap stored as exact integer seconds.
+        gap: Minimum feature-to-t0 gap as a Duration.
         shape: "cross_section" or a specialized shape declaration; "cross_section" gives one row per
             anchor.
         anchor_range: AnchorRange restricting row t0 values; None keeps all generated anchors.
@@ -194,7 +196,7 @@ class Design:
     outcomes: Mapping[str, Expr | Predicate]
     eligibility: Mapping[str, Predicate]
     treatment: Treatment | None
-    gap: int
+    gap: Duration
     shape: (
         Literal["cross_section"]
         | StatePanel
@@ -219,7 +221,7 @@ class Design:
         outcomes: Mapping[str, Expr | Predicate] | None = None,
         eligibility: Mapping[str, Predicate] | None = None,
         treatment: Treatment | None = None,
-        gap: str | Literal[0] = "0d",
+        gap: str | Duration | Literal[0] = "0d",
         shape: Literal["cross_section"]
         | StatePanel
         | EventSequence
@@ -274,8 +276,8 @@ class Design:
             from terrine.spec.panels import _CONFLICT
 
             raise _CONFLICT.error()
-        gap_seconds = duration(gap, field="gap")
-        if gap_seconds < 0:
+        gap_value = duration(gap, field="gap")
+        if gap_value.seconds < 0:
             raise _INVALID.error(reason="negative", field="gap")
         object.__setattr__(self, "unit", unit)
         object.__setattr__(self, "anchor", anchor)
@@ -331,7 +333,7 @@ class Design:
             for name in shape.properties:
                 _validate_support_name(name)
         object.__setattr__(self, "treatment", treatment)
-        object.__setattr__(self, "gap", gap_seconds)
+        object.__setattr__(self, "gap", gap_value)
         object.__setattr__(self, "shape", shape)
         object.__setattr__(self, "anchor_range", anchor_range)
         object.__setattr__(self, "sample", sample)
@@ -487,7 +489,7 @@ class Design:
             FixedDate(resolved),
             features={name: parent.features[name] for name in selected},
             eligibility=eligibility,
-            gap=seconds_text(parent.gap),
+            gap=parent.gap,
         )
         frame = scoring_design.build(model)
         from terrine.frame import _ScoringView

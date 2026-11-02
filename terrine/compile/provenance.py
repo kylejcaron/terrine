@@ -11,6 +11,7 @@ from terrine.data import (
     TrialWeightMeta,
 )
 from terrine.spec.state_panel import BinnedMetricState, StatePanel, encode_cutpoint
+from terrine.windows import Duration
 
 if TYPE_CHECKING:
     from terrine.model import Model
@@ -41,7 +42,7 @@ def state_panel_metadata(design: Design, model: Model) -> StatePanelMeta | None:
         }
         levels, ordered, absorbing = state.levels, state.ordered, state.absorbing
         timing = "at_origin"
-    assert schedule.every is not None
+    assert isinstance(schedule.every, Duration)
     return StatePanelMeta(
         state_source=source,
         levels=levels,
@@ -49,7 +50,7 @@ def state_panel_metadata(design: Design, model: Model) -> StatePanelMeta | None:
         absorbing=absorbing,
         panel_start=model.day_boundary(schedule.start).astimezone(UTC),
         administrative_end=model.day_boundary(schedule.end_exclusive).astimezone(UTC),
-        period_seconds=schedule.every,
+        period_seconds=schedule.every.seconds,
         baseline_features=tuple(design.shape.baseline_features),
         time_varying_features=tuple(design.features),
         prior_state_timing=timing,
@@ -88,13 +89,13 @@ def panel_metadata(design: Design, model: Model) -> PanelMeta | None:
             history,
             trial_weight,
             trials=trials,
-            anticipation_seconds=design.shape.anticipation,
+            anticipation_seconds=design.shape.anticipation.seconds,
         )
     if isinstance(design.shape, EventPanelSpec):
         return PanelMeta(
             "event_panel",
             periods=design.shape.periods,
-            period_seconds=design.shape.period,
+            period_seconds=design.shape.period.seconds,
             reference_period=design.shape.reference_period,
         )
     return None
@@ -108,7 +109,7 @@ def calendar_comparison_metadata(design: Design, model: Model) -> CalendarCompar
     if not isinstance(design.shape, CalendarComparisonSpec):
         return None
     assert isinstance(design.anchor, Schedule)
-    assert design.anchor.every is not None
+    assert isinstance(design.anchor.every, Duration)
     cohort = design.shape.cohort
     return CalendarComparisonMeta(
         design.shape.control,
@@ -119,5 +120,5 @@ def calendar_comparison_metadata(design: Design, model: Model) -> CalendarCompar
         design.shape.reference_period,
         design.shape.comparison_periods,
         design.shape.anticipation_periods,
-        design.anchor.every,
+        design.anchor.every.seconds,
     )

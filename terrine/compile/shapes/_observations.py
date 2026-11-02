@@ -25,7 +25,7 @@ from terrine.spec._columns import IDENTITY, STATE_PANEL
 from terrine.spec.anchors import FixedDate, Schedule
 from terrine.spec.design import Design
 from terrine.spec.state_panel import _INVALID_OBSERVATIONS, StateObservations, StatePanel
-from terrine.windows import seconds_text
+from terrine.windows import Duration
 
 if TYPE_CHECKING:
     from terrine.model import Model
@@ -71,7 +71,7 @@ def _period_design(
         anchor,
         features=features,
         eligibility=design.eligibility if filter_population else None,
-        gap=seconds_text(design.gap),
+        gap=design.gap,
         shape="cross_section",
         anchor_range=design.anchor_range if filter_population else None,
     )
@@ -79,7 +79,7 @@ def _period_design(
 
 def _points(design: Design, model: Model, state: StateObservations):
     schedule = design.anchor
-    assert isinstance(schedule, Schedule) and schedule.every is not None
+    assert isinstance(schedule, Schedule) and isinstance(schedule.every, Duration)
     assert design.unit is not None  # every entry point resolves the design first
     candidates = [
         (source, source.properties[state.property])
@@ -140,7 +140,7 @@ def _points(design: Design, model: Model, state: StateObservations):
         & (all_points.point_time <= ibis.literal(end))
     )
     offset = panel_points.point_time.delta(ibis.literal(start), unit="microsecond")
-    with_grid = panel_points.mutate(__on_grid=offset % (schedule.every * 1_000_000) == 0)
+    with_grid = panel_points.mutate(__on_grid=offset % (schedule.every.seconds * 1_000_000) == 0)
     return coverage, bounded, with_grid, precision, raw_checks
 
 
@@ -226,7 +226,7 @@ def compile_observed_state_panel(
     state = panel.state
     assert isinstance(state, StateObservations)
     schedule = design.anchor
-    assert isinstance(schedule, Schedule) and schedule.every is not None
+    assert isinstance(schedule, Schedule) and isinstance(schedule.every, Duration)
     coverage, points, grid_points, precision, checks = _points(design, model, state)
     bounds, bounds_anchors = _bounds_relation(design, model)
     point_bounds = points.left_join(bounds, points.unit == bounds.unit)
@@ -293,7 +293,7 @@ def compile_observed_state_panel(
         persisted_prefixes=persisted_prefixes,
         persisted_anchors=persisted_anchors,
     )
-    interval = ibis.interval(seconds=schedule.every)
+    interval = ibis.interval(seconds=schedule.every.seconds)
 
     def attach(source_rows):
         term = terminals.view()

@@ -63,9 +63,15 @@ def test_dataset_definition_takes_no_schema_version():
     design = tr.Design("user", tr.FixedDate("2025-01-03"))
     definition = DatasetDefinition(base_design=design)
     assert DatasetDefinition.from_json(definition.canonical_json()).base_design == design
-    assert json.loads(definition.canonical_json())["schema_version"] == 3
+    assert json.loads(definition.canonical_json())["schema_version"] == 4
     with pytest.raises(TypeError):
-        cast(Any, DatasetDefinition)(schema_version=3, base_design=design)
+        cast(Any, DatasetDefinition)(schema_version=4, base_design=design)
+
+
+def test_windows_exports_duration_values_and_the_parser():
+    import terrine.windows as windows
+
+    assert windows.__all__ == ["Window", "Duration", "Months", "duration"]
 
 
 def test_recipes_dir_shows_only_recipes():

@@ -97,12 +97,12 @@ def calendar_average_alignment(
     """Classify whether a calendar-day average has positive aligned local-day endpoints."""
     if not isinstance(window, Window):
         raise TypeError("window must be a Window")
-    duration = window.end - window.start
+    duration = window.end.seconds - window.start.seconds
     if duration <= 0 or duration % 86400:
         return "unaligned"
     if anchor is None:
         return "runtime_check"
-    result = _wall_clock_aligned(anchor, window.start, day_boundary)
+    result = _wall_clock_aligned(anchor, window.start.seconds, day_boundary)
     return "aligned" if result else "unaligned"
 
 

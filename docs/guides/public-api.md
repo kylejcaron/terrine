@@ -84,9 +84,10 @@ Import shape-specific inputs from `terrine.spec`, as with `Initiation`:
 `TimeToEvent`, `LifeTable`, `StatePanel`, `StateObservations`,
 `BinnedMetricState`, `EventSequence`, `SessionSpec` and `FunnelSpec`.
 The specialized `retention`, `quantile`, `approx_distinct` and `approx_quantile`
-expressions and `DatasetDefinition` also live there. Import elapsed `Window`
-from `terrine.windows`. A Frame is returned by `design.build(model)`; its type
-is available from `terrine.frame` when needed.
+expressions and `DatasetDefinition` also live there. Import elapsed `Window`,
+`Duration` and calendar `Months` values from `terrine.windows`. A Frame is
+returned by `design.build(model)`; its type is available from `terrine.frame`
+when needed.
 
 Bind Models through `tr.Model.from_tables(...)` or `tr.Model.from_catalog(...)`,
 not the Model constructor. Create definitions as
@@ -190,7 +191,7 @@ runtime-state, and orchestration records remain in their focused modules.
 
 The focused public modules `terrine.data`, `terrine.errors`, `terrine.windows`,
 `terrine.model` and `terrine.frame` retain their explicit typed contracts:
-budgets/coverage and returned metadata, coded refusals, elapsed windows, Model,
+budgets/coverage and returned metadata, coded refusals, elapsed windows and durations, Model,
 and Frame/cohort results respectively. Data metadata is inspectable without
 becoming user-authored compiler or runtime state. Optional dependency import
 isolation covers the root and all package facades, including resolution of

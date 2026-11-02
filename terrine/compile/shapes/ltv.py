@@ -25,7 +25,7 @@ from terrine.spec.expressions import MetricAgg
 from terrine.spec.trajectory import CohortSpec
 from terrine.temporal.aggregate import _Check, narrow_exact
 from terrine.temporal.prefix import FLOAT64_PRECISION
-from terrine.windows import Window, seconds_text
+from terrine.windows import Window, _elapsed
 
 _INVALID = RefusalSpec(
     "terrine.trajectory.invalid_compilation",
@@ -65,12 +65,12 @@ def compile_ltv(design: Design, model: Model) -> CompiledStudy:
 
             raise _RESERVED_NAME.error(name=feature)
     names = tuple(f"__trajectory_age_{age}" for age in range(trajectory.periods))
+    period = trajectory.period.seconds
     outcomes = {
         name: MetricAgg(
             trajectory.metric,
             Window(
-                seconds_text(age * trajectory.period),
-                seconds_text((age + 1) * trajectory.period),
+                _elapsed(age * period, field="window"), _elapsed((age + 1) * period, field="window")
             ),
         )
         for age, name in enumerate(names)
@@ -82,7 +82,7 @@ def compile_ltv(design: Design, model: Model) -> CompiledStudy:
         outcomes=outcomes,
         eligibility=design.eligibility,
         treatment=design.treatment,
-        gap=seconds_text(design.gap),
+        gap=design.gap,
         shape="cross_section",
         anchor_range=design.anchor_range,
     )
@@ -101,7 +101,7 @@ def compile_ltv(design: Design, model: Model) -> CompiledStudy:
         value = source[name]
         complete = source[meta.complete_column].fill_null(ibis.literal(False))
         reason = source[meta.reason_column]
-        end_time = source.t0 + ibis.interval(seconds=(age + 1) * trajectory.period)
+        end_time = source.t0 + ibis.interval(seconds=(age + 1) * period)
         if design.administrative_cutoff is not None:
             immature = end_time > ibis.literal(design.administrative_cutoff)
             value = immature.ifelse(ibis.null().cast(value.type()), value)
@@ -110,7 +110,7 @@ def compile_ltv(design: Design, model: Model) -> CompiledStudy:
         mature = (
             ibis.literal(True)
             if design.administrative_cutoff is None
-            else source.t0 + ibis.interval(seconds=age * trajectory.period)
+            else source.t0 + ibis.interval(seconds=age * period)
             < ibis.literal(design.administrative_cutoff)
         )
         projection = dict(
@@ -180,7 +180,7 @@ def compile_ltv(design: Design, model: Model) -> CompiledStudy:
         or name == compiled.roles.treatment
     }
     output_columns["period_value"] = ColumnMeta(
-        Window(0, seconds_text(trajectory.period)),
+        Window(0, trajectory.period),
         "outcome",
         "period_value_observed_from",
         "period_value_observed_until",

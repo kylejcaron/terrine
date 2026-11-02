@@ -1954,7 +1954,7 @@ def test_pre_rename_owner_database_refuses_old_generation_and_stages_new(events_
     fixtures = files("tests.fixtures")
     serialized = fixtures.joinpath("pre_rename_manifest.json").read_text()
     saved = fixtures.joinpath("pre_rename_saved_plan.json").read_text()
-    definition = DatasetDefinition.from_json(fixtures.joinpath("definition_v3.json").read_bytes())
+    definition = DatasetDefinition.from_json(fixtures.joinpath("definition_v4.json").read_bytes())
     namespace = "terrine_runtime"
     try:
         raw = con.con

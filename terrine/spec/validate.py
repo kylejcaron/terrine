@@ -46,7 +46,7 @@ from terrine.spec.expressions import (
 )
 from terrine.spec.sequence import EventSequence
 from terrine.spec.trajectory import CohortSpec, LifeTable, TimeToEvent
-from terrine.windows import Window, _duration, seconds_text
+from terrine.windows import Months, Window, _duration, _elapsed
 
 if TYPE_CHECKING:
     from terrine.model import Model
@@ -93,7 +93,7 @@ def ensure_runtime_shape_supported(shape: object, *, anchor: object = None) -> N
     from terrine.spec.panels import EventPanelSpec, SequentialSpec
     from terrine.spec.state_panel import StatePanel
 
-    if isinstance(anchor, EventAnchor) and anchor.offset:
+    if isinstance(anchor, EventAnchor) and anchor.offset.seconds != 0:
         raise _RUNTIME_SHAPE_UNSUPPORTED.error(
             shape="EventAnchor.offset", route="ordinary Frame materialization or a full rebuild"
         )
@@ -270,11 +270,12 @@ def _fixed_anchors(design: Design, model: Model) -> tuple[datetime, ...] | None:
 
 
 def _retention_window(expr: RetentionMetric, model: Model) -> Window:
-    if expr.finite_horizon_seconds is not None:
-        return Window(0, seconds_text(expr.finite_horizon_seconds))
+    if expr.horizon is not None:
+        return Window(0, expr.horizon)
     coverage = model.readiness.for_fact(model.catalog.events[expr.event].source)
     span = coverage.end_exclusive - coverage.start
-    return Window(0, seconds_text(span.days * 86_400 + span.seconds + bool(span.microseconds)))
+    span_seconds = span.days * 86_400 + span.seconds + bool(span.microseconds)
+    return Window(0, _elapsed(span_seconds, field="window"))
 
 
 def _outcome_bounds(design: Design, model: Model) -> tuple[tuple[int, ...], tuple[datetime, ...]]:
@@ -283,14 +284,14 @@ def _outcome_bounds(design: Design, model: Model) -> tuple[tuple[int, ...], tupl
         leaf for value in design.outcomes.values() for leaf in _output_leaves(value)
     ):
         if isinstance(expression, RetentionMetric):
-            if expression.finite_horizon_seconds is None:
+            if expression.horizon is None:
                 event = model.catalog.events.get(expression.event)
                 if event is None:
                     raise missing_reference("event", expression.event, model.catalog.events)
                 source = event.source
                 cutoffs.append(model.readiness.for_fact(source).end_exclusive)
             else:
-                offsets.append(expression.finite_horizon_seconds)
+                offsets.append(expression.horizon.seconds)
         else:
             support, dependencies = _expression_timing(expression)
             offsets.append(support[1])
@@ -310,7 +311,7 @@ def _timing_context(
 ) -> dict[str, object]:
     return {
         "role": role,
-        "gap": design.gap,
+        "gap": design.gap.seconds,
         "name": name,
         "start": start,
         "end": end,
@@ -337,16 +338,17 @@ def _resolve_property(
     *,
     name: str,
 ) -> None:
-    if expr.relative_to is None and role != "treatment" and expr.before > -design.gap:
+    before, gap = expr.before.seconds, design.gap.seconds
+    if expr.relative_to is None and role != "treatment" and before > -gap:
         raise _CUTOFF_GAP.error(
             **_timing_context(
                 name,
                 role,
                 design,
-                start=expr.before,
-                end=expr.before,
+                start=before,
+                end=before,
                 bound="before",
-                limit=-design.gap,
+                limit=-gap,
             )
         )
     unit = design.unit
@@ -420,7 +422,7 @@ def _resolve_property(
         else:
             alignment = any(
                 cutoff_alignment(
-                    expr.before, anchor=anchor, day_boundary=model.catalog.day_boundary
+                    expr.before.seconds, anchor=anchor, day_boundary=model.catalog.day_boundary
                 )
                 == "unaligned"
                 for anchor in anchors
@@ -449,8 +451,8 @@ def _selector_timing(selector: EventTime) -> tuple[tuple[int, int], tuple[tuple[
     else:
         origin, dependencies = _selector_timing(selector.relative_to)
     support = (
-        origin[0] + selector.window.start,
-        origin[1] + selector.window.end,
+        origin[0] + selector.window.start.seconds,
+        origin[1] + selector.window.end.seconds,
     )
     return support, (*dependencies, support)
 
@@ -466,16 +468,16 @@ def _expression_timing(
     if isinstance(expr, EventTime):
         return _selector_timing(expr)
     if isinstance(expr, (MetricQuantile, ApproxMetricQuantile, ApproxMetricDistinct)):
-        return (expr.window.start, expr.window.end), ()
+        return (expr.window.start.seconds, expr.window.end.seconds), ()
     if expr.relative_to is None:
         if isinstance(expr, AttributeAsOf):
-            return (expr.before, expr.before), ()
-        return (expr.window.start, expr.window.end), ()
+            return (expr.before.seconds, expr.before.seconds), ()
+        return (expr.window.start.seconds, expr.window.end.seconds), ()
     origin, dependencies = _selector_timing(expr.relative_to)
     if isinstance(expr, AttributeAsOf):
-        support = (origin[0] + expr.before, origin[1] + expr.before)
+        support = (origin[0] + expr.before.seconds, origin[1] + expr.before.seconds)
     else:
-        support = (origin[0] + expr.window.start, origin[1] + expr.window.end)
+        support = (origin[0] + expr.window.start.seconds, origin[1] + expr.window.end.seconds)
     return support, dependencies
 
 
@@ -492,8 +494,9 @@ def _check_expression_timing(
     name: str,
 ) -> None:
     support, dependencies = _expression_timing(expr)
+    limit = -design.gap.seconds
     if role in {"feature", "eligibility"} and (
-        support[1] > -design.gap or any(dependency[1] > -design.gap for dependency in dependencies)
+        support[1] > limit or any(dependency[1] > limit for dependency in dependencies)
     ):
         if isinstance(expr, EventTime) and expr.measure == "elapsed" and expr.relative_to is None:
             raise _GAP.error(
@@ -504,7 +507,7 @@ def _check_expression_timing(
                     start=support[0],
                     end=support[1],
                     bound="end",
-                    limit=-design.gap,
+                    limit=limit,
                 )
             )
         if getattr(expr, "relative_to", None) is not None or isinstance(expr, EventTime):
@@ -516,7 +519,7 @@ def _check_expression_timing(
                     start=support[0],
                     end=max((support[1], *(end for _, end in dependencies))),
                     bound="end",
-                    limit=-design.gap,
+                    limit=limit,
                 )
             )
         if isinstance(expr, AttributeAsOf):
@@ -528,7 +531,7 @@ def _check_expression_timing(
                     start=support[0],
                     end=support[1],
                     bound="before",
-                    limit=-design.gap,
+                    limit=limit,
                 )
             )
     if role == "outcome" and support[0] < 0:
@@ -605,9 +608,9 @@ def _expression(
                         role,
                         design,
                         start=0,
-                        end=expr.finite_horizon_seconds,
+                        end=None if expr.horizon is None else expr.horizon.seconds,
                         bound="end",
-                        limit=-design.gap,
+                        limit=-design.gap.seconds,
                     )
                 )
         elif expr.label_property is not None:
@@ -637,13 +640,14 @@ def _expression(
     if metric.unit != design.unit:
         raise _UNIT.error(unit=design.unit, name=expr.metric)
     win = expr.window
-    if not isinstance(win, Window) or win.start >= win.end:
+    if not isinstance(win, Window) or win.start.seconds >= win.end.seconds:
         raise _WINDOW.error(
             name=expr.metric,
             output=name,
             start=getattr(win, "start", None),
             end=getattr(win, "end", None),
         )
+    start, end, limit = win.start.seconds, win.end.seconds, -design.gap.seconds
     if isinstance(expr, (MetricQuantile, ApproxMetricQuantile)):
         for source_name in metric.source_names:
             dialect = model.sources[source_name].dialect
@@ -665,26 +669,26 @@ def _expression(
             source = model.sources[source_name]
             if not supports_event_resolution(source.dialect):
                 raise UNSUPPORTED_EVENT_RESOLUTION.error(dialect=source.dialect)
-    if relative_to is None and role in {"feature", "eligibility"} and win.end > -design.gap:
+    if relative_to is None and role in {"feature", "eligibility"} and end > limit:
         raise _GAP.error(
             **_timing_context(
                 name,
                 role,
                 design,
-                start=win.start,
-                end=win.end,
+                start=start,
+                end=end,
                 bound="end",
-                limit=-design.gap,
+                limit=limit,
             )
         )
-    if relative_to is None and role == "outcome" and win.start < 0:
+    if relative_to is None and role == "outcome" and start < 0:
         raise _OUTCOME_GAP.error(
             **_timing_context(
                 name,
                 role,
                 design,
-                start=win.start,
-                end=win.end,
+                start=start,
+                end=end,
                 bound="start",
                 limit=0,
             )
@@ -720,7 +724,7 @@ def _expression(
             "count_distinct",
         }:
             raise UNSUPPORTED_TEMPORAL_AGGREGATION.error(aggregation=measure.aggregation)
-        if measure.window_days is not None and win.end - win.start != measure.window_days * 86400:
+        if measure.window_days is not None and end - start != measure.window_days * 86400:
             raise _METRIC_WINDOW.error(metric=expr.metric)
         if measure.aggregation == "avg_calendar_day":
             anchors = None if relative_to is not None else _fixed_anchors(design, model)
@@ -815,7 +819,7 @@ def _validate_shape(
             raise _INVALID.error(reason="PersistentAdoption requires a value-bearing label")
         coverage = model.readiness.for_fact(source.name)
         outcome_horizons, outcome_cutoffs = _outcome_bounds(design, model)
-        anticipation = design.shape.anticipation
+        anticipation = design.shape.anticipation.seconds
         if outcome_horizons or outcome_cutoffs:
             schedule = design.anchor
             last_t0 = schedule.instant(schedule.count(model.day_boundary) - 1, model.day_boundary)
@@ -845,11 +849,14 @@ def _validate_shape(
         schedule = design.anchor
         if not isinstance(schedule, Schedule):
             raise _INVALID.error(reason="CalendarComparison requires a Schedule anchor")
-        if schedule.every is None:
+        if isinstance(schedule.every, Months):
             # Reference and anticipation periods are multiples of a fixed step.
             raise _CALENDAR_COMPARISON_STEP.error(
-                reason="calendar_months_unsupported", every=f"{schedule.months}mo", route="4w"
+                reason="calendar_months_unsupported",
+                every=f"{schedule.every.months}mo",
+                route="4w",
             )
+        every = schedule.every.seconds
         if design.sample is not None:
             raise _INVALID.error(reason="calendar comparisons refuse sampled populations")
         source_name = resolve_selector_source(model, design.shape.cohort.event)
@@ -869,11 +876,11 @@ def _validate_shape(
         outcome_window_end = max(outcome_horizons, default=0)
         last_t0 = schedule.instant(
             schedule.count(model.day_boundary) - 1, model.day_boundary
-        ) + timedelta(seconds=max(0, max(design.shape.comparison_periods)) * schedule.every)
+        ) + timedelta(seconds=max(0, max(design.shape.comparison_periods)) * every)
         horizon = last_t0 + timedelta(seconds=outcome_window_end)
         if outcome_cutoffs:
             horizon = max(horizon, *outcome_cutoffs)
-        horizon += timedelta(seconds=anticipation * schedule.every)
+        horizon += timedelta(seconds=anticipation * every)
         comparison_incomplete = (
             coverage.end_exclusive < horizon
             if outcome_window_end > 0 or outcome_cutoffs
@@ -954,7 +961,7 @@ def resolve_unit(design: Design, model: Model) -> Design:
         return design
     choices = tuple(sorted(model.units))
     if len(choices) == 1:
-        return replace(design, unit=choices[0], gap=seconds_text(design.gap))
+        return replace(design, unit=choices[0])
     if not choices:
         raise _INVALID.error(reason="no_unit_source")
     raise _AMBIGUOUS_UNIT.error(owner="design", choices=choices, parameter="unit")

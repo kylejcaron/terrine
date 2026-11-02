@@ -16,7 +16,7 @@ from terrine.spec import (
     to_json,
     to_yaml,
 )
-from terrine.windows import Window
+from terrine.windows import Duration, Window
 
 
 def test_event_sequence_validates_positive_max_events_and_window():
@@ -98,8 +98,8 @@ def test_funnel_steps_require_distinct_declared_string_values():
         FunnelSpec("kind", cast(tuple[str, ...], ("view", 1)))
 
 
-def test_session_gap_normalizes_to_integral_seconds():
-    assert SessionSpec("30m").gap_seconds == 1800
+def test_session_gap_normalizes_to_a_duration():
+    assert SessionSpec("30m").gap == Duration(1800)
     with pytest.raises(TerrineError):
         SessionSpec(cast(Any, True))
 

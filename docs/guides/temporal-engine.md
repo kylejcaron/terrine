@@ -832,8 +832,9 @@ equivalent = Design(
 assert sequence == equivalent
 ```
 
-Elapsed duration inputs are strings with a unit; only bare `0` is accepted
-without one. Normalized integer seconds remain in saved metadata and documents.
+Elapsed duration inputs are strings with a unit or `Duration` values; only bare
+`0` is accepted without one. Saved metadata keeps normalized integer seconds,
+and design documents write canonical duration text such as `1h`.
 
 Use the low-level shape when the selected events differ from the anchor event,
 or when specifying properties, funnels, or the array representation.

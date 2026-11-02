@@ -34,7 +34,11 @@ def design_schema() -> dict[str, Any]:
     integer = {"type": "integer"}
     boolean = {"type": "boolean"}
     scalar = {"type": ["string", "number", "boolean", "null"]}
-    duration = {"type": ["integer", "string"]}
+    duration = {
+        "type": "string",
+        "pattern": "^[+-]?[0-9]+[smhdw]$",
+        "description": "Elapsed duration: a signed integer with an s, m, h, d or w unit.",
+    }
     definitions = {"Temporal": obj({"type": {"enum": ["date", "datetime"]}, "value": text})}
     definitions["Cutpoint"] = {
         "anyOf": [
@@ -54,7 +58,7 @@ def design_schema() -> dict[str, Any]:
     named = mapping(expression)
     outputs = mapping({"anyOf": [expression, predicate]})
     nodes = {
-        "Window": {"start": number, "end": number},
+        "Window": {"start": duration, "end": duration},
         "FixedDate": {"date": ref("Temporal")},
         "EventAnchor": {
             "event": text,
@@ -64,14 +68,11 @@ def design_schema() -> dict[str, Any]:
         },
         "Schedule": {
             "every": {
-                **nullable(integer),
-                "description": "Elapsed seconds between anchors; null for a calendar step.",
-            },
-            "months": {
-                **nullable(integer),
+                "type": "string",
+                "pattern": "^(\\+?[0-9]+[smhdw]|[0-9]+(mo|y))$",
                 "description": (
-                    "Calendar months between anchors, each clamped to its month's last day; "
-                    "null for an elapsed step. Exactly one of every and months is set."
+                    "Positive step between anchors: an elapsed duration such as 1w, or "
+                    "calendar months such as 1mo or 1y, each clamped to its month's last day."
                 ),
             },
             "start": ref("Temporal"),
@@ -97,7 +98,7 @@ def design_schema() -> dict[str, Any]:
         },
         "AttributeAsOf": {
             "attribute": text,
-            "before": number,
+            "before": duration,
             "relative_to": nullable(ref("EventTime")),
         },
         "EventTime": {
@@ -114,7 +115,7 @@ def design_schema() -> dict[str, Any]:
         "Eq": {"expr": expression, "value": scalar},
         "IsNull": {"expr": expression, "negate": boolean},
         "And": {"terms": array(predicate)},
-        "Treatment": {"attribute": text, "at": number, "known_at_t0": boolean},
+        "Treatment": {"attribute": text, "at": duration, "known_at_t0": boolean},
         "StateObservations": {
             "property": text,
             "levels": array(scalar),
@@ -149,11 +150,11 @@ def design_schema() -> dict[str, Any]:
             "bin": duration,
             "group_by": array(text),
         },
-        "SessionSpec": {"gap_seconds": number},
+        "SessionSpec": {"gap": duration},
         "FunnelSpec": {
             "event_property": text,
             "steps": array(text),
-            "within_seconds": nullable(duration),
+            "within": nullable(duration),
         },
         "EventSequence": {
             "event": text,
@@ -220,7 +221,7 @@ def design_schema() -> dict[str, Any]:
             "outcomes": outputs,
             "eligibility": mapping(predicate),
             "treatment": nullable(ref("Treatment")),
-            "gap": number,
+            "gap": duration,
             "shape": {
                 "anyOf": [
                     text,

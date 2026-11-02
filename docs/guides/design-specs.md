@@ -24,7 +24,7 @@ assert loaded == spec
 print(spec.spec_hash)
 ```
 
-`FixedDate`, `EventAnchor`, and `Schedule` are the supported anchor variants. Schedules use a positive `every` step and calendar `start` and `end` dates; the `end` day is included, `start == end` is one anchor, and `start > end` refuses with `terrine.design.invalid` (`reason="schedule_end_before_start"`). The step is an elapsed duration (`"7d"`, `"4w"`, or a signed integer with a unit; stored as `every` seconds with `months` null) or a calendar step (`"1mo"`, `"3mo"`, `"1y"` = twelve months; stored as `months` with `every` null). A calendar anchor is `start` advanced by `k` whole months and clamped to that month's last day, never chained from the previous anchor: `"1mo"` from `2025-01-31` is Jan 31, Feb 28, Mar 31, Apr 30. Calendar units are a `Schedule` feature only; every other elapsed duration must include a unit, except bare `0`.
+`FixedDate`, `EventAnchor`, and `Schedule` are the supported anchor variants. Schedules use a positive `every` step and calendar `start` and `end` dates; the `end` day is included, `start == end` is one anchor, and `start > end` refuses with `terrine.design.invalid` (`reason="schedule_end_before_start"`). The step is an elapsed duration (`"7d"`, `"4w"`, a signed integer with a unit, or a `Duration`; stored in `every` as a `Duration`) or a calendar step (`"1mo"`, `"3mo"`, `"1y"` = twelve months, or `Months(3)`; stored in `every` as `Months`). A calendar anchor is `start` advanced by `k` whole months and clamped to that month's last day, never chained from the previous anchor: `"1mo"` from `2025-01-31` is Jan 31, Feb 28, Mar 31, Apr 30. Calendar units are a `Schedule` feature only; every other elapsed duration must include a unit, except bare `0`.
 
 `FixedDate("2025-03-01T12:34:56.123456Z")` preserves an intraday instant rather than reducing it to a calendar day. Portable instant definitions use exact microsecond precision: equivalent offsets and trailing-zero fractional precision canonicalize identically; nonzero submicroseconds are refused rather than truncated, including timestamp subclasses supplied by dataframe libraries. `Schedule` remains calendar-date-only.
 
@@ -32,25 +32,41 @@ print(spec.spec_hash)
 event by a non-negative elapsed duration. For example,
 `EventAnchor("purchase", offset="1d")` starts analysis one elapsed day after
 purchase. First/nth selection and `anchor_range` still operate on original
-event times. Nonzero offsets are serialized as integral seconds and change
+event times. Nonzero offsets are serialized as canonical duration text and change
 anchor identity, provenance and `spec_hash`; zero is omitted, so equivalent
 zero-offset Designs have the same hash. See the low-level
 [landmark survival example](trajectories-survival.md#landmark-survival).
 
 Mixed date/timestamp bounds are ordered only after catalog binding resolves the calendar-day boundary.
 
-`agg(metric, window=(start, end))` stores a half-open interval as signed integral seconds using the shared `s`/`m`/`h`/`d`/`w` duration parser. Thus equivalent elapsed forms have identical specs and hashes, e.g. `60m` and `1h`. `asof(attribute, before=...)` stores an exact signed-second strict cutoff, including zero. Predicate constructors `gt`, `eq`, `is_null`, and `all_of` form typed true/false rules accepted in `features`, `outcomes`, and `eligibility`. Comparands are finite JSON scalars only; Python functions and other runtime objects are never serialized.
+`agg(metric, window=(start, end))` stores a half-open interval of exact signed `Duration` endpoints using the shared `s`/`m`/`h`/`d`/`w` duration parser. Thus equivalent elapsed forms have identical specs and hashes, e.g. `60m` and `1h`. `asof(attribute, before=...)` stores an exact signed `Duration` strict cutoff, including zero. Predicate constructors `gt`, `eq`, `is_null`, and `all_of` form typed true/false rules accepted in `features`, `outcomes`, and `eligibility`. Comparands are finite JSON scalars only; Python functions and other runtime objects are never serialized.
 
-`to_yaml` and `to_json` return portable text with `schema_version: 3`. `from_yaml` and `from_json` accept text or bytes and only construct the known data types. Text that does not parse refuses with `terrine.design.invalid` (`reason="malformed_document"`); a document from an earlier version refuses with the same code and `reason="unsupported_schema_version"`, with the supplied `schema_version` in context, and there is no migration: construct the design again and save it. Duplicate keys, unknown node tags, extra fields, unsafe YAML tags, and values of the wrong type refuse with the same code and `reason="malformed_document"`; a node whose value its constructor refuses keeps that constructor's refusal. Canonical JSON recursively sorts mapping keys, uses compact UTF-8 JSON, and is the basis of `Design.spec_hash`; map insertion order does not affect a design hash.
-Dataset definitions also use version 3. Saved plans and dataset manifests keep
+`to_yaml` and `to_json` return portable text with `schema_version: 4`, writing every duration as canonical text in its largest exact unit (`gap: 1w`, `every: 1mo`), so `"60m"` and `"1h"` save identically. `from_yaml` and `from_json` accept text or bytes and only construct the known data types. Text that does not parse refuses with `terrine.design.invalid` (`reason="malformed_document"`); a document from an earlier version refuses with the same code and `reason="unsupported_schema_version"`, with the supplied `schema_version` in context, and there is no migration: construct the design again and save it. Duplicate keys, unknown node tags, extra fields, unsafe YAML tags, and values of the wrong type (including a duration that is not text) refuse with the same code and `reason="malformed_document"`; a node whose value its constructor refuses keeps that constructor's refusal. Canonical JSON recursively sorts mapping keys, uses compact UTF-8 JSON, and is the basis of `Design.spec_hash`; map insertion order does not affect a design hash.
+Dataset definitions also use version 4. Saved plans and dataset manifests keep
 their version-1 outer envelopes, while their nested designs and definitions
-must use version 3. Catalog documents remain version 2.
+must use version 4. Catalog documents remain version 2.
 
 Recipes and low-level shapes use the same names: `occurrence` on event anchors,
 `end_event`, `entry_event` and `exit_event` on `TimeToEvent`, `bin` on `LifeTable`,
 `periods` on `StatePanel`, `period` on event panels, and `anticipation` and
 `reference_period` on sequential specifications. Elapsed durations are authored
-as unit-bearing strings and saved as integer seconds. Equality predicates use
+as unit-bearing strings or `terrine.windows.Duration` values and stored as
+`Duration` values (calendar steps as `Months`), so `dataclasses.replace` keeps
+them unchanged; read `.seconds` for integer seconds and `str()` for canonical text:
+
+```python
+from dataclasses import replace
+
+from terrine.windows import Duration
+
+weekly = Design("user", EventAnchor("purchase", offset="7d"), gap="24h")
+copy = replace(weekly, unit="account")
+assert copy.gap == Duration(86_400) and str(copy.gap) == "1d"
+assert str(copy.anchor.offset) == "1w"
+assert "gap: 1d" in to_yaml(copy) and from_yaml(to_yaml(copy)) == copy
+```
+
+Equality predicates use
 `eq(expr=..., value=...)` and expose the same `expr` field as other predicates.
 `Coverage(start=..., end=...)` includes both calendar days, just like `Schedule`.
 

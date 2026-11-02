@@ -14,7 +14,7 @@ from terrine.errors import RefusalSpec
 from terrine.spec.anchors import EventAnchor
 from terrine.spec.design import Design
 from terrine.spec.state_panel import StatePanel
-from terrine.windows import duration, seconds_text
+from terrine.windows import Duration, duration
 
 if TYPE_CHECKING:
     from terrine.frame import Frame
@@ -261,16 +261,16 @@ class SequentialSpec:
     Args:
         treatment: Initiation or PersistentAdoption declaration supplying treatment history.
         trial_weight: TrialWeight declaration; None gives each qualifying trial its ordinary weight.
-        anticipation: Nonnegative duration string (see `terrine.windows`); "0d" excludes no
-            anticipatory time.
-        reference_period: Nonpositive duration string (see `terrine.windows`); "-1d" compares one
-            day before t0.
+        anticipation: Nonnegative duration string (see `terrine.windows`) or Duration; "0d"
+            excludes no anticipatory time.
+        reference_period: Nonpositive duration string (see `terrine.windows`) or Duration; "-1d"
+            compares one day before t0.
 
     Attributes:
         treatment: Initiation or PersistentAdoption declaration supplying treatment history.
         trial_weight: TrialWeight declaration; None gives each qualifying trial its ordinary weight.
-        anticipation: Nonnegative anticipation offset stored as integer seconds.
-        reference_period: Reference offset stored as integer seconds.
+        anticipation: Nonnegative anticipation offset as a Duration.
+        reference_period: Reference offset as a Duration.
 
     Example:
         from datetime import datetime, UTC
@@ -282,15 +282,15 @@ class SequentialSpec:
 
     treatment: Initiation | PersistentAdoption
     trial_weight: TrialWeight | None
-    anticipation: int
-    reference_period: int
+    anticipation: Duration
+    reference_period: Duration
 
     def __init__(
         self,
         treatment: Initiation | PersistentAdoption,
         trial_weight: TrialWeight | None = None,
-        anticipation: str | Literal[0] = "0d",
-        reference_period: str | Literal[0] = "-1d",
+        anticipation: str | Duration | Literal[0] = "0d",
+        reference_period: str | Duration | Literal[0] = "-1d",
     ) -> None:
         if not isinstance(treatment, (Initiation, PersistentAdoption)):
             raise _INVALID.error(reason="wrong_type", field="treatment")
@@ -298,7 +298,7 @@ class SequentialSpec:
             raise _INVALID.error(reason="wrong_type", field="trial_weight")
         elapsed = duration(anticipation, field="anticipation")
         reference = duration(reference_period, field="reference_period")
-        if elapsed < 0:
+        if elapsed.seconds < 0:
             raise _INVALID.error(reason="negative", field="anticipation")
         object.__setattr__(self, "treatment", treatment)
         object.__setattr__(self, "trial_weight", trial_weight)
@@ -312,23 +312,24 @@ class EventPanelSpec:
 
     Args:
         periods: Tuple of integer event-relative indexes to emit.
-        period: Positive elapsed duration string (see `terrine.windows`) defining one period.
+        period: Positive elapsed duration string (see `terrine.windows`) or Duration defining one
+            period.
         reference_period: Integer reference index that must be included in periods.
 
     Attributes:
         periods: Tuple of integer event-relative indexes to emit.
-        period: Positive event-relative period width stored as exact integer seconds.
+        period: Positive event-relative period width as a Duration.
         reference_period: Integer reference index that must be included in periods.
 
     Example: spec.EventPanelSpec(periods=(-1, 0, 1), period="1d", reference_period=-1)
     """
 
     periods: tuple[int, ...]
-    period: int
+    period: Duration
     reference_period: int
 
     def __init__(
-        self, periods: tuple[int, ...], period: str | Literal[0], reference_period: int
+        self, periods: tuple[int, ...], period: str | Duration | Literal[0], reference_period: int
     ) -> None:
         if not isinstance(periods, Iterable):
             raise _INVALID.error(reason="wrong_type", field="periods")
@@ -340,7 +341,7 @@ class EventPanelSpec:
         if len(set(periods)) != len(periods):
             raise _INVALID.error(reason="duplicate_names", field="periods")
         width = duration(period, field="period")
-        if width <= 0:
+        if width.seconds <= 0:
             raise _INVALID.error(reason="not_positive", field="period")
         if reference_period not in periods:
             raise _INVALID.error(reason="undeclared_name", field="reference_period")
@@ -449,7 +450,7 @@ def _copy_design(
         features=base.features,
         outcomes=base.outcomes,
         eligibility=base.eligibility,
-        gap=seconds_text(base.gap),
+        gap=base.gap,
         shape=shape,
         anchor_range=base.anchor_range,
         sample=base.sample,
@@ -461,8 +462,8 @@ def Sequential(
     *,
     treatment: Initiation | PersistentAdoption,
     trial_weight: TrialWeight | None = None,
-    anticipation: str | Literal[0] = "0d",
-    reference_period: str | Literal[0] = "-1d",
+    anticipation: str | Duration | Literal[0] = "0d",
+    reference_period: str | Duration | Literal[0] = "-1d",
 ) -> Design:
     """Add repeated-trial treatment history to a scheduled design.
 
@@ -470,10 +471,10 @@ def Sequential(
         base: Ordinary Design to extend with the specialized row shape.
         treatment: Initiation or PersistentAdoption declaration supplying treatment history.
         trial_weight: TrialWeight declaration; None gives each qualifying trial its ordinary weight.
-        anticipation: Nonnegative duration string (see `terrine.windows`); "0d" excludes no
-            anticipatory time.
-        reference_period: Nonpositive duration string (see `terrine.windows`); "-1d" compares one
-            day before t0.
+        anticipation: Nonnegative duration string (see `terrine.windows`) or Duration; "0d"
+            excludes no anticipatory time.
+        reference_period: Nonpositive duration string (see `terrine.windows`) or Duration; "-1d"
+            compares one day before t0.
 
     Returns:
         An ordinary Design with a SequentialSpec repeated-trial shape.
@@ -574,7 +575,7 @@ def EventPanel(
     base: Design,
     *,
     periods: tuple[int, ...],
-    period: str | Literal[0],
+    period: str | Duration | Literal[0],
     reference_period: int = -1,
 ) -> Design:
     """Add elapsed event-relative periods to an event-anchored design.
@@ -582,7 +583,8 @@ def EventPanel(
     Args:
         base: Ordinary Design to extend with the specialized row shape.
         periods: Tuple of integer event-relative indexes to emit.
-        period: Positive elapsed duration string (see `terrine.windows`) defining one period.
+        period: Positive elapsed duration string (see `terrine.windows`) or Duration defining one
+            period.
         reference_period: Reference index included in periods; -1 uses the period before the event.
 
     Returns:
@@ -640,7 +642,7 @@ def matched_t0(base: Design, model: Model, *, sample: MatchedT0Sample) -> Frame:
         features=base.features,
         outcomes=base.outcomes,
         eligibility=base.eligibility,
-        gap=seconds_text(base.gap),
+        gap=base.gap,
         shape=base.shape,
         anchor_range=base.anchor_range,
         sample=sample,

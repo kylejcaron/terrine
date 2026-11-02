@@ -172,8 +172,8 @@ def aggregate_nonadditive_window(
         __terrine_nonadditive_event_timestamp=events._timestamp,
         __terrine_nonadditive_value=events[value_column],
     )
-    start = anchors.t0 + ibis.interval(seconds=window.start)
-    end = anchors.t0 + ibis.interval(seconds=window.end)
+    start = anchors.t0 + ibis.interval(seconds=window.start.seconds)
+    end = anchors.t0 + ibis.interval(seconds=window.end.seconds)
     event_unit = "__terrine_nonadditive_event_unit"
     event_time = "__terrine_nonadditive_event_timestamp"
     event_value = "__terrine_nonadditive_value"
@@ -380,9 +380,12 @@ def aggregate_nonadditive_window(
                 unit_column=unit_column,
             ).matched
         unknown_match = unknown_match.filter(
-            (unknown_match.t0 + ibis.interval(seconds=window.start) >= ibis.literal(coverage.start))
+            (
+                unknown_match.t0 + ibis.interval(seconds=window.start.seconds)
+                >= ibis.literal(coverage.start)
+            )
             & (
-                unknown_match.t0 + ibis.interval(seconds=window.end)
+                unknown_match.t0 + ibis.interval(seconds=window.end.seconds)
                 <= ibis.literal(coverage.end_exclusive)
             )
         )
@@ -390,7 +393,7 @@ def aggregate_nonadditive_window(
             unknown_match = unknown_match.filter(
                 unknown_match._observed_from.isnull()
                 | (
-                    unknown_match.t0 + ibis.interval(seconds=window.start)
+                    unknown_match.t0 + ibis.interval(seconds=window.start.seconds)
                     >= unknown_match._observed_from
                 )
             )
@@ -398,7 +401,7 @@ def aggregate_nonadditive_window(
             unknown_match = unknown_match.filter(
                 unknown_match._observed_until.isnull()
                 | (
-                    unknown_match.t0 + ibis.interval(seconds=window.end)
+                    unknown_match.t0 + ibis.interval(seconds=window.end.seconds)
                     <= unknown_match._observed_until
                 )
             )
@@ -448,8 +451,8 @@ def approximate_quantile_window_values(
         __sketch_time=events._timestamp,
         __sketch_value=events[value_column],
     )
-    start = anchors.t0 + ibis.interval(seconds=window.start)
-    end = anchors.t0 + ibis.interval(seconds=window.end)
+    start = anchors.t0 + ibis.interval(seconds=window.start.seconds)
+    end = anchors.t0 + ibis.interval(seconds=window.end.seconds)
     matched = (
         anchors.inner_join(
             selected,

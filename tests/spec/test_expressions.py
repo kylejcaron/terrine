@@ -22,7 +22,7 @@ def test_durations_normalize_and_invalid_values_refuse():
     assert (
         agg("sessions", window=("60s", "1h")).window == agg("sessions", window=("1m", "60m")).window
     )
-    assert agg("sessions", window=("-24h", "0d")).window.start == -86400
+    assert agg("sessions", window=("-24h", "0d")).window.start.seconds == -86400
     for duration in ("1.5h", "1h30m", "1mo", "9223372036854775807w"):
         with pytest.raises(ValueError):
             agg("sessions", window=(duration, "0s"))
@@ -32,7 +32,7 @@ def test_asof_cutoff_and_predicate_constructors_are_typed_and_immutable():
     metric = agg("sessions", window=("-7d", "0d"))
     cutoff = asof("plan_tier", before="0d")
     assert isinstance(metric, MetricAgg)
-    assert cutoff == AttributeAsOf(attribute="plan_tier", before=0)
+    assert cutoff == AttributeAsOf(attribute="plan_tier", before="0s")
     assert isinstance(gt(metric, 0), Gt)
     equal = eq(expr=cutoff, value="pro")
     assert equal == Eq(expr=cutoff, value="pro")

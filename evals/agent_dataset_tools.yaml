@@ -7,7 +7,7 @@ cases:
         bad:
           type: MetricAgg
           metric: missing
-          window: {type: Window, start: -10, end: 0}
+          window: {type: Window, start: "-10s", end: "0s"}
     code: terrine.design.missing_reference
   - name: invalid_window
     operation: validate_design
@@ -16,7 +16,7 @@ cases:
         bad:
           type: MetricAgg
           metric: total
-          window: {type: Window, start: 1, end: 0}
+          window: {type: Window, start: "1s", end: "0s"}
     code: terrine.window.invalid_window
   - name: sql_injection
     operation: propose_design
@@ -44,7 +44,7 @@ cases:
       eligibility:
         bad:
           type: IsNull
-          expr: {type: AttributeAsOf, attribute: private, before: 0}
+          expr: {type: AttributeAsOf, attribute: private, before: "0s"}
     code: terrine.design.missing_reference
 runtime_cases:
   - name: strict_unknown_preview

@@ -8,7 +8,7 @@ from typing import Literal
 
 from terrine.errors import RefusalSpec
 from terrine.spec.anchors import _aware_instant
-from terrine.windows import duration
+from terrine.windows import Duration, duration
 
 __all__ = ["Trajectory", "CohortSpec", "CohortGrouping", "TimeToEvent", "LifeTable"]
 
@@ -27,13 +27,14 @@ class Trajectory:
 
     Args:
         metric: Name of a metric declared in the model.
-        period: Positive elapsed duration string (see `terrine.windows`) defining one period.
+        period: Positive elapsed duration string (see `terrine.windows`) or Duration defining one
+            period.
         periods: Positive integer number of periods to produce.
         cumulative: Whether values accumulate from t0; False aggregates each period separately.
 
     Attributes:
         metric: Name of a metric declared in the model.
-        period: Positive period width stored as exact integer seconds.
+        period: Positive period width as a Duration.
         periods: Positive integer number of periods to produce.
         cumulative: Whether values accumulate from t0; False aggregates each period separately.
 
@@ -41,23 +42,27 @@ class Trajectory:
     """
 
     metric: str
-    period: int
+    period: Duration
     periods: int
     cumulative: bool
 
     def __init__(
-        self, metric: str, period: str | Literal[0], periods: int, cumulative: bool = False
+        self,
+        metric: str,
+        period: str | Duration | Literal[0],
+        periods: int,
+        cumulative: bool = False,
     ) -> None:
         _name(metric, "metric")
-        period_seconds = duration(period, field="period")
-        if period_seconds <= 0:
+        width = duration(period, field="period")
+        if width.seconds <= 0:
             raise _INVALID.error(reason="not_positive", field="period")
         if isinstance(periods, bool) or not isinstance(periods, int) or periods <= 0:
             raise _INVALID.error(reason="not_positive_integer", field="periods")
         if not isinstance(cumulative, bool):
             raise _INVALID.error(reason="wrong_type", field="cumulative")
         object.__setattr__(self, "metric", metric)
-        object.__setattr__(self, "period", period_seconds)
+        object.__setattr__(self, "period", width)
         object.__setattr__(self, "periods", periods)
         object.__setattr__(self, "cumulative", cumulative)
 
@@ -91,13 +96,13 @@ class CohortGrouping:
     """Group units by origin-time buckets and summarize their trajectory values.
 
     Args:
-        bucket: Positive elapsed duration string (see `terrine.windows`) defining origin-time
+        bucket: Positive elapsed duration string (see `terrine.windows`) or Duration defining
             cohorts.
         bucket_origin: Timezone-aware datetime fixing the cohort bucket grid origin.
         statistic: "total" or "mean"; "mean" averages observable units in each cohort.
 
     Attributes:
-        bucket: Positive cohort width stored as exact integer seconds.
+        bucket: Positive cohort width as a Duration.
         bucket_origin: Timezone-aware datetime fixing the cohort bucket grid origin.
         statistic: "total" or "mean"; "mean" averages observable units in each cohort.
 
@@ -107,18 +112,18 @@ class CohortGrouping:
         spec.CohortGrouping("30d", datetime(2025, 1, 1, tzinfo=UTC))
     """
 
-    bucket: int
+    bucket: Duration
     bucket_origin: datetime
     statistic: Literal["total", "mean"]
 
     def __init__(
         self,
-        bucket: str | Literal[0],
+        bucket: str | Duration | Literal[0],
         bucket_origin: datetime,
         statistic: Literal["total", "mean"] = "mean",
     ) -> None:
-        bucket_seconds = duration(bucket, field="bucket")
-        if bucket_seconds <= 0:
+        width = duration(bucket, field="bucket")
+        if width.seconds <= 0:
             raise _INVALID.error(reason="not_positive", field="bucket")
         if not isinstance(bucket_origin, datetime):
             raise _INVALID.error(reason="wrong_type", field="bucket_origin")
@@ -127,7 +132,7 @@ class CohortGrouping:
             raise _CHOICE.error(
                 reason="unsupported_value", field="statistic", choices=("total", "mean")
             )
-        object.__setattr__(self, "bucket", bucket_seconds)
+        object.__setattr__(self, "bucket", width)
         object.__setattr__(self, "bucket_origin", origin)
         object.__setattr__(self, "statistic", statistic)
 
@@ -175,31 +180,32 @@ class LifeTable:
 
     Args:
         time_to_event: TimeToEvent declaration defining end, exit and delayed-entry events.
-        bin: Positive elapsed duration string (see `terrine.windows`) defining one life-table bin.
+        bin: Positive elapsed duration string (see `terrine.windows`) or Duration defining one
+            life-table bin.
         group_by: Tuple of feature/grouping column names; () produces an ungrouped life table.
 
     Attributes:
         time_to_event: TimeToEvent declaration defining end, exit and delayed-entry events.
-        bin: Positive risk-bin width stored as exact integer seconds.
+        bin: Positive risk-bin width as a Duration.
         group_by: Tuple of feature/grouping column names; () produces an ungrouped life table.
 
     Example: spec.LifeTable(spec.TimeToEvent("orders"), bin="7d")
     """
 
     time_to_event: TimeToEvent
-    bin: int
+    bin: Duration
     group_by: tuple[str, ...]
 
     def __init__(
         self,
         time_to_event: TimeToEvent,
-        bin: str | Literal[0],
+        bin: str | Duration | Literal[0],
         group_by: tuple[str, ...] = (),
     ) -> None:
         if not isinstance(time_to_event, TimeToEvent):
             raise _INVALID.error(reason="wrong_type", field="time_to_event")
         width = duration(bin, field="bin")
-        if width <= 0:
+        if width.seconds <= 0:
             raise _INVALID.error(reason="not_positive", field="bin")
         if isinstance(group_by, (str, bytes)) or not isinstance(group_by, tuple):
             raise _INVALID.error(reason="wrong_type", field="group_by")

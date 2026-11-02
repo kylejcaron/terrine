@@ -18,7 +18,7 @@ from terrine.temporal.ranges import (
     RangePlan,
     blocked_range_join,
 )
-from terrine.windows import Window, seconds_text
+from terrine.windows import Window, _elapsed
 
 _INVALID = RefusalSpec(
     "terrine.temporal.retention_invalid",
@@ -190,7 +190,7 @@ def retention_threshold_bands(
             anchor.filter(complete),
             bounded_source,
             plan=range_plan,
-            window=Window(0, seconds_text(range_plan.block_seconds)),
+            window=Window(0, _elapsed(range_plan.block_seconds, field="window")),
             unit_column="_ret_unit",
             event_unit="_ret_unit",
             event_timestamp="_ret_event_time",

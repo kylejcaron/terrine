@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from terrine.errors import RefusalSpec
-from terrine.windows import Window, duration
+from terrine.windows import Duration, Window, duration
 
 _UNSUPPORTED_SHAPE = RefusalSpec(
     "terrine.sequence.unsupported_shape",
@@ -28,23 +28,22 @@ class SessionSpec:
     """Group a unit's consecutive events into sessions separated by more than ``gap``.
 
     Args:
-        gap: Nonnegative duration string (see `terrine.windows`); "0s" groups only simultaneous
-            events.
+        gap: Nonnegative duration string (see `terrine.windows`) or Duration; "0s" groups only
+            simultaneous events.
 
     Attributes:
-        gap_seconds: Nonnegative threshold in exact integer seconds; zero groups only simultaneous
-            events.
+        gap: Nonnegative session threshold as a Duration; zero groups only simultaneous events.
 
     Example: spec.SessionSpec(gap="30m")
     """
 
-    gap_seconds: int
+    gap: Duration
 
-    def __init__(self, gap: str | Literal[0]) -> None:
+    def __init__(self, gap: str | Duration | Literal[0]) -> None:
         normalized = duration(gap, field="session_gap")
-        if normalized < 0:
+        if normalized.seconds < 0:
             raise _INVALID.error(reason="session gap must be non-negative")
-        object.__setattr__(self, "gap_seconds", normalized)
+        object.__setattr__(self, "gap", normalized)
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -54,22 +53,26 @@ class FunnelSpec:
     Args:
         event_property: Declared event label name whose values define funnel steps.
         steps: Ordered tuple of at least two distinct nonempty string label values to follow.
-        within: Positive duration string (see `terrine.windows`); None imposes no funnel time limit.
+        within: Positive duration string (see `terrine.windows`) or Duration; None imposes no
+            funnel time limit.
 
     Attributes:
         event_property: Declared event label name whose values define funnel steps.
         steps: Ordered tuple of at least two distinct nonempty string label values to follow.
-        within_seconds: Elapsed funnel time limit in integer seconds, or None for no limit.
+        within: Elapsed funnel time limit as a Duration, or None for no limit.
 
     Example: spec.FunnelSpec("status", ("placed", "paid"), within="7d")
     """
 
     event_property: str
     steps: tuple[str, ...]
-    within_seconds: int | None
+    within: Duration | None
 
     def __init__(
-        self, event_property: str, steps: tuple[str, ...], within: str | Literal[0] | None = None
+        self,
+        event_property: str,
+        steps: tuple[str, ...],
+        within: str | Duration | Literal[0] | None = None,
     ) -> None:
         event_property = _name(event_property, "funnel event_property")
         if not isinstance(steps, (tuple, list)):
@@ -79,12 +82,12 @@ class FunnelSpec:
             raise _INVALID.error(reason="funnel steps must contain distinct non-empty strings")
         if len(set(normalized)) != len(normalized):
             raise _INVALID.error(reason="funnel steps must be distinct")
-        within_seconds = None if within is None else duration(within, field="within")
-        if within_seconds is not None and within_seconds <= 0:
+        limit = None if within is None else duration(within, field="within")
+        if limit is not None and limit.seconds <= 0:
             raise _INVALID.error(reason="funnel within must be positive")
         object.__setattr__(self, "event_property", event_property)
         object.__setattr__(self, "steps", normalized)
-        object.__setattr__(self, "within_seconds", within_seconds)
+        object.__setattr__(self, "within", limit)
 
 
 @dataclass(frozen=True, slots=True, init=False)

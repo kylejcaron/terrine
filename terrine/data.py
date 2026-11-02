@@ -17,7 +17,7 @@ import pyarrow as pa
 
 from terrine.backends.registry import get_engine
 from terrine.errors import RefusalSpec, freeze, parameter_names, thaw
-from terrine.windows import Window, seconds, seconds_text
+from terrine.windows import Window, _elapsed, _seconds
 
 if TYPE_CHECKING:
     import pandas
@@ -761,7 +761,7 @@ class FeatureCutoff:
     reference: Literal["row_t0", "panel_start"] = "row_t0"
 
     def __post_init__(self) -> None:
-        value = seconds(self.latest_seconds, field="latest_seconds")
+        value = _seconds(self.latest_seconds, field="latest_seconds")
         if value != self.latest_seconds or not isinstance(self.strict, bool):
             raise ValueError("invalid feature cutoff")
         if self.knowledge not in ("recorded_at", "retrospective_effective_time"):
@@ -1522,7 +1522,7 @@ def _encode(value: Any) -> Any:
     if isinstance(value, date):
         return {"$date": value.isoformat()}
     if isinstance(value, Window):
-        return {"$window": [value.start, value.end]}
+        return {"$window": [value.start.seconds, value.end.seconds]}
     if is_dataclass(value) and not isinstance(value, type):
         return {field.name: _encode(getattr(value, field.name)) for field in fields(value)}
     if isinstance(value, Mapping):
@@ -1585,7 +1585,7 @@ def _decode_engine_stamp(
 
 def _decode(value: Any, cls: type) -> Any:
     if cls is Window:
-        return Window(*(seconds_text(seconds_value) for seconds_value in value["$window"]))
+        return Window(*(_elapsed(item, field="window") for item in value["$window"]))
     if not is_dataclass(cls):
         raise TypeError("metadata target must be a dataclass")
     kwargs: dict[str, Any] = {}
@@ -1690,7 +1690,7 @@ def _decode(value: Any, cls: type) -> Any:
             kwargs[field.name] = datetime.fromisoformat(item["$datetime"])
         elif field.name == "window" and item is not None:
             kwargs[field.name] = Window(
-                *(seconds_text(seconds_value) for seconds_value in item["$window"])
+                *(_elapsed(seconds, field="window") for seconds in item["$window"])
             )
         elif (
             field.name in ("start", "end_exclusive")

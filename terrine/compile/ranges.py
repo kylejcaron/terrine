@@ -16,6 +16,7 @@ from terrine.spec.expressions import (
 from terrine.spec.panels import EventPanelSpec
 from terrine.spec.validate import _retention_window
 from terrine.temporal.ranges import _MAX_CANDIDATES, _RANGE_BOUND, RangePlan
+from terrine.windows import Months
 
 _ROUTE = (
     "use first/nth event anchors, fewer event periods or scheduled anchors, a coarser "
@@ -49,7 +50,7 @@ def plan_ranges(design: Design, model) -> dict[Expr, RangePlan]:
             if isinstance(expression, RetentionMetric)
             else expression.window
         )
-        width = window.end - window.start
+        width = window.end.seconds - window.start.seconds
         anchor = design.anchor
         step = None
         count = None
@@ -57,17 +58,17 @@ def plan_ranges(design: Design, model) -> dict[Expr, RangePlan]:
             count, basis = 1, "fixed"
         elif isinstance(anchor, Schedule):
             count = anchor.count(model.day_boundary)
-            if anchor.every is None:
+            if isinstance(anchor.every, Months):
                 basis = "schedule/calendar"
             else:
-                step, basis = anchor.every, "schedule"
+                step, basis = anchor.every.seconds, "schedule"
         elif isinstance(anchor, EventAnchor) and anchor.occurrence in {"first", "nth"}:
             count, basis = 1, "single_event"
         else:
             basis = "unknown_event_multiplicity"
         if isinstance(design.shape, EventPanelSpec) and count is not None:
             count *= len(design.shape.periods)
-            step, basis = design.shape.period, "single_event_periods"
+            step, basis = design.shape.period.seconds, "single_event_periods"
         if getattr(expression, "relative_to", None) is not None:
             step = None
             basis += "/reanchored"

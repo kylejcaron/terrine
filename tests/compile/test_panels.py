@@ -16,6 +16,7 @@ from terrine.spec import (
     Sequential,
     agg,
 )
+from terrine.windows import Window
 from tests.reference.panels import event_period_rows, sequential_rows
 
 
@@ -259,10 +260,7 @@ def test_event_period_translates_nontrivial_outcome_window(native_inputs):
         datetime(2025, 1, 2, tzinfo=UTC),
         datetime(2025, 1, 3, tzinfo=UTC),
     }
-    window = compiled.columns["future_sessions"].window
-    assert window is not None
-    assert window.start == 86_400
-    assert window.end == 259_200
+    assert compiled.columns["future_sessions"].window == Window("1d", "3d")
     assert {(row["unit"], row["event_period"]) for row in rows} == {
         (unit, period) for unit in ("a", "b") for period in (-1, 0)
     }

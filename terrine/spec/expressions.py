@@ -9,7 +9,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Literal
 
 from terrine.errors import RefusalSpec, parameter_names
-from terrine.windows import Window, duration, seconds
+from terrine.windows import Duration, Window, duration
 
 __all__ = [
     "Expr",
@@ -127,7 +127,7 @@ class ApproxMetricDistinct:
         _window(self.window)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class RetentionMetric:
     """Ordinal bands of distinct occurrence identities in a declared follow-up horizon."""
 
@@ -135,14 +135,25 @@ class RetentionMetric:
     label_property: str
     target_event: str
     count_thresholds: tuple[int, ...]
-    finite_horizon_seconds: int | None
+    horizon: Duration | None
 
-    def __post_init__(self) -> None:
-        for field in ("event", "label_property", "target_event"):
-            object.__setattr__(self, field, _name(getattr(self, field), field))
-        if not isinstance(self.count_thresholds, Iterable):
+    def __init__(
+        self,
+        event: str,
+        label_property: str,
+        target_event: str,
+        count_thresholds: tuple[int, ...],
+        horizon: str | Duration | Literal[0] | None,
+    ) -> None:
+        for field, value in (
+            ("event", event),
+            ("label_property", label_property),
+            ("target_event", target_event),
+        ):
+            object.__setattr__(self, field, _name(value, field))
+        if not isinstance(count_thresholds, Iterable):
             raise _INVALID.error(reason="wrong_type", field="count_thresholds")
-        thresholds = tuple(self.count_thresholds)
+        thresholds = tuple(count_thresholds)
         if not thresholds:
             raise _INVALID.error(reason="empty", field="count_thresholds")
         if any(type(value) is not int or not 0 < value < 2**63 for value in thresholds):
@@ -150,9 +161,10 @@ class RetentionMetric:
         if tuple(sorted(set(thresholds))) != thresholds:
             raise _INVALID.error(reason="not_increasing", field="count_thresholds")
         object.__setattr__(self, "count_thresholds", thresholds)
-        horizon = self.finite_horizon_seconds
-        if horizon is not None and (type(horizon) is not int or not 0 < horizon < 2**63):
-            raise _INVALID.error(reason="not_positive", field="finite_horizon_seconds")
+        limit = None if horizon is None else duration(horizon, field="horizon")
+        if limit is not None and limit.seconds <= 0:
+            raise _INVALID.error(reason="not_positive", field="horizon")
+        object.__setattr__(self, "horizon", limit)
 
 
 type JsonScalar = None | bool | int | float | str
@@ -184,16 +196,22 @@ class MetricAgg:
         _relative_to(self.relative_to)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class AttributeAsOf:
     attribute: str
-    before: int
-    relative_to: EventTime | None = None
+    before: Duration
+    relative_to: EventTime | None
 
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "attribute", _name(self.attribute, "attribute"))
-        object.__setattr__(self, "before", seconds(self.before, field="before"))
-        _relative_to(self.relative_to)
+    def __init__(
+        self,
+        attribute: str,
+        before: str | Duration | Literal[0],
+        relative_to: EventTime | None = None,
+    ) -> None:
+        object.__setattr__(self, "attribute", _name(attribute, "attribute"))
+        object.__setattr__(self, "before", duration(before, field="before"))
+        _relative_to(relative_to)
+        object.__setattr__(self, "relative_to", relative_to)
 
 
 @dataclass(frozen=True, slots=True)
@@ -339,7 +357,8 @@ def _expression_support_seconds(expression: Expr) -> tuple[int, int]:
             if expression.relative_to is None
             else _expression_support_seconds(expression.relative_to)
         )
-        return (origin[0] + expression.window.start, origin[1] + expression.window.end)
+        window = expression.window
+        return (origin[0] + window.start.seconds, origin[1] + window.end.seconds)
     if isinstance(
         expression, (MetricAgg, MetricQuantile, ApproxMetricQuantile, ApproxMetricDistinct)
     ):
@@ -348,14 +367,15 @@ def _expression_support_seconds(expression: Expr) -> tuple[int, int]:
             if not isinstance(expression, MetricAgg) or expression.relative_to is None
             else _expression_support_seconds(expression.relative_to)
         )
-        return (origin[0] + expression.window.start, origin[1] + expression.window.end)
+        window = expression.window
+        return (origin[0] + window.start.seconds, origin[1] + window.end.seconds)
     if isinstance(expression, AttributeAsOf):
         origin = (
             (0, 0)
             if expression.relative_to is None
             else _expression_support_seconds(expression.relative_to)
         )
-        return (origin[0] + expression.before, origin[1] + expression.before)
+        return (origin[0] + expression.before.seconds, origin[1] + expression.before.seconds)
     raise TypeError("expected a supported expression node")
 
 
@@ -380,7 +400,9 @@ def _require_expr(value: object, field: str) -> None:
         )
 
 
-def _window_pair(value: object) -> tuple[str | Literal[0], str | Literal[0]]:
+def _window_pair(
+    value: object,
+) -> tuple[str | Duration | Literal[0], str | Duration | Literal[0]]:
     if not isinstance(value, (tuple, list)) or len(value) != 2:
         raise _INVALID.error(reason="not_a_pair", field="window")
     return value[0], value[1]
@@ -389,7 +411,7 @@ def _window_pair(value: object) -> tuple[str | Literal[0], str | Literal[0]]:
 def agg(
     metric: str,
     *,
-    window: tuple[str | Literal[0], str | Literal[0]],
+    window: tuple[str | Duration | Literal[0], str | Duration | Literal[0]],
     relative_to: EventTime | None = None,
 ) -> MetricAgg:
     """Aggregate a named metric over a half-open window relative to t0 or an event time.
@@ -416,7 +438,7 @@ def retention(
     label_property: str,
     target_event: str,
     thresholds: tuple[int, ...],
-    horizon: str | Literal[0, "open_ended"],
+    horizon: str | Duration | Literal[0, "open_ended"],
 ) -> RetentionMetric:
     """Return the highest threshold band reached by distinct target events.
 
@@ -427,8 +449,8 @@ def retention(
         label_property: Declared event label distinguishing the target event type.
         target_event: String label value identifying events counted toward retention thresholds.
         thresholds: Strictly increasing tuple of positive integer occurrence-count thresholds.
-        horizon: Positive duration string (see `terrine.windows`) or "open_ended" for complete
-            history.
+        horizon: Positive duration string (see `terrine.windows`) or Duration, or "open_ended" for
+            complete history.
 
     Returns:
         A RetentionMetric expression selecting the highest reached occurrence-count band.
@@ -438,7 +460,7 @@ def retention(
             "orders", label_property="status", target_event="paid", thresholds=(1, 2), horizon="30d"
         )
     """
-    with parameter_names(count_thresholds="thresholds", finite_horizon_seconds="horizon"):
+    with parameter_names(count_thresholds="thresholds"):
         return RetentionMetric(
             event,
             label_property,
@@ -452,7 +474,7 @@ def quantile(
     metric: str,
     probability: Decimal | str,
     *,
-    window: tuple[str | Literal[0], str | Literal[0]],
+    window: tuple[str | Duration | Literal[0], str | Duration | Literal[0]],
     interpolation: Literal["linear_type7"] = "linear_type7",
 ) -> MetricQuantile:
     """Request an exact quantile over a window of a metric's integer or Decimal event values.
@@ -480,7 +502,7 @@ def approx_quantile(
     metric: str,
     probability: Decimal | str,
     *,
-    window: tuple[str | Literal[0], str | Literal[0]],
+    window: tuple[str | Duration | Literal[0], str | Duration | Literal[0]],
 ) -> ApproxMetricQuantile:
     """Request an approximate event-value quantile using the installed t-digest package.
 
@@ -504,7 +526,7 @@ def approx_quantile(
 
 
 def approx_distinct(
-    metric: str, *, window: tuple[str | Literal[0], str | Literal[0]]
+    metric: str, *, window: tuple[str | Duration | Literal[0], str | Duration | Literal[0]]
 ) -> ApproxMetricDistinct:
     """Request an approximate distinct-value count for a metric over a window.
 
@@ -525,7 +547,7 @@ def approx_distinct(
 def asof(
     attribute: str,
     *,
-    before: str = "0s",
+    before: str | Duration | Literal[0] = "0s",
     relative_to: EventTime | None = None,
 ) -> AttributeAsOf:
     """Read the value in effect just before the cutoff, never at or after it.
@@ -537,8 +559,8 @@ def asof(
 
     Args:
         attribute: Declared static roster attribute, event label or history attribute name.
-        before: Cutoff offset as a duration string (see `terrine.windows`); "0s" reads just before
-            the origin.
+        before: Cutoff offset as a duration string (see `terrine.windows`) or Duration; "0s" reads
+            just before the origin.
         relative_to: EventTime providing the origin; None makes offsets relative to row t0.
 
     Returns:
@@ -552,7 +574,7 @@ def asof(
 def event_time(
     event: str,
     *,
-    window: tuple[str | Literal[0], str | Literal[0]],
+    window: tuple[str | Duration | Literal[0], str | Duration | Literal[0]],
     label_property: str | None = None,
     equals: JsonScalar = None,
     occurrence: Literal["first", "last", "nth"] = "first",
@@ -586,7 +608,7 @@ def event_time(
 def since(
     event: str,
     *,
-    window: tuple[str | Literal[0], str | Literal[0]],
+    window: tuple[str | Duration | Literal[0], str | Duration | Literal[0]],
     label_property: str | None = None,
     equals: JsonScalar = None,
     occurrence: Literal["first", "last", "nth"] = "last",

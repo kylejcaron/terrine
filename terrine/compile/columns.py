@@ -502,8 +502,9 @@ def compile_columns(
         event_column = source.events[selector.event]
         predicates = [
             origin.unit == events["_unit"],
-            events["_timestamp"] >= origin.t0 + ibis.interval(seconds=selector.window.start),
-            events["_timestamp"] < origin.t0 + ibis.interval(seconds=selector.window.end),
+            events["_timestamp"]
+            >= origin.t0 + ibis.interval(seconds=selector.window.start.seconds),
+            events["_timestamp"] < origin.t0 + ibis.interval(seconds=selector.window.end.seconds),
         ]
         if event_column is not None:
             predicates.append(events[event_column].notnull())
@@ -556,8 +557,8 @@ def compile_columns(
             "start_bound": f"__terrine_selector_start_{index}",
             "end_bound": f"__terrine_selector_end_{index}",
         }
-        start_bound = origin.t0 + ibis.interval(seconds=selector.window.start)
-        end_bound = origin.t0 + ibis.interval(seconds=selector.window.end)
+        start_bound = origin.t0 + ibis.interval(seconds=selector.window.start.seconds)
+        end_bound = origin.t0 + ibis.interval(seconds=selector.window.end.seconds)
         coverage = model.readiness.for_fact(source.name)
         source_ready = (start_bound >= ibis.literal(coverage.start)) & (
             end_bound <= ibis.literal(coverage.end_exclusive)
@@ -756,8 +757,8 @@ def compile_columns(
         else:
             origin_support, dependencies = selector_timing(selector.relative_to)
         support = (
-            origin_support[0] + selector.window.start,
-            origin_support[1] + selector.window.end,
+            origin_support[0] + selector.window.start.seconds,
+            origin_support[1] + selector.window.end.seconds,
         )
         reference = repr(selector)
         return support, {**dependencies, reference: support}
@@ -834,16 +835,16 @@ def compile_columns(
                 model,
                 unit=unit_name,
                 attribute=node.attribute,
-                offset=node.before,
+                offset=node.before.seconds,
                 strict=True,
                 output=output,
                 role="feature",
             )
             meta = result.meta
             cutoff_seconds = (
-                selector_timing(relative)[0][1] + node.before
+                selector_timing(relative)[0][1] + node.before.seconds
                 if relative is not None
-                else node.before
+                else node.before.seconds
             )
             cutoff = FeatureCutoff(cutoff_seconds, True, "retrospective_effective_time")
             strategy = "strict_history"
@@ -893,7 +894,7 @@ def compile_columns(
                 range_plan=range_plans[node],
             )
             meta = result.columns[output]
-            cutoff = FeatureCutoff(node.window.end, True, "retrospective_effective_time")
+            cutoff = FeatureCutoff(node.window.end.seconds, True, "retrospective_effective_time")
             strategy = "blocked_range_join/exact_type7"
             result_table = result.table
         elif isinstance(node, ApproxMetricQuantile):
@@ -950,7 +951,7 @@ def compile_columns(
                     error_description="t-digest empirical, no guaranteed bound",
                 ),
             )
-            cutoff = FeatureCutoff(node.window.end, True, "retrospective_effective_time")
+            cutoff = FeatureCutoff(node.window.end.seconds, True, "retrospective_effective_time")
             strategy = "blocked_range_join/tdigest_sidecar"
             result_table = summary.table.mutate(**{output: ibis.null().cast("float64")})
         elif isinstance(node, ApproxMetricDistinct):
@@ -988,7 +989,7 @@ def compile_columns(
                     error_description="HLL relative standard error ≈ 1.04/√m",
                 ),
             )
-            cutoff = FeatureCutoff(node.window.end, True, "retrospective_effective_time")
+            cutoff = FeatureCutoff(node.window.end.seconds, True, "retrospective_effective_time")
             strategy = "blocked_range_join/hll"
             result_table = result.table
         elif (
@@ -1016,9 +1017,9 @@ def compile_columns(
             )
             meta = result.columns[output]
             cutoff_seconds = (
-                selector_timing(relative)[0][1] + node.window.end
+                selector_timing(relative)[0][1] + node.window.end.seconds
                 if relative is not None
-                else node.window.end
+                else node.window.end.seconds
             )
             cutoff = FeatureCutoff(cutoff_seconds, True, "retrospective_effective_time")
             strategy = "blocked_range_join/nonadditive"
@@ -1068,9 +1069,9 @@ def compile_columns(
             )
             meta = result.columns[output]
             cutoff_seconds = (
-                selector_timing(relative)[0][1] + node.window.end
+                selector_timing(relative)[0][1] + node.window.end.seconds
                 if relative is not None
-                else node.window.end
+                else node.window.end.seconds
             )
             cutoff = FeatureCutoff(cutoff_seconds, True, "retrospective_effective_time")
             strategy = f"sparse_{resolution}_prefix/native"
@@ -1101,9 +1102,9 @@ def compile_columns(
             timing_column_refs[node] = timing_refs
         else:
             offsets = (
-                (node.before, node.before)
+                (node.before.seconds, node.before.seconds)
                 if isinstance(node, AttributeAsOf)
-                else (node.window.start, node.window.end)
+                else (node.window.start.seconds, node.window.end.seconds)
             )
             point_name = f"{output}_point_time"
             start_name = f"{output}_start_bound"
@@ -1213,9 +1214,9 @@ def compile_columns(
             origin, dependency_supports = selector_timing(relative)
             selector_ref = repr(relative)
             offsets = (
-                (node.before, node.before)
+                (node.before.seconds, node.before.seconds)
                 if isinstance(node, AttributeAsOf)
-                else (node.window.start, node.window.end)
+                else (node.window.start.seconds, node.window.end.seconds)
             )
             support = (origin[0] + offsets[0], origin[1] + offsets[1])
             point_column = timing_column_refs[node][0]
@@ -1225,9 +1226,9 @@ def compile_columns(
                 (0, range_plans[node].block_seconds)
                 if isinstance(node, RetentionMetric)
                 else (
-                    (node.before, node.before)
+                    (node.before.seconds, node.before.seconds)
                     if isinstance(node, AttributeAsOf)
-                    else (node.window.start, node.window.end)
+                    else (node.window.start.seconds, node.window.end.seconds)
                 )
             )
             dependency_supports = {}
@@ -1339,7 +1340,7 @@ def compile_columns(
             model,
             unit=unit_name,
             attribute=treatment.attribute,
-            offset=treatment.at,
+            offset=treatment.at.seconds,
             strict=False,
             output="treatment",
             role="treatment",
