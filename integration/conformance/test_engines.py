@@ -23,9 +23,10 @@ from integration.warehouse_execution.snowflake_fixtures import (
 )
 from terrine.backends.dialect import current_dialect, dialect_scope
 from terrine.backends.extrema import greatest, least
-from terrine.backends.numeric import exact_float, float_scale
+from terrine.backends.numeric import quantized_float
 from terrine.backends.registry import ENGINES
 from terrine.backends.timestamps import day_start, utc_instant, utc_wall_clock
+from terrine.errors import TerrineError
 from terrine.semantic.models import BoundDimension, BoundValidity, PropertyBinding, TableRef
 from terrine.spec import EventSequence, TimeToEvent
 from terrine.temporal.attributes import attribute_asof, validate_history
@@ -138,32 +139,22 @@ def test_every_registered_engine_has_a_conformance_connection():
 
 def test_forced_generic_selection_reaches_nested_literals(engine, request):
     """Under ``--generic-dialect`` even nested literal-only scopes quantize to scale 9."""
-    forced = request.config.getoption("--generic-dialect")
+    request.config.getoption("--generic-dialect")
     outer = current_dialect().name
     with dialect_scope(engine.name), dialect_scope(engine.name.upper()):
         # Text through DOUBLE: Snowflake types a bare decimal literal as an exact
         # NUMBER, and Ibis elides a float64 cast of a float64 literal.
         value = ibis.literal("0.1234567899").cast(dt.float64)
         values = ibis.literal(0).as_table().select(value=value)
-        # Native float text differs per engine (DuckDB's shortest round trip is
-        # 10 fractional digits, Snowflake's DECFLOAT 18), so the scale comes from
-        # the same text, as the daily aggregation derives it for each unit.
-        scaled = values.mutate(scale=float_scale(values.value, []))
-        exact, nonfinite, unrepresentable = exact_float(scaled.value, scaled.scale)
-        state_type = exact.type()
+        exact, nonfinite, unrepresentable = quantized_float(values.value)
         (row,) = engine.to_pyarrow(
-            scaled.select(
+            values.select(
                 state=exact.cast("string"), nonfinite=nonfinite, unrepresentable=unrepresentable
             )
         ).to_pylist()
     assert current_dialect().name == outer
     assert (row["nonfinite"], row["unrepresentable"]) == (False, False)
-    if forced:
-        assert state_type == dt.Decimal(38, 9)
-        assert Decimal(row["state"]) == Decimal("0.123456789")
-    else:
-        # Native state keeps every digit of the engine's text for the binary64 value.
-        assert "1234567899" in row["state"]
+    assert Decimal(row["state"]) == Decimal("0.123456790")
 
 
 def test_schedule_whole_days_advance_by_every(engine):
@@ -223,8 +214,35 @@ def test_window_sums_preserve_small_values_after_large_history(engine):
     )
     (row,) = _rows(model, design)
     # Independent window oracles: 0.1 + 0.2 and exact decimal coefficient addition.
-    assert row["weight"] == pytest.approx(0.3, rel=1e-15, abs=0.0)
+    from fractions import Fraction
+
+    from tests._float_bound import window_sum_bound
+
+    assert abs(Fraction(row["weight"]) - sum(map(Fraction, [0.1, 0.2, 0.0]))) <= window_sum_bound(
+        [0.1, 0.2, 0.0]
+    )
     assert row["amount"] == Decimal("0.03")
+
+
+def test_bounded_accumulation_refuses_exact_overflow(engine):
+    """Withhold scale-9 coefficients before a bounded accumulator can overflow."""
+    with dialect_scope(engine.name):
+        if not current_dialect().bounds_accumulations:
+            pytest.skip("The native coefficient domain admits this sum.")  # ty: ignore[too-many-positional-arguments]
+    events = _events(
+        [_ORIGIN + timedelta(hours=hour) for hour in (11, 12)], ["first", "second"]
+    ).append_column("weight", pa.array([9e28, 9e28], pa.float64()))
+    model = _model(engine, events)
+    design = tr.Design(
+        "user",
+        tr.FixedDate("2025-01-02"),
+        features={"weight": tr.agg("weight", window=("-1d", "0s"))},
+    )
+    materialized = []
+    with pytest.raises(TerrineError) as caught:
+        materialized.append(design.build(model).materialize(_BUDGET))
+    assert caught.value.code == "terrine.temporal.exact_overflow"
+    assert materialized == []
 
 
 def test_utc_conversions_ignore_session_time_zone(engine):

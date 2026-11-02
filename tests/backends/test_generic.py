@@ -142,22 +142,21 @@ def test_portable_policy_types_and_flags():
 
     policy = dialect_for_name("generic")
     assert isinstance(policy, Dialect) and policy.name == "generic"
-    assert policy.exact_type() == dt.Decimal(38, 9)
+    assert policy.exact_type() == dt.Decimal(38, 0)
     assert policy.wide_type() == dt.Decimal(38, 0)
     assert policy.coefficient_type() == dt.Decimal(38, 0)
-    assert not policy.has_scaled_float_state
     assert not policy.has_native_asof
     assert policy.supports_exact_prefix("sqlite")
-    assert is_exact_type(dt.Decimal(38, 9)) and is_exact_type(dt.Decimal(38, 0))
+    assert is_exact_type(dt.Decimal(38, 0))
     assert not is_exact_type(dt.Decimal(38, 2))
     with dialect_scope("generic"):
-        assert exact_type() == dt.Decimal(38, 9)
+        assert exact_type() == dt.Decimal(38, 0)
         count = exact_literal(1)
         assert count.type() == dt.Decimal(38, 0)
-        state = ibis.literal(Decimal("0.5"), type=dt.Decimal(38, 9))
+        state = ibis.literal(Decimal("5"), type=dt.Decimal(38, 0))
         coefficient = ibis.literal(7, type=dt.Decimal(38, 0))
         # Literals anchor to the first exact operand; other operands do not change them.
-        assert exact_literal(0, state).type() == dt.Decimal(38, 9)
+        assert exact_literal(0, state).type() == dt.Decimal(38, 0)
         assert exact_literal(0, ibis.literal(1.5), coefficient).type() == dt.Decimal(38, 0)
         assert exact_literal(0, ibis.literal(2.5)).type() == dt.Decimal(38, 0)
 
@@ -178,14 +177,7 @@ def test_portable_policy_compiles_every_operation_without_native_bindings():
         },
         name="events",
     )
-    exact, nonfinite, unrepresentable = policy.exact_float(table.f)
-    assert (exact.type(), nonfinite.type(), unrepresentable.type()) == (
-        dt.Decimal(38, 9),
-        dt.boolean,
-        dt.boolean,
-    )
-    assert policy.exact_ratio(table.s, table.c).type().is_float64()
-    assert policy.exact_is_nonfinite(table.s).type().is_boolean()
+    assert policy.quantize_float(table.f).type() == dt.Decimal(38, 9)
     assert policy.exact_to_float(table.s)[0].type().is_float64()
     assert policy.exact_sum(table.c).type() == dt.Decimal(38, 0)
     assert policy.exact_subtract(table.s, table.s).type() == dt.Decimal(38, 9)
@@ -203,8 +195,7 @@ def test_portable_policy_compiles_every_operation_without_native_bindings():
     with pytest.raises(TerrineError) as caught:
         policy.timestamp_parts(table.t.cast(dt.Timestamp(scale=3)))
     assert caught.value.code == "terrine.temporal.timestamp_order_unsupported"
-    with pytest.raises(ValueError):
-        policy.exact_to_float(table.s, 2)
+    assert policy.exact_to_float(table.c, 9)[0].type().is_float64()
 
 
 _UNIT_ROUNDOFF = Fraction(1, 2**53)

@@ -265,7 +265,7 @@ def compile_ltv(design: Design, model: Model) -> CompiledStudy:
                         RowCheck(
                             failure_column,
                             FLOAT64_PRECISION,
-                            {"failure": "bound_overflow", "output": "cumulative_value"},
+                            {"reason": "bound_overflow", "output": "cumulative_value"},
                         ),
                     ),
                 )

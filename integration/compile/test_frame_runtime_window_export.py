@@ -189,7 +189,7 @@ def test_metric_refusal_precedes_shape_refusal():
         )
         error = _refusal(design, model)
         assert error.code == "terrine.temporal.float64_precision"
-        assert error.context["failure"] == "nonfinite_input"
+        assert error.context["reason"] == "nonfinite_input"
         con.raw_sql("UPDATE events SET float_amount = 0 WHERE user_id = 'u1'")
         error = _refusal(design, model)
         assert error.code == "terrine.temporal.exact_overflow"
@@ -228,7 +228,7 @@ def test_row_checks_count_base_candidates_not_shape_rows(con):
     with pytest.raises(TerrineError) as error:
         frame.materialize()
     assert error.value.code == "terrine.temporal.float64_precision"
-    assert error.value.context["failure"] == "nonfinite_input"
+    assert error.value.context["reason"] == "nonfinite_input"
     assert error.value.context["failed_count"] == 1
 
 
@@ -292,7 +292,7 @@ def test_materialize_gates_an_empty_output(con):
     )
     error = _refusal(_excluded_everyone(), model)
     assert error.code == "terrine.temporal.float64_precision"
-    assert error.context["failure"] == "nonfinite_input"
+    assert error.context["reason"] == "nonfinite_input"
     assert error.context["failed_count"] == 1
 
 

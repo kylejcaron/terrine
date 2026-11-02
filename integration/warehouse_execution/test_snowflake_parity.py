@@ -9,7 +9,6 @@ shared catalogs spell them.
 from __future__ import annotations
 
 import itertools
-import math
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Literal
@@ -435,15 +434,14 @@ def test_float_windows_match_duckdb_within_tolerance(snowflake_scratch, tmp_path
     windows._assert_close(actual, expected)
     by_unit = {row["unit"]: row for row in actual}
     reference = {row["unit"]: row for row in expected}
-    # Snowflake rounds each float to 18 significant digits on entry (its
-    # shortest text is not available row-wise), so the exact window sums can
-    # differ from DuckDB's by under an ulp before the single rounding; here
-    # 0.100000000000000006 + 0.200000000000000011 + 0.300000000000000044 and
-    # DuckDB's 0.60000000000000004 round to the same double.
-    for name in ("weight_before", "weight_week", "spend_per_weight"):
-        got, want = by_unit["d"][name], reference["d"][name]
-        assert abs(got - want) <= math.ulp(want), (name, got, want)
-    assert by_unit["d"]["weight_week"] == reference["d"]["weight_week"] == 0.6000000000000001
+    from fractions import Fraction
+
+    from tests._float_bound import window_sum_bound
+
+    values = [0.1, 0.2, 0.3]
+    exact = sum(map(Fraction, values))
+    for value in (by_unit["d"]["weight_week"], reference["d"]["weight_week"]):
+        assert abs(Fraction(value) - exact) <= window_sum_bound(values)
 
 
 @pytest.mark.parametrize(
@@ -455,20 +453,10 @@ def test_float_windows_match_duckdb_within_tolerance(snowflake_scratch, tmp_path
             "weight",
             "nonfinite_input",
         ),
-        # A coefficient beyond NUMBER(38, 0)'s digits.
-        ((("2025-01-01 12:00:00", "1e39"),), "weight", "bound_overflow"),
+        # Beyond the quantized float input domain.
+        ((("2025-01-01 12:00:00", "1e39"),), "weight", "out_of_range"),
         # A dropped denominator must not read as a zero denominator.
-        ((("2025-01-01 12:00:00", "1e39"),), "spend_per_weight", "bound_overflow"),
-        # A quotient beyond binary64's range (10 / 1e-320): TRY_TO_DOUBLE returns
-        # NULL for it, which must not pass as a missing value.
-        ((("2025-01-01 12:00:00", "1e-320"),), "spend_per_weight", "bound_overflow"),
-        # The unit's scale is the most fractional digits any value's text needs:
-        # 1e-20's 18-digit text 9.99999999999999945e-21 sets 38, so 1e20 needs 59.
-        (
-            (("2024-12-31 12:00:00", "'1e-20'::FLOAT"), ("2025-01-01 12:00:00", "'1e20'::FLOAT")),
-            "weight",
-            "bound_overflow",
-        ),
+        ((("2025-01-01 12:00:00", "1e39"),), "spend_per_weight", "out_of_range"),
     ],
 )
 def test_float_window_failures_are_coded_refusals(
@@ -483,22 +471,7 @@ def test_float_window_failures_are_coded_refusals(
     with pytest.raises(TerrineError) as error:
         windows._rows(windows._model(snowflake_scratch.con, tmp_path, "snowflake"), design)
     assert error.value.code == "terrine.temporal.float64_precision"
-    assert error.value.context["failure"] == failure
-
-
-def test_float_sum_beyond_38_digits_is_an_exact_overflow(snowflake_scratch, tmp_path):  # noqa: F811
-    _load_windows(snowflake_scratch)
-    # Each coefficient fits; their running sum leaves NUMBER(38, 0), where
-    # Snowflake raises.
-    snowflake_scratch.sql(
-        "INSERT INTO events VALUES "
-        "('d', '2025-01-01 11:00:00 +0000', 1, 10, 9e37, NULL), "
-        "('d', '2025-01-01 12:00:00 +0000', 1, 10, 9e37, NULL)"
-    )
-    design = windows._design(value=tr.agg("weight", window=("-3d", "0s")))
-    with pytest.raises(TerrineError) as error:
-        windows._rows(windows._model(snowflake_scratch.con, tmp_path, "snowflake"), design)
-    assert error.value.code == "terrine.temporal.exact_overflow"
+    assert error.value.context["reason"] == failure
 
 
 def test_boundary_and_tied_first_events_match_duckdb(snowflake_scratch, tmp_path):  # noqa: F811
@@ -643,10 +616,7 @@ def test_millisecond_sources_match_duckdb(snowflake_scratch, tmp_path):  # noqa:
 
 
 def test_repeated_subnormal_window_stays_within_the_absolute_bound(snowflake_scratch, tmp_path):  # noqa: F811
-    """DuckDB sums the shortest text 5e-324 of each value; Snowflake sums its
-    18-digit text 4.94065645841246544e-324, so with n subnormal inputs the two
-    results may differ by subnormal ulps:
-    |s_sf - s_duckdb| <= 2**-51 * sum|x| + (n + 1) * 2**-1074."""
+    """Subnano inputs vanish under the shared quantized contract."""
     _load_windows(snowflake_scratch)
     duckdb = _duckdb_windows()
     n = 200
@@ -670,5 +640,4 @@ def test_repeated_subnormal_window_stays_within_the_absolute_bound(snowflake_scr
             windows._model(snowflake_scratch.con, tmp_path, "snowflake"), design
         )
     }["d"]
-    assert got > 0 and want > 0
-    assert abs(got - want) <= 2**-51 * (n * 5e-324) + (n + 1) * 2**-1074, (got, want)
+    assert got == 0.0 and want == 0.0

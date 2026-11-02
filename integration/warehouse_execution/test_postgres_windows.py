@@ -262,7 +262,7 @@ def _float_rows(con, rows: list[tuple[str, str]]) -> None:
         (
             [("2025-01-01 12:00:00", "1e308"), ("2025-01-01 13:00:00", "1e308")],
             "weight",
-            "bound_overflow",
+            "out_of_range",
         ),
     ],
 )
@@ -276,12 +276,14 @@ def test_float_window_failures_are_coded_refusals(
     with pytest.raises(TerrineError) as error:
         _rows(_model(con, tmp_path, "postgres"), design)
     assert error.value.code == "terrine.temporal.float64_precision"
-    assert error.value.context["failure"] == failure
+    assert error.value.context["reason"] == failure
 
 
 def test_cancelling_float_window_stays_within_the_absolute_sum_bound(postgres_scratch, tmp_path):  # noqa: F811
-    """Each float enters as its shortest decimal, within half an ulp, so under
-    cancellation the agreement with DuckDB is relative to the window's absolute sum."""
+    """Cancellation is checked against the exact sum of original floats."""
+    from fractions import Fraction
+
+    from tests._float_bound import window_sum_bound
     duckdb = ibis.duckdb.connect()
     _load(duckdb, timestamp_type="TIMESTAMPTZ", amount_type="DECIMAL(12, 2)")
     _load(postgres_scratch.con, timestamp_type="timestamptz", amount_type="numeric(12, 2)")
@@ -295,7 +297,10 @@ def test_cancelling_float_window_stays_within_the_absolute_sum_bound(postgres_sc
 
     expected = value(_model(duckdb, tmp_path, "duckdb"))
     actual = value(_model(postgres_scratch.con, tmp_path, "postgres"))
-    assert abs(actual - expected) <= 2**-52 * (1.000001 + 1.0)
+    inputs = [1.000001, -1.0]
+    exact = sum(map(Fraction, inputs))
+    assert abs(Fraction(actual) - exact) <= window_sum_bound(inputs)
+    assert abs(Fraction(expected) - exact) <= window_sum_bound(inputs)
 
 
 def test_float_state_ignores_the_callers_float_text_precision(postgres_scratch, tmp_path):  # noqa: F811
@@ -307,7 +312,10 @@ def test_float_state_ignores_the_callers_float_text_precision(postgres_scratch, 
         rows = _rows(_model(con, tmp_path, "postgres"), design)
     finally:
         con.disconnect()
-    assert {row["unit"]: row["weight_before"] for row in rows}["d"] == 1 / 3
+    from tests._float_bound import window_sum_bound
+
+    actual = {row["unit"]: row["weight_before"] for row in rows}["d"]
+    assert abs(actual - 1 / 3) <= window_sum_bound([1 / 3])
 
 
 def test_empty_window_after_nonfinite_history_is_zero(postgres_scratch, tmp_path):  # noqa: F811

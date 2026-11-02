@@ -27,9 +27,9 @@ from terrine.backends.dialect import current_dialect
 from terrine.backends.joins import asof_join
 from terrine.backends.numeric import (
     decimal_coefficient,
-    exact_float,
     exact_sum,
     exact_type,
+    quantized_float,
     truncating_quotient,
 )
 from terrine.backends.timestamps import timestamp_parts, utc_instant, utc_wall_clock
@@ -45,6 +45,7 @@ from terrine.semantic.models import (
 from terrine.temporal.aggregate import narrow_exact
 from terrine.temporal.daily import sparse_daily
 from terrine.temporal.prefix import sparse_prefix
+from tests._float_bound import window_sum_bound
 
 _WIDE = dt.Decimal(38, 0)
 _FIXED = dt.Decimal(38, 9)
@@ -75,14 +76,6 @@ def _rows(connection, table):
     return connection.to_pyarrow(table).to_pylist()
 
 
-def _quantize(value: float | None) -> Decimal | None:
-    """Independent oracle: truncate the shortest decimal text toward zero at nine places."""
-    if value is None or not math.isfinite(value):
-        return None
-    # int() of a Fraction truncates toward zero.
-    return Decimal(int(Fraction(repr(value)) * 10**9)).scaleb(-9)
-
-
 def _truncating_quotient(dividend: int | None, divisor: int | None) -> int | None:
     """Independent oracle: integer division truncating toward zero, NULL for zero or NULL."""
     if dividend is None or divisor is None or divisor == 0:
@@ -99,17 +92,21 @@ _FLOATS = {
     "below_tick": 1e-10,
     "null": None,
     "inside_domain": math.nextafter(1e29, 0),
-    "outside_domain": 1e29,
-    "negative_outside": -1e29,
+    "boundary": 1e29,
+    "negative_boundary": -1e29,
+    "outside_domain": math.nextafter(1e29, math.inf),
+    "negative_outside": -math.nextafter(1e29, math.inf),
     "infinite": math.inf,
     "not_a_number": math.nan,
+    "positive_tie": 1023 / 1024,
+    "negative_tie": -1023 / 1024,
 }
-_QUANTIZED = [Decimal("0.123456789"), Decimal("-0.123456789"), Decimal("0"), None]
+_QUANTIZED = [Decimal("0.123456790"), Decimal("-0.123456790"), Decimal("0"), None]
 _AMOUNTS = [Decimal("9007199254740993.01"), Decimal("-9007199254740993.00"), Decimal("0.02")]
 
 
 def test_fixed_scale_entry_and_coefficient_domain(connection):
-    assert exact_type() == dt.Decimal(38, 9)
+    assert exact_type() == dt.Decimal(38, 0)
     assert current_dialect().wide_type() == dt.Decimal(38, 0)
     floats = connection.create_table(
         "floats",
@@ -120,38 +117,32 @@ def test_fixed_scale_entry_and_coefficient_domain(connection):
             }
         ),
     )
-    exact, nonfinite, unrepresentable = exact_float(floats.value)
+    exact, nonfinite, unrepresentable = quantized_float(floats.value)
     assert exact.type() == _FIXED
-    _, text = current_dialect(floats.value).finite_text(floats.value)
     rows = {
         row["case"]: row
         for row in _rows(
             connection,
             floats.select(
-                "case", exact=exact, nonfinite=nonfinite, unrepresentable=unrepresentable, text=text
+                "case", exact=exact, nonfinite=nonfinite, unrepresentable=unrepresentable
             ),
         )
     }
     quantized = [rows[name]["exact"] for name in ("positive", "negative", "below_tick", "null")]
     assert quantized == _QUANTIZED
+    assert rows["positive_tie"]["exact"] == Decimal("0.999023438")
+    assert rows["negative_tie"]["exact"] == Decimal("-0.999023438")
     for name, value in _FLOATS.items():
         row = rows[name]
         assert row["nonfinite"] is (value is not None and not math.isfinite(value))
         if value is None or not math.isfinite(value):
             assert row["exact"] is None and row["unrepresentable"] is False
             continue
-        # Error model: the backend text is within half an ulp of the binary64 value
-        # (shortest round-trip text) and quantization perturbs it by less than 10**-9.
-        printed = Fraction(row["text"])
-        assert abs(printed - Fraction(value)) <= Fraction(math.ulp(value)) / 2
-        if row["exact"] is None:
-            assert row["unrepresentable"] is True
-            assert abs(printed) >= 10**29
-            continue
-        assert row["unrepresentable"] is False
-        assert row["exact"] == _quantize(value)
-        assert abs(Fraction(row["exact"]) - printed) < Fraction(1, 10**9)
-    assert rows["inside_domain"]["exact"] == Decimal("99999999999999970000000000000")
+        if abs(Fraction(value)) >= 10**29:
+            assert row["exact"] is None and row["unrepresentable"] is True
+        else:
+            assert row["exact"] is not None and row["unrepresentable"] is False
+            assert abs(Fraction(row["exact"]) - Fraction(value)) <= window_sum_bound([value])
     assert rows["outside_domain"]["exact"] is None
 
     # Source decimals keep their scale-2 coefficients in the wide domain, not scale 9.
@@ -527,10 +518,14 @@ def test_window_quotients_cancellation_and_order_invariance(connection):
             "nonfinite_input",
         ),
         (
-            [_event("a", datetime(2025, 1, 1, 12, tzinfo=UTC), weight=1e29)],
+            [
+                _event(
+                    "a", datetime(2025, 1, 1, 12, tzinfo=UTC), weight=math.nextafter(1e29, math.inf)
+                )
+            ],
             "weight",
             "terrine.temporal.float64_precision",
-            "bound_overflow",
+            "out_of_range",
         ),
         # Opposite-sign prefixes whose difference leaves the fixed-scale domain.
         (
@@ -540,8 +535,8 @@ def test_window_quotients_cancellation_and_order_invariance(connection):
                 _event("a", datetime(2024, 12, 31, 12, tzinfo=UTC), weight=6e28),
             ],
             "weight",
-            "terrine.temporal.float64_precision",
-            "bound_overflow",
+            "terrine.temporal.exact_overflow",
+            None,
         ),
         (
             [
@@ -575,7 +570,7 @@ def test_domain_failures_are_coded_refusals(connection, events, metric, code, fa
         _values(model, value=tr.agg(metric, window=("-2d", "0s")))
     assert error.value.code == code
     if failure is not None:
-        assert error.value.context["failure"] == failure
+        assert error.value.context["reason"] == failure
 
 
 _HUGE_AMOUNT = "6" + "0" * 35 + ".00"
@@ -595,8 +590,8 @@ _SAME_DAY_HUGE_AMOUNTS = [
                 _event("a", datetime(2025, 1, 1, 13, tzinfo=UTC), weight=6e28),
             ],
             "weight",
-            "terrine.temporal.float64_precision",
-            "bound_overflow",
+            "terrine.temporal.exact_overflow",
+            None,
         ),
         # Successive prefixes overflow although each day group fits.
         (
@@ -605,8 +600,8 @@ _SAME_DAY_HUGE_AMOUNTS = [
                 _event("a", datetime(2025, 1, 1, 12, tzinfo=UTC), weight=6e28),
             ],
             "weight",
-            "terrine.temporal.float64_precision",
-            "bound_overflow",
+            "terrine.temporal.exact_overflow",
+            None,
         ),
         # Three facts scale to 1.8e38, beyond a 128-bit accumulator: the group and
         # prefix sums must never receive them.
@@ -616,15 +611,15 @@ _SAME_DAY_HUGE_AMOUNTS = [
                 for hour in (12, 13, 14)
             ],
             "weight",
-            "terrine.temporal.float64_precision",
-            "bound_overflow",
+            "terrine.temporal.exact_overflow",
+            None,
         ),
         (
             [_event("a", datetime(2024, 12, day, 12, tzinfo=UTC), weight=6e28) for day in (30, 31)]
             + [_event("a", datetime(2025, 1, 1, 12, tzinfo=UTC), weight=6e28)],
             "weight",
-            "terrine.temporal.float64_precision",
-            "bound_overflow",
+            "terrine.temporal.exact_overflow",
+            None,
         ),
         (_SAME_DAY_HUGE_AMOUNTS, "spend", "terrine.temporal.exact_overflow", None),
         (
@@ -648,7 +643,7 @@ def test_accumulated_state_overflow_is_a_coded_refusal(connection, events, metri
         _values(model, value=tr.agg(metric, window=("-2d", "0s")))
     assert error.value.code == code
     if failure is not None:
-        assert error.value.context["failure"] == failure
+        assert error.value.context["reason"] == failure
 
 
 def test_aware_deltas_across_daylight_saving_are_correct_or_refused(connection):

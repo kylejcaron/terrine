@@ -209,7 +209,7 @@ def test_portable_decimal_cohort_reduction_beyond_the_accumulator_refuses(con, s
 
 def test_float_cohort_mean_of_huge_values_avoids_overflow(con):
     result, rows = _cohorts(con, [1e308, 1e308], dtype=pa.float64())
-    assert rows[0]["value"] == 1e308
+    assert rows[0]["value"] == pytest.approx(1e308)
     meta = result.columns["value"]
     assert meta.numeric_policy is None
 
@@ -224,4 +224,4 @@ def test_float_cohort_total_overflow_refuses(con):
     with pytest.raises(TerrineError) as error:
         _cohorts(con, [1e308, 1e308], dtype=pa.float64(), statistic="total")
     assert error.value.code == "terrine.temporal.float64_precision"
-    assert error.value.context["failure"] == "bound_overflow"
+    assert error.value.context["reason"] == "bound_overflow"

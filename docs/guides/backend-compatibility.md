@@ -153,10 +153,12 @@ execution context is admitted when it is issued:
   do) first compiles and executes scalar known answers for scale-9 low digits
   at a large offset (`9007199254740993.000000001`), cancellation, the domain
   edges `±(10**29 - 10**-9)`, signed truncating quotients, both `int64`
-  endpoints and a 38-digit coefficient. A backend whose answers differ, or
-  whose decimals are stored by affinity (SQLite), refuses
-  `operation="exact_state"`; a query without decimal state, such as a roster
-  read, never runs this witness.
+  endpoints and a 38-digit coefficient. It also checks float quantization:
+  `±6e-10` must become `±1e-9`, and the exactly representable tie `±1/1024`
+  must become `±0.000976563`. A backend that truncates or rounds ties to even,
+  whose answers otherwise differ, or whose decimals are stored by affinity
+  (SQLite), refuses `operation="exact_state"`; a query without decimal state,
+  such as a roster read, never runs this witness.
 - A query carrying an aware-timestamp delta first reconstructs four known UTC
   wall clocks (2025-07-01, 2025-01-15, 1969-12-31 and 1850-06-01) through the
   portable conversion. Ibis lowers that delta through session wall clocks on
@@ -172,42 +174,63 @@ intervals that rebuild the instant at microsecond resolution at best;
 microsecond and unscaled values convert exactly, and signed sub-second parts
 keep nanosecond support.
 
-### Portable numerical contract
+### Shared numerical contract
 
-The portable policy has no native wide integer, so it holds state in fixed
-precision and refuses rather than narrows.
+Every engine quantizes finite float inputs once to `DECIMAL(38, 9)`-scale
+values using its own float-to-decimal conversion (nearest, ties away from
+zero, with binary64 conversion error of about $10^{-16}$ relative), so a
+value within that error of a halfway point may round either way; only the
+stated window-sum bound is promised.
+Float32 widens first. NULL stays NULL.
+The exact binary64 magnitude must be below $10^{29}$: the literal `1e29`
+is admitted because its exact value is just below that boundary; the next
+float up is refused with `terrine.temporal.float64_precision`,
+`reason="out_of_range"`. Non-finite inputs use `reason="nonfinite_input"`;
+a published result beyond float64 uses `reason="bound_overflow"`.
 
-- A float fact enters state as `DECIMAL(38, 9)` by truncating the backend's
-  decimal text `t` toward zero at nine fractional digits
-  (`Q9(t) = sign(t) · ⌊|t| · 10⁹⌋ / 10⁹`, cut from the digit string, never
-  multiplied in binary64), so `|Q9(t) − t| < 10⁻⁹`. Magnitudes at or above
-  `10²⁹` refuse with `terrine.temporal.float64_precision` (`bound_overflow`),
-  non-finite values with `nonfinite_input`, and NULL stays NULL. On DuckDB and
-  PostgreSQL the text is the shortest round-trip rendering, within half an ulp
-  of the stored float; another backend's text conversion must be measured
-  separately, and the policy makes no universal correctly-rounded claim.
-- A window sum is `Σ Q9(t(xᵢ))` with older history subtracted exactly, then
-  rounded once to binary64 through its text, so before that rounding
-  `|S − Σxᵢ| ≤ Σ|t(xᵢ) − xᵢ| + n · 10⁻⁹` over the `n` window values.
-  Ratios divide correctly rounded binary64 operands once, within `3.1u`
-  (`u = 2⁻⁵³`) of the exact quotient before later rounding; a ratio of two
-  averages was measured within `8u`. A zero divisor gives a NULL with the
-  `zero_denominator` reason.
-- Counts and source decimals keep their coefficients in a separate
-  `DECIMAL(38, 0)` domain (`|c| ≤ 10³⁸ − 1`, scale carried separately), so a
-  `numeric(38, 2)` source is neither rounded through binary64 nor mistaken for
-  scale 9. Signed integer quotients truncate toward zero through a certified
-  decimal residual correction, exact at both `int64` endpoints, and are NULL
-  beyond `int64` or for a zero divisor.
+The quantized value joins the declared-decimal coefficient path at scale 9:
+DuckDB `BIGNUM`, PostgreSQL `NUMERIC`, BigQuery `BIGNUMERIC`, Snowflake
+`NUMBER(38, 0)`, and portable `DECIMAL(38, 0)`. Prefix subtraction is exact,
+so a small recent window is not cancelled by a huge history. Counts,
+integer measures, declared decimals, keys and timestamps retain their exact
+domains.
+
+The portable policy caps the integral intermediate at $\pm(10^{29}-1)$
+before its scale-9 cast, so a short float-to-decimal conversion that rounds
+an admitted boundary value up to $10^{29}$ cannot overflow that cast;
+the resulting value is still subject to the same window-sum bound.
+
+Against the exact sum of original float inputs in a window $W$, the sum's
+absolute error is bounded by
+$e_S = 10^{-9} n_W + 10^{-12}\sum_{i\in W}|x_i|$.
+A mean divides this bound by its actual denominator, including calendar-day
+means. Means and ratios convert each exact operand at its own scale once,
+then divide once in float64. A quantized denominator that is exactly zero
+returns NULL with `zero_denominator`. Otherwise, when $|\hat D| > e_D$:
+
+$$
+|\hat r-N/D| \le
+\frac{|\hat N|e_D+|\hat D|e_N}{|\hat D|(|\hat D|-e_D)}
++2^{-51}|\hat r|.
+$$
+
+For $0 < |\hat D| \le e_D$ the ratio is returned with no stated accuracy.
+There is no bitwise or order-independence promise. Nonzero inputs smaller
+than $5\cdot10^{-10}$ vanish from sums: declare decimal measures or rescale
+them, for example into micro-units, when that scale matters. Row predicates
+still compare original values; output thresholds compare published results.
+
+Signed integer quotients still truncate toward zero, including both `int64`
+endpoints, and are NULL beyond `int64` or for a zero divisor.
 - Accumulations are admitted only when a binary64 bound on the summed
   magnitudes proves the exact sum fits the type: with `n` contributing values
   the computed bound `B` lies within `e = (1 + u)(1 + γₙ₋₁) − 1` of the true
   magnitude sum (`γₖ = k · u / (1 − k · u)`), so a partition is admitted iff
   `B < limit · (1 − e)`. Otherwise its values are withheld before the backend
   adds them and every consumer of that state refuses: sums, averages and
-  ratios with `float64_precision` (`bound_overflow`) for float event values or
-  `terrine.temporal.exact_overflow` for coefficients, cohort totals and means
-  and cumulative trajectories with their existing overflow reasons. This
+  ratios with `terrine.temporal.exact_overflow`, including float coefficients.
+  Cohort totals, means and cumulative trajectories keep their existing
+  overflow reasons. This
   bound is deliberately conservative: opposite-sign history whose magnitudes
   alone exceed the domain is refused even where the exact difference would
   fit, and a prefix difference leaving the fixed domain refuses likewise.
@@ -221,10 +244,9 @@ precision and refuses rather than narrows.
   sequences (seconds multiplied first, then cast to an interval) are the
   defaults.
 
-Registered engines keep their native state and every previously refused
-operation through explicit overrides: `exact_ratio` and `exact_is_nonfinite`
-on DuckDB and Snowflake, normalized significand division on PostgreSQL and
-BigQuery. Their numerical sections below are unchanged.
+DuckDB's `BIGNUM` coefficient state is unbounded. Bounded coefficient
+engines retain the declared-decimal accumulation limits; their guards
+withhold unsafe state and refuse before any output is published.
 
 ### Provenance stamp
 
@@ -316,25 +338,16 @@ Nullable anchor identities remain null-safe while admitting hash/merge joins.
 Compatible integer unit keys use a lossless common timeline type, including
 different roster and event key widths; output keys retain their original types.
 
-Averages, ratios and float-valued windows match DuckDB within a tight tolerance
-rather than bit for bit. On every backend a float fact enters exact state as
-the decimal value of its shortest round-trip text (`REAL` is widened first;
-Snowflake uses an 18-significant-digit text, see below), which lies within
-half an ulp of the stored float, so history outside the window cancels exactly
-and a window sum is that decimal sum rounded to binary64 once. DuckDB holds
-the text as a `BIGNUM` coefficient at a per-unit scale and
-rounds through its correctly rounded string-to-double conversion; PostgreSQL
-keeps each window quantity exact in `NUMERIC` and rounds to binary64 once.
-Averages and ratios divide before that rounding: PostgreSQL to at least 16
-significant digits (relative error below 1e-15 of its exact inputs), DuckDB
-within `|r − p/q| ≤ 6·2⁻⁵³·|p/q| + 2⁻¹⁰⁷⁵` of the exact quotient. The parity
-contract stays relative to the window's absolute sum, not to the result, since
-cancellation defeats a purely relative bound. These columns carry
-`numeric_policy=None` and no error column on every backend. A non-finite value
-at or before the end of a non-empty window, or a result beyond binary64 range,
-refuses with
-`terrine.temporal.float64_precision` (`nonfinite_input` / `bound_overflow`); an
-empty window is zero, as on DuckDB.
+Float windows, averages and ratios use the [shared quantized contract](#shared-numerical-contract),
+not bitwise parity with DuckDB. PostgreSQL accumulates scale-9 float
+coefficients exactly in `NUMERIC`; each exact quotient operand converts at
+its own scale before one float64 division. These columns carry
+`numeric_policy=None` and no error column. A non-finite or out-of-range
+input at or before the end of a non-empty window refuses; an empty sum
+window remains zero.
+PostgreSQL rounds in unconstrained `NUMERIC` at scale 9, so a conversion
+that rounds an admitted boundary input up to $10^{29}$ cannot overflow an
+intermediate fixed-precision cast.
 
 Refused on PostgreSQL, with a route: retained input capture, Dataset staging,
 publication and reopening (`terrine.backend.capability_unavailable`; these live
@@ -355,13 +368,11 @@ evaluated on each query; external tables are not admitted.
 
 Supported, matching the DuckDB reference ([live probes][bigquery]): everything
 listed for PostgreSQL above, with the same tolerance contract for averages,
-ratios and float windows. Exact state is `BIGNUMERIC`, which holds magnitudes
-below about 5.7e38 with 38 fractional digits: an exact sum beyond it refuses with
-`terrine.temporal.exact_overflow`, a float fact beyond it or non-finite refuses
-with `terrine.temporal.float64_precision` (`bound_overflow` / `nonfinite_input`),
-and a float fact's round-trip text is rounded to 38 fractional digits, which
-perturbs the exact window sum by at most 5e-39 per value. Quotients divide to
-38 fractional digits before the single rounding to binary64. Timestamps are
+ratios and float windows. Exact coefficient state is `BIGNUMERIC`, whose
+accumulation limit remains that of declared decimals; an exact accumulation
+beyond it refuses with `terrine.temporal.exact_overflow`. Floats quantize at
+scale 9 under the shared contract, and quotients divide converted float64
+operands once. Timestamps are
 microsecond-exact from year 1 to 9999; `DATETIME` columns denote UTC. Ibis reads
 every `NUMERIC` column as `decimal(38, 9)`, so decimal outputs carry scale 9 even
 when the column declares `NUMERIC(12, 2)`; values are exact. `BIGNUMERIC` source
@@ -430,33 +441,11 @@ Supported, matching the DuckDB reference ([parity probes][snowflake]): everythin
 listed for PostgreSQL above, with the same tolerance contract for averages,
 ratios and float windows. Exact state is `NUMBER(38, 0)`; counts and decimal
 sums are exact, and a sum or difference beyond 38 digits refuses with
-`terrine.temporal.exact_overflow`. A float fact follows the DuckDB design with
-one measured difference: Snowflake's row-wise `VARCHAR`, `VARIANT` and JSON
-renderings of a double keep at most 15 or 16 significant digits (lossy), so
-each float enters exact state as its `DECFLOAT` value, the binary value
-correctly rounded to 18 significant digits (always round-tripping, within
-`0.5 · 10⁻¹⁷` relative), rather than its shortest round-trip text. That text's
-digits become an integer coefficient at a per-unit scale, so history outside
-the window cancels exactly, and the window sum rounds once through
-`TRY_TO_DOUBLE`, measured correctly rounded on 143 halfway, subnormal and
-near-halfway cases. Each value's shortest text and its 18-digit rounding both
-lie within half an ulp of it (a normal value's within `2⁻⁵³ · |x|`, a
-subnormal's within `2⁻¹⁰⁷⁵`), so with `n` subnormal inputs the exact window
-sums on the two backends differ by at most `1.05 · 2⁻⁵³ · Σ|x| + n · 2⁻¹⁰⁷⁴`
-and, after each side's rounding, the float windows by at most
-`2⁻⁵¹ · Σ|x| + (n + 1) · 2⁻¹⁰⁷⁴`: equal or adjacent doubles for a window of
-normal values that does not cancel, several subnormal ulps apart otherwise
-(200 values of `5e-324` sum to `1e-321` from the shortest texts and to
-`9.88e-322` from the 18-digit ones), not always bit for bit. Quotients divide
-19-digit normalized significands in
-`NUMBER(38, 0)` within the same `|r − p/q| ≤ 6·2⁻⁵³·|p/q| + 2⁻¹⁰⁷⁵` bound. A
-coefficient needing more than 38 digits (a value's 18 digits padded to its
-unit's scale, the most fractional digits any finite value's text in that unit
-needs: `0.1` needs 18, `1e-20` needs 38) refuses with
-`terrine.temporal.float64_precision` (`bound_overflow`), as does a sum or
-quotient beyond binary64's range, for which `TRY_TO_DOUBLE` returns NULL; a
-non-finite value at or before the end of a non-empty window refuses with
-`nonfinite_input`.
+`terrine.temporal.exact_overflow`, including float coefficients.
+Float inputs quantize at scale 9 and share this exact coefficient state.
+Unsafe bounded accumulations are withheld and refuse rather than publishing
+partial sums. Means and ratios convert each operand once with its scale and
+divide once in float64 under the shared error bounds.
 
 Timestamps are exact at their declared scale, nanoseconds by default, from year
 1 to 9999 (`TIMESTAMP_TZ`, `TIMESTAMP_LTZ` and `TIMESTAMP_NTZ`; naive values
@@ -606,6 +595,8 @@ Python 3.14 distribution/tutorial checks above do not replace these operation te
 | --- | --- | --- | --- | --- | --- |
 | Read-only dialect admission, relation identity | [Verified][provider] | [Verified][postgres] | [Verified][snowflake-admission]; Snowflake identifier rules, identity re-verified after each read | [Verified][bigquery] | Use native local DuckDB, PostgreSQL, Snowflake or BigQuery; an Ibis dialect/name is not execution evidence |
 | Accepted UTC timestamps, exact decimals, strict t0 and SCD2 boundaries | [Verified][acceptance] | [Verified][postgres]; microsecond timestamps, declared `numeric(p, s)` | [Verified][snowflake]; nanosecond timestamps (Arrow outputs within 1677-2262), `NUMBER(p, s)` | [Verified][bigquery]; microsecond timestamps, `NUMERIC` read as `decimal(38, 9)` | Existing timestamp precision/domain and decimal overflow refusals remain active |
+| Scale-9 float quantization: signed sub-nanounit values, exact ties, magnitude bounds and admitted boundary | [Local probe](../../tests/backends/test_numeric.py) | [Live probe][float-quantization] on every push and weekly; unconstrained `NUMERIC` rounding | [Weekly live probe][float-quantization]; native `NUMBER` casts under the portable split-and-cap policy | [Weekly live probe][float-quantization]; native `NUMERIC` casts | Conversion error near halfway points is allowed only within the shared window-sum bound; the next binary64 above `1e29` refuses |
+| Bounded float coefficient accumulation (`9e28 + 9e28`) | [Forced portable-policy probe][conformance] on every push; native `BIGNUM` is unbounded | [Forced portable-policy live probe][conformance] on every push and weekly; native `NUMERIC` admits this sum | [Weekly live probe][conformance]; `NUMBER(38, 0)` refuses before returning output | Native `BIGNUMERIC` admits this sum | Bounded policies refuse with `terrine.temporal.exact_overflow`; no materialized result is returned |
 | Private transaction view and owned-session cleanup | [Verified][provider] | [Verified][postgres]; consistent `REPEATABLE READ` snapshot | [Verified][snowflake-admission]; Time Travel instant on the caller's connection, reads only | [Verified][bigquery]; session transaction snapshot | Does not promise a durable source snapshot or native query cancellation |
 | Retained immutable inputs and pinned generation reads | [Verified][acceptance] | Unverified | Unverified | Unverified | Use the owner-retained snapshot receipt; native source revisions remain unknown |
 | Table publication and atomic fenced manifest switch | [Verified][publication] | Unverified | Unverified | Unverified | Materialize a bounded Frame if publication is unavailable |
@@ -622,6 +613,10 @@ PostgreSQL evidence was measured on PostgreSQL 16, BigQuery evidence on the US
 multi-region with google-cloud-bigquery 3.46, and Snowflake evidence on an
 X-Small warehouse with snowflake-connector-python 5.1 through the
 `warehouse-backends` workflow (key-pair service user; no local credentials).
+The float-quantization and bounded-overflow rows identify scheduled live coverage,
+not a claim that the cloud probes ran locally. BigQuery and Snowflake probes run
+in the weekly `warehouse-backends` workflow; a manual dispatch incurs warehouse
+cost and requires the owner's approval.
 Unregistered backends refuse with an actionable local route before schema or
 source access unless a Model explicitly opts in; opted-in backends are not in
 this table, since their operations are admitted per statement, not verified.
@@ -660,3 +655,4 @@ without increment; unsupported semantic mappings are listed separately in the
 [conformance]: ../../integration/conformance/test_engines.py
 [generic-oracles]: ../../integration/backends/test_generic.py
 [generic-reads]: ../../integration/execution/test_generic_provider.py
+[float-quantization]: ../../integration/backends/test_numeric.py

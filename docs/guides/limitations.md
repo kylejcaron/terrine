@@ -50,14 +50,24 @@ Terrine's descriptive reports make no p-value, interval or causal pass/fail clai
 
 Finite timestamp and numeric representations cannot encode every requested
 endpoint or exact result. A coded refusal is preferable to silently narrowing a
-timestamp or overflowing an amount. On DuckDB and PostgreSQL, float event values
-enter exact state as their shortest decimal text, so a window sum is that exact sum
-rounded once to binary64; BigQuery first rounds each value to 38 fractional
-digits and Snowflake refuses a coefficient or sum beyond 38 digits
-([backend compatibility](backend-compatibility.md#bigquery)). Averages
-and ratios carry a stated relative bound ([temporal engine](temporal-engine.md)).
-Eligibility predicates and state bins compare the rounded value. Approximate
-sketches have only their documented error properties.
+timestamp or overflowing an amount. Floats quantize once to
+`DECIMAL(38, 9)`-scale values by the engine's float-to-decimal conversion
+(nearest, ties away from zero, with about $10^{-16}$ relative binary64
+conversion error), so a value within that error of a halfway point may
+round either way; only the stated window-sum bound is promised.
+Quantized values share the declared-decimal exact coefficient path.
+A window sum's error against the original floats is bounded
+by $10^{-9}n_W + 10^{-12}\sum_{i\in W}|x_i|$; a mean divides that by its actual
+denominator. Nonzero float values below $5\cdot10^{-10}$ vanish from sums.
+Declare decimals or rescale small measures (for example into micro-units)
+when those contributions matter. Ratios with a nonzero denominator within
+its error bound of zero have no stated accuracy; exactly zero quantized
+denominators return NULL with `zero_denominator`.
+See the [shared numerical contract](backend-compatibility.md#shared-numerical-contract)
+for input and accumulation limits and [temporal engine](temporal-engine.md)
+for error propagation. Row filters compare original values; eligibility
+thresholds and state bins compare published results. Approximate sketches
+have only their documented error properties.
 
 Output cardinality and bytes cannot certify the work needed to produce them.
 A tiny result can require a large scan, join or sort. Bounded client batches do

@@ -2,9 +2,9 @@
 
 The base ``Dialect`` is the portable policy for explicitly admitted,
 unverified Ibis backends: every operation is an ordinary Ibis expression.
-Float facts enter as fixed-scale ``DECIMAL(38, 9)`` state, quantized once by
-text truncation; counts and source-decimal coefficients stay in a separate
-``DECIMAL(38, 0)`` domain. Registered engines subclass it with native types.
+Float facts quantize once to ``DECIMAL(38, 9)`` and join the declared-decimal
+coefficient domain ``DECIMAL(38, 0)``. Registered engines subclass it with
+native exact types.
 """
 
 from __future__ import annotations
@@ -49,7 +49,6 @@ def _non_null(values: tuple[Any, ...]) -> tuple[Any, ...]:
 
 _WIDE = dt.Decimal(38, 0)
 _FIXED = dt.Decimal(38, 9)
-_FIXED_SCALE = 9
 _INT64_BOUNDS = (-(2**63), 2**63 - 1)
 # A literal divisor of this size keeps an int64 quotient below 2**51, where one
 # rounded binary64 division of the exact multiple is already the exact quotient.
@@ -120,10 +119,7 @@ class Dialect:
     operations: ClassVar[frozenset[str]] = frozenset(
         {
             "exact_state",
-            "exact_float",
-            "exact_ratio",
-            "exact_is_nonfinite",
-            "normalized",
+            "quantize_float",
             "integer_quotient",
             "timestamp_is_finite",
             "utc_wall_clock",
@@ -135,23 +131,17 @@ class Dialect:
             "integer_sequence",
         }
     )
-    has_scaled_float_state: ClassVar[bool] = False
     has_native_asof: ClassVar[bool] = False
     # Fixed-precision state carries an accumulated binary64 magnitude bound so
     # that an accumulation leaving the domain refuses; native exact types do not.
     bounds_accumulations: ClassVar[bool] = True
 
     def exact_type(self) -> dt.DataType:
-        """Float state: fixed scale 9, so ``|value| <= (10**38 - 1) / 10**9``."""
-        return _FIXED
+        """The exact coefficient domain shared by decimals and quantized floats."""
+        return _WIDE
 
     def coefficient_type(self) -> dt.DataType:
-        """The exact type of counts and source-decimal coefficients.
-
-        The portable policy keeps them in the scale-0 coefficient domain,
-        separate from fixed-scale float state; registered engines hold both in
-        their native exact state.
-        """
+        """The exact type of counts and fixed-scale coefficients."""
         return _WIDE
 
     def count_type(self) -> dt.DataType:
@@ -180,94 +170,51 @@ class Dialect:
         maximum = 10**dtype.precision - 1
         return -maximum, maximum
 
-    def finite_text(self, value: ir.Value) -> tuple[ir.FloatingValue, ir.StringValue]:
-        widened = cast(ir.FloatingValue, value.cast(dt.float64))
-        finite = self.float_is_finite(widened).ifelse(widened, ibis.null(dt.float64))
-        return widened, finite.cast("string")
-
     def binary64(self, text: ir.StringValue) -> ir.FloatingValue:
         return cast(ir.FloatingValue, text.cast(dt.float64))
 
-    def exact_float(
-        self, value: ir.Value, scale: int | ir.IntegerValue | None = None
-    ) -> tuple[ir.Value, ir.BooleanValue, ir.BooleanValue]:
-        """Quantize a finite float's decimal text toward zero at scale 9.
+    def quantize_float(self, value: ir.FloatingValue) -> ir.DecimalValue:
+        """Round once at scale 9 without overflowing a float-scaled cast.
 
-        The text ``[-]D[.F][e±E]`` has value ``sign · digits · 10**(E - |F|)``,
-        so its decimal point sits ``p = len(digits) + E - |F|`` digits into
-        ``digits``. Padding the digits with zeros on both sides lets the integer
-        part and the first nine fractional digits be cut out directly, which
-        truncates toward zero. The integer part has more than 29 digits exactly
-        when ``p > 29`` (``D`` carries no leading zeros beyond a lone ``0``), so
-        ``|value| >= 10**29`` is unrepresentable; non-finite input is flagged
-        separately. Nothing is multiplied in binary64.
+        Cast the integral part separately so a binary64 multiplication by
+        10**9 cannot push an admitted boundary value out of the decimal type.
+        A scale-0 cast may round up; correct that toward zero before taking
+        the floating remainder. Short float conversions can round admitted
+        inputs to 10**29, so cap the integral part inside the scale-9 domain.
         """
-        from terrine.backends.numeric import _decimal_parts
-
-        widened, text = self.finite_text(value)
-        finite = self.float_is_finite(widened)
-        sign, digits, fraction_digits, exponent = _decimal_parts(text)
-        lead, trail = 40, 48
-        padded = cast(ir.StringValue, ibis.literal("0" * lead)) + digits + "0" * trail
-        point = cast(ir.IntegerValue, lead + digits.length() + exponent - fraction_digits)
-        # Points left of the padding belong to magnitudes below 10**-40: zero at scale 9.
-        position = cast(ir.IntegerValue, ibis.greatest(point, 1).cast(dt.int32))
-        fits = point <= ibis.literal(lead + 38 - _FIXED_SCALE)
-        scaled = sign + padded.substr(0, position) + "." + padded.substr(position, _FIXED_SCALE)
-        exact = fits.ifelse(scaled, ibis.null(dt.string)).cast(_FIXED)
-        false = ibis.literal(False)
-        nonfinite = (~finite).fill_null(false)
-        unrepresentable = (finite & ~fits).fill_null(false)
-        return exact, nonfinite, unrepresentable
-
-    def exact_ratio(self, numerator: ir.Value, denominator: ir.Value) -> ir.Value:
-        """Divide once in binary64 from correctly rounded operands; NULL for zero.
-
-        Exact operands convert through their decimal text, so the quotient is
-        within ``(1 + u)**3 - 1 < 3.1u`` of the true ratio before any later
-        rounding; a binary64 operand (a nested quotient) is taken as it is.
-        """
-        zero = denominator == ibis.literal(0)
-        divisor = zero.ifelse(_typed_null(denominator.type()), denominator)
-        return self._binary64_operand(numerator) / self._binary64_operand(divisor)
-
-    def _binary64_operand(self, value: ir.Value) -> ir.FloatingValue:
-        if value.type().is_floating():
-            return cast(ir.FloatingValue, value)
-        return self.binary64(value.cast("string"))
-
-    def exact_is_nonfinite(self, value: ir.Value) -> ir.BooleanValue:
-        """Decimal state never holds a non-finite value; a binary64 quotient might."""
-        if value.type().is_floating():
-            nonfinite = ~self.float_is_finite(value)
-        else:
-            nonfinite = cast(ir.BooleanValue, ibis.literal(False))
-        return cast(ir.BooleanValue, value.isnull().ifelse(ibis.null(dt.boolean), nonfinite))
+        integral = cast(ir.DecimalValue, value.cast(_WIDE))
+        rounded = self.binary64(integral.cast("string"))
+        correction = cast(
+            ir.DecimalValue,
+            (value < ibis.literal(0.0)).ifelse(ibis.literal(-1), ibis.literal(1)).cast(_WIDE),
+        )
+        whole = cast(
+            ir.DecimalValue,
+            (rounded.abs() > value.abs()).ifelse(integral - correction, integral),
+        )
+        upper = cast(ir.DecimalValue, ibis.literal(str(10**29 - 1)).cast(_WIDE))
+        lower = cast(ir.DecimalValue, ibis.literal(str(-(10**29 - 1))).cast(_WIDE))
+        whole = cast(
+            ir.DecimalValue,
+            ibis.cases((whole > upper, upper), (whole < lower, lower), else_=whole),
+        )
+        remainder = value - self.binary64(whole.cast("string"))
+        return cast(ir.DecimalValue, whole.cast(_FIXED) + remainder.cast(_FIXED))
 
     def exact_to_float(
         self, value: ir.Value, scale: int | ir.IntegerValue = 0
     ) -> tuple[ir.FloatingValue, ir.BooleanValue, ir.BooleanValue]:
-        """Round decimal state once to binary64 through its text.
+        from terrine.backends.numeric import _scaled_exact_to_float
 
-        A fixed-precision decimal lies far inside binary64's range, so it never
-        overflows; a binary64 quotient is already rounded and is flagged only
-        when it is not finite.
-        """
-        if not isinstance(scale, int) or scale:
-            raise ValueError(f"{self.name} exact state is unscaled; scale must be 0")
-        false = cast(ir.BooleanValue, ibis.literal(False))
         if value.type().is_floating():
             floating = cast(ir.FloatingValue, value)
             nonfinite = (~self.float_is_finite(floating)).fill_null(ibis.literal(False))
             rounded = cast(ir.FloatingValue, nonfinite.ifelse(ibis.null(dt.float64), floating))
-            return rounded, nonfinite, false
-        return self.binary64(value.cast("string")), false, false
+            return rounded, nonfinite, cast(ir.BooleanValue, ibis.literal(False))
+        return _scaled_exact_to_float(value, scale, self)
 
     def wide_type(self) -> dt.DataType:
         return _WIDE
-
-    def wide_abs(self, value: ir.Value) -> ir.Value:
-        return cast(ir.NumericValue, value).abs()
 
     def wide_quotient(self, value: ir.Value, divisor: ir.Value) -> ir.Value:
         wide = cast(ir.DecimalValue, value.cast(_WIDE))
@@ -275,9 +222,6 @@ class Dialect:
         empty = size == ibis.literal(0)
         size = cast(ir.DecimalValue, empty.ifelse(_typed_null(_WIDE), size))
         return _wide_quotient(wide, size)
-
-    def trim_leading_zeros(self, digits: ir.StringValue) -> ir.StringValue:
-        return digits.re_replace("^0+", "")
 
     def exact_sum(self, value: ir.Value, *, admitted: bool = False) -> ir.Value:
         """Sum in the backend, keeping the operand's fixed type; NULL when it cannot fit.

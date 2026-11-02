@@ -67,66 +67,21 @@ def test_unavailable_route_names_only_verified_operation_providers(monkeypatch):
         }
 
     assert destinations("exact_state") == set(ENGINES)
-    assert destinations("exact_ratio") == {"postgres", "bigquery"}
+    assert destinations("quantize_float") == set(ENGINES)
     entries = dict(ENGINES)
     entries["postgres"] = replace(entries["postgres"], status="unverified")
     monkeypatch.setattr(registry, "ENGINES", MappingProxyType(entries))
-    assert destinations("exact_ratio") == {"bigquery"}
-    monkeypatch.setattr(
-        ENGINES["bigquery"].dialect,
-        "operations",
-        ENGINES["bigquery"].dialect.operations - {"exact_ratio"},
-    )
-    assert destinations("exact_ratio") == set()
-
-
-@pytest.mark.parametrize(
-    ("engine", "method", "operands", "operation"),
-    [
-        ("duckdb", "exact_ratio", (ibis.literal(1), ibis.literal(2)), "exact_ratio"),
-        ("duckdb", "exact_is_nonfinite", (ibis.literal(1),), "exact_is_nonfinite"),
-        ("snowflake", "exact_ratio", (ibis.literal(1), ibis.literal(2)), "exact_ratio"),
-        ("snowflake", "exact_is_nonfinite", (ibis.literal(1),), "exact_is_nonfinite"),
-        ("postgres", "wide_type", (), "normalized"),
-        ("postgres", "wide_quotient", (ibis.literal(6), ibis.literal(3)), "normalized"),
-        ("postgres", "trim_leading_zeros", (ibis.literal("007"),), "normalized"),
-        ("bigquery", "wide_type", (), "normalized"),
-        ("bigquery", "wide_quotient", (ibis.literal(6), ibis.literal(3)), "normalized"),
-        ("bigquery", "trim_leading_zeros", (ibis.literal("007"),), "normalized"),
-    ],
-)
-def test_registered_engines_keep_native_operation_refusals(engine, method, operands, operation):
-    """A portable base default never makes a registered engine advertise more."""
-    dialect = dialect_for_name(engine)
-    assert operation not in dialect.operations
-    with pytest.raises(TerrineError) as caught:
-        getattr(dialect, method)(*operands)
-    error = caught.value
-    assert error.code == "terrine.backend.capability_unavailable"
-    assert {key: value for key, value in error.context.items() if key != "route"} == {
-        "backend": engine,
-        "operation": operation,
-        "status": "unsupported",
-    }
-    with pytest.raises(TypeError):
-        error.context["status"] = "verified"  # ty: ignore[invalid-assignment]
-    for restored in (copy.deepcopy(error), pickle.loads(pickle.dumps(error))):
-        assert restored.code == error.code
-        assert restored.context == error.context
+    assert destinations("quantize_float") == set(ENGINES) - {"postgres"}
 
 
 def test_registered_operation_declarations_cover_every_portable_default():
     """Each registered engine either declares an operation or refuses it explicitly."""
-    refused = {
-        "duckdb": {"exact_ratio", "exact_is_nonfinite"},
-        "postgres": {"normalized"},
-        "bigquery": {"normalized"},
-        "snowflake": {"exact_ratio", "exact_is_nonfinite"},
-    }
-    for name, engine in ENGINES.items():
-        declared = engine.dialect.operations
-        assert declared | refused[name] == Dialect.operations
-        assert not declared & refused[name]
+    for engine in ENGINES.values():
+        assert engine.dialect.operations == Dialect.operations
+        value = ibis.table({"value": "float64"}).value
+        policy = dialect_for_name(engine.name)
+        quantized = policy.quantize_float(value)
+        assert policy.decimal_coefficient(quantized, 9).type() == policy.coefficient_type()
 
 
 def test_static_inspection_and_admission_preserve_native_handle_boundary():

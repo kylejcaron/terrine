@@ -39,6 +39,13 @@ def _decimal_witnesses() -> tuple[Any, dict[str, Decimal | int]]:
     three = cast(ir.DecimalScalar, ibis.literal(Decimal(3), type=wide))
     maximum = ibis.literal(9223372036854775807, type=wide)
     minimum = ibis.literal(-9223372036854775808, type=wide)
+    policy = Dialect("generic")
+    quantization = {
+        "positive_nano": ("0.0000000006", Decimal("0.000000001")),
+        "negative_nano": ("-0.0000000006", Decimal("-0.000000001")),
+        "positive_tie": ("0.0009765625", Decimal("0.000976563")),
+        "negative_tie": ("-0.0009765625", Decimal("-0.000976563")),
+    }
     expressions = {
         "low_digits": low,
         "cancellation": low - whole,
@@ -65,6 +72,10 @@ def _decimal_witnesses() -> tuple[Any, dict[str, Decimal | int]]:
         "int64_min": -9223372036854775808,
         "wide_edge": Decimal("9" * 38),
     }
+    for name, (text, answer) in quantization.items():
+        floating = cast(ir.FloatingValue, ibis.literal(text).cast(dt.float64))
+        expressions[name] = policy.quantize_float(floating)
+        answers[name] = answer
     return ibis.literal(0).as_table().select(**expressions), answers
 
 

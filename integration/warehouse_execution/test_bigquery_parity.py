@@ -243,13 +243,11 @@ def test_float_windows_match_duckdb_within_tolerance(bigquery_scratch, tmp_path)
             "weight",
             "nonfinite_input",
         ),
-        # Beyond BIGNUMERIC's exact range.
-        ((("2025-01-01 12:00:00", "1e39"),), "weight", "bound_overflow"),
+        # Beyond the quantized float input domain.
+        ((("2025-01-01 12:00:00", "1e39"),), "weight", "out_of_range"),
         # A dropped denominator must not read as a zero denominator.
-        ((("2025-01-01 12:00:00", "1e39"),), "spend_per_weight", "bound_overflow"),
-        # SAFE_DIVIDE returns NULL when the quotient leaves BIGNUMERIC's range.
-        ((("2025-01-01 12:00:00", "1e-38"),), "spend_per_weight", "bound_overflow"),
-        # Every prefix fits, but SAFE_SUBTRACT of the window's prefixes overflows.
+        ((("2025-01-01 12:00:00", "1e39"),), "spend_per_weight", "out_of_range"),
+        # Input range checks precede coefficient accumulation.
         (
             (
                 ("2024-12-20 00:00:00", "-4e38"),
@@ -257,7 +255,7 @@ def test_float_windows_match_duckdb_within_tolerance(bigquery_scratch, tmp_path)
                 ("2025-01-01 12:00:00", "4e38"),
             ),
             "weight",
-            "bound_overflow",
+            "out_of_range",
         ),
     ],
 )
@@ -275,4 +273,4 @@ def test_float_window_failures_are_coded_refusals(
     with pytest.raises(TerrineError) as error:
         windows._rows(windows._model(bigquery_scratch.con, tmp_path, "bigquery"), design)
     assert error.value.code == "terrine.temporal.float64_precision"
-    assert error.value.context["failure"] == failure
+    assert error.value.context["reason"] == failure

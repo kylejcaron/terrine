@@ -251,7 +251,7 @@ def test_cumulative_float_overflow_refuses(monkeypatch):
         with pytest.raises(TerrineError) as error:
             frame.validate(execute=con.to_pyarrow)
         assert error.value.code == "terrine.temporal.float64_precision"
-        assert error.value.context["failure"] == "bound_overflow"
+        assert error.value.context["reason"] == "bound_overflow"
         assert error.value.context["output"] == "cumulative_value"
     finally:
         con.disconnect()

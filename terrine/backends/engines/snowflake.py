@@ -6,41 +6,18 @@ from typing import Any, cast
 import ibis
 import ibis.expr.datatypes as dt
 import ibis.expr.types as ir
-import sqlglot.expressions as sge
 
 from terrine.backends.capabilities import _CAPABILITY_UNAVAILABLE
-from terrine.backends.dialect import Dialect, current_dialect, unavailable
-from terrine.backends.numeric import (
-    _checked_narrow_exact,
-    _scaled_exact_to_float,
-    _scaled_float_parts,
-    _scaled_float_result,
-)
+from terrine.backends.dialect import Dialect, current_dialect
+from terrine.backends.numeric import _checked_narrow_exact
 from terrine.backends.registry import ENGINES, supported_engine_route
 from terrine.backends.timestamps import _UNSUPPORTED, _epoch, native_day_start, native_local_day
 
 # Sums and differences beyond 38 digits remain exact-overflow query errors.
 _EXACT = dt.Decimal(38, 0)
-_DECFLOAT = dt.Unknown(raw_type=sge.DataType.build("DECFLOAT", dialect="snowflake"))
 # Explicit formatting retains all digits independently of session output formats.
 _TEXT_FORMAT = "YYYY-MM-DD HH24:MI:SS.FF9"
 _RADIX = 10
-
-
-@ibis.udf.scalar.builtin(name="ltrim", signature=((dt.string, dt.string), dt.string))
-def _ltrim(value, _characters):
-    """Remove the given leading characters."""
-
-
-@ibis.udf.scalar.builtin(name="to_decfloat", signature=((dt.float64,), _DECFLOAT))
-def _decfloat(value):
-    """A binary64 as a Snowflake DECFLOAT: its value correctly rounded to 18
-    significant digits (measured), which always round-trips."""
-
-
-@ibis.udf.scalar.builtin(name="try_to_number", signature=((dt.string, dt.int64, dt.int64), _EXACT))
-def _try_number(text, precision, scale):
-    """Snowflake NUMBER(precision, scale) from decimal text; NULL when it does not fit."""
 
 
 @ibis.udf.scalar.builtin(name="try_to_double", signature=((dt.string,), dt.float64))
@@ -85,14 +62,11 @@ def _sf_aware_text(timestamp, format):
 
 class SnowflakeDialect(Dialect):
     __slots__ = ()
-    bounds_accumulations = False
     has_native_asof = True
-    has_scaled_float_state = True
     operations = frozenset(
         {
             "exact_state",
-            "exact_float",
-            "normalized",
+            "quantize_float",
             "integer_quotient",
             "timestamp_is_finite",
             "utc_wall_clock",
@@ -108,34 +82,8 @@ class SnowflakeDialect(Dialect):
     def exact_type(self) -> dt.DataType:
         return _EXACT
 
-    def finite_text(self, value: ir.Value) -> tuple[ir.FloatingValue, ir.StringValue]:
-        # VARCHAR, VARIANT and JSON keep at most 15 or 16 significant digits;
-        # DECFLOAT keeps 18, correctly rounded within 0.5 · 10**-17 relative.
-        widened = cast(ir.FloatingValue, value.cast(dt.float64))
-        finite = self.float_is_finite(widened).ifelse(widened, ibis.null(dt.float64))
-        return widened, _decfloat(finite).cast("string").lower()
-
     def binary64(self, text: ir.StringValue) -> ir.FloatingValue:
         return cast(ir.FloatingValue, _try_double(text))
-
-    def exact_float(
-        self, value: ir.Value, scale: int | ir.IntegerValue | None = None
-    ) -> tuple[ir.Value, ir.BooleanValue, ir.BooleanValue]:
-        text, finite, held = _scaled_float_parts(value, scale, self)
-        coefficient = _try_number(text, 38, 0)
-        return _scaled_float_result(coefficient, finite, held & coefficient.notnull())
-
-    def exact_to_float(
-        self, value: ir.Value, scale: int | ir.IntegerValue = 0
-    ) -> tuple[ir.FloatingValue, ir.BooleanValue, ir.BooleanValue]:
-        return _scaled_exact_to_float(value, scale, self)
-
-    def exact_ratio(self, numerator: ir.Value, denominator: ir.Value) -> ir.Value:
-        # Quotients divide normalized significands; the portable default is not native.
-        raise unavailable("exact_ratio", self.name)
-
-    def exact_is_nonfinite(self, value: ir.Value) -> ir.BooleanValue:
-        raise unavailable("exact_is_nonfinite", self.name)
 
     def wide_type(self) -> dt.DataType:
         return _EXACT
@@ -147,16 +95,13 @@ class SnowflakeDialect(Dialect):
         exact = magnitude - magnitude % cast(ir.NumericValue, divisor)
         return (exact / cast(ir.NumericValue, divisor)).cast(_EXACT)
 
-    def trim_leading_zeros(self, digits: ir.StringValue) -> ir.StringValue:
-        return cast(ir.StringValue, _ltrim(digits, "0"))
-
     def exact_sum(self, value: ir.Value, *, admitted: bool = False) -> ir.Value:
         # Keep NUMBER(38, 0); Ibis otherwise widens the scale and types later
         # fills and comparisons as NUMBER(38, 2).
-        return cast(ir.NumericColumn, value).sum().cast(_EXACT)
+        return super().exact_sum(value, admitted=admitted)
 
     def exact_subtract(self, left: ir.Value, right: ir.Value) -> ir.Value:
-        return cast(ir.NumericValue, left) - cast(ir.NumericValue, right)
+        return super().exact_subtract(left, right)
 
     def truncating_quotient(
         self, value: ir.IntegerValue, divisor: int | ir.IntegerValue
