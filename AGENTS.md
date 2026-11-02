@@ -73,6 +73,13 @@ Reached schedules and deadlines use notify.* for the current owner, or the autho
   `integration/` default); `make complexity` reports without gating. The
   integration tier runs in CI on every push and before merges; examples are
   executed by `integration/test_examples.py`. The scale tier runs weekly and on demand.
+- CI runs every job once per pushed commit. A branch push defers to the
+  pull-request CI run of the same commit when one exists (its `scope` job
+  waits up to a minute for it): only `scope` and a gate named
+  `ci-ok (checked by the pull request run)` execute, and the required `ci-ok`
+  check comes from the pull-request run. A pull request with merge conflicts
+  gets no pull-request run, so its pushes run in full, as do other pushes, tag
+  pushes and dispatches (`gh workflow run CI --ref <ref>`).
 - CI splits the integration tier into balanced groups from
   `integration/.test_durations`. Tests without a stored time still run (they
   are assigned the average). CI splits the unit tier into four groups balanced

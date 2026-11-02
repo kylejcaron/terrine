@@ -12,7 +12,35 @@ concurrency:
 
 
 jobs:
+  # Each pushed commit runs every job once. A branch push defers to the
+  # pull-request run of the same commit when one exists; GitHub runs none for a
+  # pull request with merge conflicts, so an open pull request alone does not
+  # defer. Other events and tag pushes always run every job.
+  scope:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      defer: ${{ steps.scope.outputs.defer }}
+    steps:
+      - if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/')
+        uses: actions/checkout@v4
+      - id: scope
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LOOKUP: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/heads/') }}
+        run: |
+          set -euo pipefail
+          if [ "$LOOKUP" = true ]; then
+            python3 scripts/ci_scope.py --sha "$GITHUB_SHA" --repo "$GITHUB_REPOSITORY"
+          else
+            echo "defer=false" >> "$GITHUB_OUTPUT"
+          fi
   checks:
+    needs: scope
+    if: needs.scope.outputs.defer != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -27,6 +55,8 @@ jobs:
       - run: make lint
       - run: make typecheck
   unit:
+    needs: scope
+    if: needs.scope.outputs.defer != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -53,6 +83,8 @@ jobs:
           --ignore=tests/compat
           --ignore=tests/parity
   integration:
+    needs: scope
+    if: needs.scope.outputs.defer != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -82,6 +114,8 @@ jobs:
       - if: matrix.group == 1
         run: /usr/bin/time -f "terrine-pytest-cpu %U %S" uv run pytest -q -n auto integration/conformance --generic-dialect
   docs-and-examples:
+    needs: scope
+    if: needs.scope.outputs.defer != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -96,6 +130,8 @@ jobs:
       - run: uv run --group docs python -m tests.documentation --build
       - run: uv build
   distributions:
+    needs: scope
+    if: needs.scope.outputs.defer != 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -117,6 +153,8 @@ jobs:
           --wheel dist/*.whl --sdist dist/*.tar.gz
           --python "${{ matrix.python }}" --resolution "${{ matrix.resolution }}"
   sketches:
+    needs: scope
+    if: needs.scope.outputs.defer != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -130,11 +168,15 @@ jobs:
       - run: /usr/bin/time -f "terrine-pytest-cpu %U %S" uv run pytest -n auto tests/temporal/test_sketches.py tests/spec/test_sketch_refusal.py tests/compile/test_nonadditive.py -q
 
   postgres:
+    needs: scope
+    if: needs.scope.outputs.defer != 'true'
     uses: ./.github/workflows/warehouse-backends.yml
     with:
       backend_mode: postgres
 
   increment-compatibility:
+    needs: scope
+    if: needs.scope.outputs.defer != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -149,6 +191,8 @@ jobs:
       - run: /usr/bin/time -f "terrine-pytest-cpu %U %S" uv run pytest -n auto integration/parity
 
   library-handoffs:
+    needs: scope
+    if: needs.scope.outputs.defer != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -162,6 +206,8 @@ jobs:
       - run: /usr/bin/time -f "terrine-pytest-cpu %U %S" uv run pytest -q -n auto integration/handoffs
 
   conformance-newest-python:
+    needs: scope
+    if: needs.scope.outputs.defer != 'true'
     runs-on: ubuntu-latest
     env:
       UV_PYTHON: "3.14"
@@ -177,6 +223,8 @@ jobs:
   # until the first 1.x release is tagged. The comparison needs every tag and
   # the history they point to.
   api-compat:
+    needs: scope
+    if: needs.scope.outputs.defer != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -195,11 +243,15 @@ jobs:
 
   # Single check to require in branch protection. Matrix jobs report one check
   # per entry, so requiring them individually means editing the ruleset every
-  # time a matrix changes.
+  # time a matrix changes. GitHub reports a job skipped by a condition as
+  # successful, so a deferred run renames this job and never reports a check
+  # named exactly `ci-ok`; the pull-request run reports it instead.
   ci-ok:
+    name: ${{ needs.scope.outputs.defer == 'true' && 'ci-ok (checked by the pull request run)' || 'ci-ok' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     needs:
+      - scope
       - checks
       - unit
       - integration
@@ -216,9 +268,14 @@ jobs:
     steps:
       - name: Require every job to succeed
         env:
+          DEFER: ${{ needs.scope.outputs.defer }}
           NEEDS: ${{ toJSON(needs) }}
         run: |
           set -euo pipefail
+          if [ "$DEFER" = true ]; then
+            echo "The pull-request run of this commit runs and checks every job."
+            exit 0
+          fi
           echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
           failed=$(echo "$NEEDS" | jq -r '[to_entries[] | select(.value.result != "success") | .key] | join(", ")')
           if [ -n "$failed" ]; then

@@ -1,62 +1,57 @@
+import pytest
+
 from scripts.require_green_ci import ci_succeeded
 
-
-def test_ci_succeeded_for_completed_successful_ci_run():
-    assert ci_succeeded(
-        [{"name": "CI", "event": "push", "status": "completed", "conclusion": "success"}]
-    )
+DEFERRED_GATE = "ci-ok (checked by the pull request run)"
 
 
-def test_ci_succeeded_rejects_failure():
-    assert not ci_succeeded(
-        [{"name": "CI", "event": "push", "status": "completed", "conclusion": "failure"}]
-    )
+def _run(
+    *,
+    name="CI",
+    event="push",
+    status="completed",
+    conclusion="success",
+    gate="ci-ok",
+    gate_conclusion="success",
+):
+    return {
+        "name": name,
+        "event": event,
+        "status": status,
+        "conclusion": conclusion,
+        "jobs": [
+            {"name": "scope", "conclusion": "success"},
+            {"name": gate, "conclusion": gate_conclusion},
+        ],
+    }
 
 
-def test_ci_succeeded_rejects_in_progress_run():
-    assert not ci_succeeded(
-        [{"name": "CI", "event": "push", "status": "in_progress", "conclusion": None}]
-    )
+@pytest.mark.parametrize("event", ["push", "workflow_dispatch"])
+def test_ci_succeeded_accepts_full_commit_run_whose_gate_succeeded(event):
+    assert ci_succeeded([_run(event=event)])
 
 
-def test_ci_succeeded_ignores_other_workflows():
-    assert not ci_succeeded([{"name": "Release", "status": "completed", "conclusion": "success"}])
+@pytest.mark.parametrize(
+    "run",
+    [
+        pytest.param(_run(gate=DEFERRED_GATE), id="deferred"),
+        pytest.param(_run(conclusion="failure", gate_conclusion="failure"), id="failed"),
+        pytest.param(
+            _run(status="in_progress", conclusion=None, gate_conclusion=None), id="in-progress"
+        ),
+        pytest.param(_run(event="pull_request"), id="pull-request"),
+        pytest.param(_run(name="Release"), id="other-workflow"),
+    ],
+)
+def test_ci_succeeded_rejects_run_that_did_not_validate_the_commit(run):
+    assert not ci_succeeded([run])
 
 
 def test_ci_succeeded_rejects_no_runs():
     assert not ci_succeeded([])
 
 
-def test_ci_succeeded_accepts_any_successful_ci_run_for_commit():
-    runs = [
-        {"name": "CI", "event": "push", "status": "completed", "conclusion": "failure"},
-        {"name": "CI", "event": "push", "status": "completed", "conclusion": "success"},
-    ]
-
-    assert ci_succeeded(runs)
-
-
-def test_ci_succeeded_rejects_successful_pull_request_run():
-    runs = [
-        {
-            "name": "CI",
-            "event": "pull_request",
-            "status": "completed",
-            "conclusion": "success",
-        }
-    ]
-
-    assert not ci_succeeded(runs)
-
-
-def test_ci_succeeded_accepts_workflow_dispatch_for_commit():
-    runs = [
-        {
-            "name": "CI",
-            "event": "workflow_dispatch",
-            "status": "completed",
-            "conclusion": "success",
-        }
-    ]
+def test_ci_succeeded_accepts_any_qualifying_run_for_commit():
+    runs = [_run(conclusion="failure", gate_conclusion="failure"), _run()]
 
     assert ci_succeeded(runs)
