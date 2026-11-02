@@ -179,7 +179,7 @@ def reference(events: pa.Table, units: int) -> dict[str, dict[str, Any]]:
 
 
 def _design(workload: Workload) -> Design:
-    window = (-_WINDOW_SECONDS, 0)
+    window = (f"-{_WINDOW_SECONDS // 86400}d", "0s")
     return Design(
         "user",
         FixedDate(_T0.date()),

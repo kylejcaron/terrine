@@ -25,7 +25,7 @@ def worker_duckdb_resources(request):
     @wraps(original)
     def connect(*args, **kwargs):
         settings = dict(kwargs.pop("config", None) or {})
-        settings.setdefault("threads", 2)
+        settings.setdefault("threads", 1)
         return original(*args, config=settings, **kwargs)
 
     with pytest.MonkeyPatch.context() as patch:

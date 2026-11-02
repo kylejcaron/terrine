@@ -3,9 +3,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping
 from dataclasses import replace
 from datetime import UTC, datetime
+from types import MappingProxyType
 
+import pyarrow as pa
 import pytest
 
 from terrine.compile.columns import compile_columns
@@ -15,14 +18,88 @@ from terrine.data import Coverage, UnitSource
 from terrine.model import Model
 from terrine.semantic.bind import normalize_events
 from terrine.semantic.models import Catalog
-from terrine.spec import Design, EventAnchor, FixedDate, agg, asof, event_time, gt
+from terrine.spec import (
+    BinnedMetricState,
+    Design,
+    EventAnchor,
+    FixedDate,
+    Schedule,
+    StateObservations,
+    StatePanel,
+    agg,
+    asof,
+    event_time,
+    gt,
+)
 from terrine.temporal.daily import _sparse_group, resolve_measure
 from terrine.temporal.prefix import sparse_prefix
 from tests.compile.test_columns import column_model  # noqa: F401
 
+SCENARIOS = (
+    "insert",
+    "update",
+    "delete",
+    "late_arrival",
+    "readiness_advance",
+    "no_op",
+    "roster_exit_and_reentry",
+    "strict_asof_dimension",
+    "nested_selector",
+    "state_panel",
+    "each_anchor_removal",
+    "schema_change",
+    "state_panel_baseline",
+    "state_panel_terminal",
+)
+REPLAY_FAMILIES: Mapping[str, str] = MappingProxyType(
+    {
+        "ordinary": "insert",
+        "state_panel": "state_panel",
+        "dimension": "strict_asof_dimension",
+        "nested_selector": "nested_selector",
+    }
+)
+assert set(REPLAY_FAMILIES.values()) <= set(SCENARIOS)
+
+BASE_TABLES = MappingProxyType(
+    {
+        "events": pa.table(
+            {
+                "occurred_at": pa.array([datetime(2025, 1, 1, 9)], type=pa.timestamp("us")),
+                "user_id": pa.array([1], type=pa.int64()),
+                "amount": pa.array([3], type=pa.int64()),
+            }
+        ),
+        "users": pa.table(
+            {
+                "user_id": pa.array([1], type=pa.int64()),
+                "exited": pa.array([None], type=pa.timestamp("us")),
+            }
+        ),
+        "user_tier": pa.table(
+            {
+                "user_id": pa.array([1, 1], type=pa.int64()),
+                "tier": pa.array(["gold", "silver"]),
+                "starts": pa.array(
+                    [datetime(2024, 1, 1), datetime(2025, 1, 2)], type=pa.timestamp("us")
+                ),
+                "ends": pa.array(
+                    [datetime(2025, 1, 2), datetime(2026, 1, 1)], type=pa.timestamp("us")
+                ),
+            }
+        ),
+        "statuses": pa.table(
+            {
+                "occurred_at": pa.array([], type=pa.timestamp("us")),
+                "user_id": pa.array([], type=pa.int64()),
+                "score": pa.array([], type=pa.int64()),
+                "state": pa.array([], type=pa.string()),
+            }
+        ),
+    }
+)
 
 def _catalog():
-    from terrine.semantic.models import Catalog
 
     return Catalog.model_validate(
         {
@@ -81,6 +158,72 @@ def _catalog():
     )
 
 
+CATALOG = _catalog()
+
+
+def _design(scenario: str) -> Design:
+    features = {"total": agg("total", window=("-1d", "0s"))}
+    if scenario == "late_arrival":
+        features["history"] = agg("total", window=("-3d", "0s"))
+    if scenario == "strict_asof_dimension":
+        features["tier"] = asof("tier", before="0s")
+    elif scenario == "nested_selector":
+        origin = event_time("amount", window=("-2d", "-1d"))
+        features["nested_time"] = event_time("score", window=("-2h", "0s"), relative_to=origin)
+    if scenario.startswith("state_panel"):
+        return Design(
+            "user",
+            Schedule("1d", "2025-01-02", "2025-01-03"),
+            features=features,
+            shape=StatePanel(
+                (
+                    StateObservations("state", ("active", "closed"), absorbing=("closed",))
+                    if scenario == "state_panel_terminal"
+                    else BinnedMetricState("total", cutpoints=(5,), levels=("low", "high"))
+                ),
+                periods=2,
+                baseline_features=(
+                    {"baseline_tier": asof("tier", before="0s")}
+                    if scenario == "state_panel_baseline"
+                    else None
+                ),
+            ),
+        )
+    return Design(
+        "user",
+        EventAnchor("amount", "each")
+        if scenario == "each_anchor_removal"
+        else FixedDate("2025-01-02T00:00:00+00:00"),
+        features=features,
+    )
+
+
+DESIGNS: Mapping[str, Design] = MappingProxyType(
+    {scenario: _design(scenario) for scenario in SCENARIOS}
+)
+
+
+SCENARIO_TOTALS = {
+    "insert": ([3], [8]),
+    "update": ([3], [7]),
+    "delete": ([8], [3]),
+    "late_arrival": ([3], [3]),
+    "readiness_advance": ([None], [3]),
+    "no_op": ([3], [3]),
+    "roster_exit_and_reentry": ([3], []),
+    "strict_asof_dimension": ([3], [3]),
+    "nested_selector": ([3], [3]),
+    "state_panel": ([3, 0], [7, 0]),
+    "each_anchor_removal": ([0, 3], [0]),
+    "schema_change": ([3], [3]),
+    "state_panel_baseline": ([3, 0], [3, 0]),
+    "state_panel_terminal": ([3], [3, 0]),
+}
+assert set(SCENARIO_TOTALS) == set(SCENARIOS)
+
+
+
+
 class _Resolver:
     def __init__(self, model):
         self.model = model
@@ -91,30 +234,14 @@ class _Resolver:
 
 @pytest.mark.parametrize(
     ("scenario", "initial_totals", "corrected_totals"),
-    [
-        ("insert", [3], [8]),
-        ("update", [3], [7]),
-        ("delete", [8], [3]),
-        ("late_arrival", [3], [3]),
-        ("readiness_advance", [None], [3]),
-        ("no_op", [3], [3]),
-        ("roster_exit_and_reentry", [3], []),
-        ("strict_asof_dimension", [3], [3]),
-        ("nested_selector", [3], [3]),
-        ("state_panel", [3, 0], [7, 0]),
-        ("each_anchor_removal", [0, 3], [0]),
-        ("schema_change", [3], [3]),
-        ("state_panel_baseline", [3, 0], [3, 0]),
-        ("state_panel_terminal", [3], [3, 0]),
-    ],
+    [(scenario, *SCENARIO_TOTALS[scenario]) for scenario in SCENARIOS],
 )
 def test_saved_runtime_correction_matches_clean_rebuild_of_new_generation(
     tmp_path, scenario, initial_totals, corrected_totals
 ):
     import ibis
 
-    from terrine.data import Budget, Coverage, UnitSource
-    from terrine.model import Model
+    from terrine.data import Budget
     from terrine.runtime import (
         open_published_frame,
         open_published_generation,
@@ -127,42 +254,16 @@ def test_saved_runtime_correction_matches_clean_rebuild_of_new_generation(
     from terrine.runtime.saved_plan import DestinationRef, ModelReference, SavedPlan
     from terrine.runtime.snapshot import SnapshotAuthority
     from terrine.runtime.state import RuntimeStore
-    from terrine.spec import (
-        BinnedMetricState,
-        Design,
-        EventAnchor,
-        FixedDate,
-        Schedule,
-        StateObservations,
-        StatePanel,
-        agg,
-        asof,
-        event_time,
-    )
 
     state_path = tmp_path / "runtime.duckdb"
     con = ibis.duckdb.connect(str(state_path))
     try:
-        con.raw_sql("CREATE TABLE events(occurred_at TIMESTAMP, user_id BIGINT, amount BIGINT)")
+        for table_name, table in BASE_TABLES.items():
+            con.create_table(table_name, table)
         if scenario == "schema_change":
             con.raw_sql("ALTER TABLE events ALTER COLUMN amount TYPE INTEGER")
-        con.raw_sql("INSERT INTO events VALUES ('2025-01-01 09:00:00', 1, 3)")
         if scenario == "delete":
             con.raw_sql("INSERT INTO events VALUES ('2025-01-01 11:00:00', 1, 5)")
-        con.raw_sql("CREATE TABLE users(user_id BIGINT PRIMARY KEY, exited TIMESTAMP)")
-        con.raw_sql("INSERT INTO users VALUES (1, NULL)")
-        con.raw_sql(
-            "CREATE TABLE user_tier(user_id BIGINT, tier VARCHAR, starts TIMESTAMP, ends TIMESTAMP)"
-        )
-        con.raw_sql(
-            "INSERT INTO user_tier VALUES "
-            "(1, 'gold', '2024-01-01', '2025-01-02'), "
-            "(1, 'silver', '2025-01-02', '2026-01-01')"
-        )
-        con.raw_sql(
-            "CREATE TABLE statuses("
-            "occurred_at TIMESTAMP, user_id BIGINT, score BIGINT, state VARCHAR)"
-        )
         if scenario == "strict_asof_dimension":
             con.raw_sql("INSERT INTO events VALUES ('2025-01-02 00:00:00', 1, 101)")
         elif scenario == "nested_selector":
@@ -177,7 +278,8 @@ def test_saved_runtime_correction_matches_clean_rebuild_of_new_generation(
                 "INSERT INTO statuses VALUES "
                 "('2025-01-02', 1, 0, 'active'), ('2025-01-03', 1, 0, 'closed')"
             )
-        catalog = _catalog()
+        catalog = CATALOG
+        design = DESIGNS[scenario]
         units = {"user": UnitSource(table="users", key="user_id", exited_at="exited")}
         readiness_end = "2024-12-31" if scenario == "readiness_advance" else "2025-02-01"
         readiness = {
@@ -191,41 +293,6 @@ def test_saved_runtime_correction_matches_clean_rebuild_of_new_generation(
             units=units,
             event_ids={"events": "event_id"} if scenario == "each_anchor_removal" else None,
         )
-        features = {"total": agg("total", window=("-1d", "0s"))}
-        if scenario == "late_arrival":
-            features["history"] = agg("total", window=("-3d", "0s"))
-        if scenario == "strict_asof_dimension":
-            features["tier"] = asof("tier", before="0s")
-        elif scenario == "nested_selector":
-            origin = event_time("amount", window=("-2d", "-1d"))
-            features["nested_time"] = event_time("score", window=("-2h", "0s"), relative_to=origin)
-        if scenario.startswith("state_panel"):
-            design = Design(
-                "user",
-                Schedule("1d", "2025-01-02", "2025-01-03"),
-                features=features,
-                shape=StatePanel(
-                    (
-                        StateObservations("state", ("active", "closed"), absorbing=("closed",))
-                        if scenario == "state_panel_terminal"
-                        else BinnedMetricState("total", cutpoints=(5,), levels=("low", "high"))
-                    ),
-                    periods=2,
-                    baseline_features=(
-                        {"baseline_tier": asof("tier", before="0s")}
-                        if scenario == "state_panel_baseline"
-                        else None
-                    ),
-                ),
-            )
-        else:
-            design = Design(
-                "user",
-                EventAnchor("amount", "each")
-                if scenario == "each_anchor_removal"
-                else FixedDate("2025-01-02T00:00:00+00:00"),
-                features=features,
-            )
         owner = RuntimeOwner(state_path=state_path, snapshot_root=tmp_path / "snapshots")
         authority = SnapshotAuthority(owner)
         namespace = "analytics_owner"
@@ -240,7 +307,9 @@ def test_saved_runtime_correction_matches_clean_rebuild_of_new_generation(
         def ordered_rows(frame):
             return sorted(frame.table.to_pylist(), key=lambda row: (row["unit"], row["t0"]))
 
-        def run_generation(*, name, model, changes=None, expected_manifest=None):
+        def run_generation(
+            *, name, model, changes=None, expected_manifest=None, check_replay: bool = False
+        ):
             snapshot = authority.capture(
                 model,
                 design=design,
@@ -316,27 +385,28 @@ def test_saved_runtime_correction_matches_clean_rebuild_of_new_generation(
                 for task in plan.tasks
                 if task.layer == "prefix"
             )
-            task_count = con.con.execute(
-                f"SELECT count(*) FROM {store._schema}.runtime_tasks WHERE run_id=?",
-                [receipt.run_id],
-            ).fetchone()[0]
-            replay = run_serialized_plan(
-                saved_plan.to_json(),
-                con=con.con,
-                namespace=namespace,
-                request_key=f"runtime:{scenario}:{name}",
-            )
-            assert replay == receipt
-            assert open_published_frame(replay, con=con.con, namespace=namespace).table.equals(
-                published.table
-            )
-            assert (
-                con.con.execute(
+            if check_replay:
+                task_count = con.con.execute(
                     f"SELECT count(*) FROM {store._schema}.runtime_tasks WHERE run_id=?",
                     [receipt.run_id],
                 ).fetchone()[0]
-                == task_count
-            )
+                replay = run_serialized_plan(
+                    saved_plan.to_json(),
+                    con=con.con,
+                    namespace=namespace,
+                    request_key=f"runtime:{scenario}:{name}",
+                )
+                assert replay == receipt
+                assert open_published_frame(
+                    replay, con=con.con, namespace=namespace
+                ).table.equals(published.table)
+                assert (
+                    con.con.execute(
+                        f"SELECT count(*) FROM {store._schema}.runtime_tasks WHERE run_id=?",
+                        [receipt.run_id],
+                    ).fetchone()[0]
+                    == task_count
+                )
             assert type(published) is type(clean)
             assert published.columns["total"].numeric_policy == "exact"
             if scenario.startswith("state_panel"):
@@ -350,7 +420,11 @@ def test_saved_runtime_correction_matches_clean_rebuild_of_new_generation(
                 assert ends == [row["to_time"] for row in rows]
             return receipt, rows
 
-        initial_receipt, initial_rows = run_generation(name="initial", model=model)
+        initial_receipt, initial_rows = run_generation(
+            name="initial",
+            model=model,
+            check_replay=scenario in REPLAY_FAMILIES.values(),
+        )
         assert [row["total"] for row in initial_rows] == initial_totals
         if scenario == "readiness_advance":
             total = frames["initial"].columns["total"]

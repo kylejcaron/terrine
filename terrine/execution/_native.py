@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import threading
 import weakref
+from collections import OrderedDict
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -28,6 +30,12 @@ from terrine.semantic.sql import (
     _render,
     _scopes,
     admit_read_query,
+)
+
+_NATIVE_FUNCTION_NAMES_CACHE: OrderedDict[tuple[str, str], frozenset[str]] = OrderedDict()
+_NATIVE_FUNCTION_NAMES_LOCK = threading.Lock()
+_FUNCTION_NAME = re.compile(
+    r'"(?i:function_name|function|operator_name)"\s*:\s*("(?:[^"\\]|\\.)*")'
 )
 
 _CONNECTION_LOCKS: weakref.WeakKeyDictionary[Any, threading.RLock] = weakref.WeakKeyDictionary()
@@ -518,40 +526,47 @@ def _function_catalog(raw: Any) -> Mapping[str, tuple[tuple[bool, str, str | Non
     return MappingProxyType({name: tuple(entries) for name, entries in metadata.items()})
 
 
+def _function_names(raw: Any, statement: str) -> frozenset[str]:
+    """Extract case-folded function/operator names from serialized SQL once."""
+    import duckdb
+    cache_key = (duckdb.__version__, statement)
+
+    with _NATIVE_FUNCTION_NAMES_LOCK:
+        cached = _NATIVE_FUNCTION_NAMES_CACHE.get(cache_key)
+        if cached is not None:
+            _NATIVE_FUNCTION_NAMES_CACHE.move_to_end(cache_key)
+            return cached
+    try:
+        payload = _rows(
+            raw,
+            "SELECT system.main.json_serialize_sql(" + _quote_literal(statement) + ")",
+        )[0][0]
+        serialized = payload if isinstance(payload, str) else json.dumps(payload)
+        # Quotes inside JSON strings are escaped, so matching needs the
+        # unescaped quote after the key. A match can start within a string only
+        # at an object-key suffix ending in an escaped quote plus this key name;
+        # that only adds a conservative name, and the match ends at its value,
+        # so it cannot swallow a real structural pair or miss one.
+        result = frozenset(
+            json.loads(match.group(1)).casefold()
+            for match in _FUNCTION_NAME.finditer(serialized)
+        )
+    except Exception as exc:
+        raise _binding_error("native parser could not certify function ownership") from exc
+    with _NATIVE_FUNCTION_NAMES_LOCK:
+        _NATIVE_FUNCTION_NAMES_CACHE[cache_key] = result
+        _NATIVE_FUNCTION_NAMES_CACHE.move_to_end(cache_key)
+        if len(_NATIVE_FUNCTION_NAMES_CACHE) > 256:
+            _NATIVE_FUNCTION_NAMES_CACHE.popitem(last=False)
+    return result
+
+
 @metadata_fact
 def check_native_functions(raw: Any, sql: str, dialect: str | None) -> None:
     """Validate native function ownership, recursively including trusted macros."""
     if dialect is not None:
         _admit_read_query_ast(sql, dialect, "duckdb")
     metadata = _function_catalog(raw)
-
-    def names_in(statement: str) -> set[str]:
-        try:
-            payload = _rows(
-                raw,
-                "SELECT system.main.json_serialize_sql(" + _quote_literal(statement) + ")",
-            )[0][0]
-            parsed = json.loads(payload) if isinstance(payload, str) else payload
-        except Exception as exc:
-            raise _binding_error("native parser could not certify function ownership") from exc
-        names: set[str] = set()
-
-        def collect(value: Any) -> None:
-            if isinstance(value, dict):
-                for key, child in value.items():
-                    if key.casefold() in {
-                        "function_name",
-                        "function",
-                        "operator_name",
-                    } and isinstance(child, str):
-                        names.add(child.casefold())
-                    collect(child)
-            elif isinstance(value, list):
-                for child in value:
-                    collect(child)
-
-        collect(parsed)
-        return names
 
     def inspect(name: str, active: frozenset[str]) -> None:
         if name in active:
@@ -569,11 +584,12 @@ def check_native_functions(raw: Any, sql: str, dialect: str | None) -> None:
             body = definition.strip()
             if not body.casefold().startswith(("select ", "with ")):
                 body = "SELECT " + body
-            for dependency in names_in(body):
+            for dependency in _function_names(raw, body):
                 inspect(dependency, active | {name})
 
-    for name in names_in(sql):
+    for name in _function_names(raw, sql):
         inspect(name, frozenset())
+
 
 
 class _DuckDBProvider:
