@@ -539,3 +539,8 @@ def test_legacy_minute_identity_converts_typed_durations_and_preserves_comparand
         }
     }
     assert _legacy_minute_digest(payload) != _legacy_minute_digest(changed_filter)
+
+    semantic = {"semantic": {"source": {"type": "AttributeAsOf", "before": "5min"}}}
+    rebound = {"semantic": {"source": {"type": "AttributeAsOf", "before": "5m"}}}
+    assert _legacy_minutes(semantic) == semantic
+    assert _legacy_minute_digest(semantic) != _legacy_minute_digest(rebound)

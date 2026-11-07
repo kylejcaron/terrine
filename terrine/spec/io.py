@@ -172,20 +172,30 @@ def _legacy_minutes(value: Any) -> Any:
         feature_hash = "unit_binding" in value
         result: dict[Any, Any] = {}
         for key, item in value.items():
-            duration_field = (
-                (key == "gap" and (design or feature_hash or kind == "SessionSpec"))
-                or (key == "every" and kind == "Schedule")
-                or (key == "offset" and kind == "EventAnchor")
-                or (key == "at" and kind == "Treatment")
-                or (key == "before" and kind == "AttributeAsOf")
-                or (key == "horizon" and kind == "RetentionMetric")
-                or (kind == "Window" and key in {"start", "end"})
-            )
-            result[key] = (
-                _legacy_minute_text(item)
-                if duration_field and isinstance(item, str)
-                else _legacy_minutes(item)
-            )
+            if key == "semantic":
+                result[key] = item
+            else:
+                duration_field = (
+                    (key == "gap" and (design or feature_hash or kind == "SessionSpec"))
+                    or (key == "every" and kind == "Schedule")
+                    or (key == "offset" and kind == "EventAnchor")
+                    or (key == "at" and kind == "Treatment")
+                    or (key == "before" and kind == "AttributeAsOf")
+                    or (key == "horizon" and kind == "RetentionMetric")
+                    or (key == "within" and kind == "FunnelSpec")
+                    or (
+                        key in {"anticipation", "reference_period"}
+                        and kind == "SequentialSpec"
+                    )
+                    or (key == "period" and kind in {"EventPanelSpec", "Trajectory"})
+                    or (key == "bin" and kind == "LifeTable")
+                    or (kind == "Window" and key in {"start", "end"})
+                )
+                result[key] = (
+                    _legacy_minute_text(item)
+                    if duration_field and isinstance(item, str)
+                    else _legacy_minutes(item)
+                )
         return result
     if isinstance(value, (list, tuple)):
         return [_legacy_minutes(item) for item in value]
