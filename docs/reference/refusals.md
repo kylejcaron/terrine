@@ -165,6 +165,7 @@ Use pinned manifests, valid definitions and owned destinations.
 | `terrine.dataset.invalid_view` | <code>Dataset view flags {conflicts!r} conflict ({reason}); choose one view.</code> | `conflicts`, `reason` | [terrine/data.py](../../terrine/data.py) |
 | `terrine.dataset.invalid_view` | <code>Invalid dataset view: {reason}.</code> | `reason` | [terrine/errors.py](../../terrine/errors.py) |
 | `terrine.dataset.stale_generation` | <code>Refresh requires the pinned generation to remain the current publication.</code> | None | [terrine/dataset/reference.py](../../terrine/dataset/reference.py) |
+| `terrine.dataset.unsupported_platform` | <code>Parquet export is unavailable on this operating system; export on macOS or Linux.</code> | None | [terrine/dataset/export.py](../../terrine/dataset/export.py) |
 | `terrine.dataset.unsupported_view` | <code>Unsupported dataset view: {reason}.</code> | `reason` | [terrine/spec/dataset.py](../../terrine/spec/dataset.py) |
 
 ## design
@@ -415,6 +416,7 @@ Inspect authoritative run state. Replay unchanged requests; replan changed input
 | `terrine.runtime.schema_unsupported` | <code>Runtime namespace {namespace!r} holds {reason} runtime metadata that this release (schema version {supported_version}) cannot read; stage into a new namespace or owner database, or open it with the release that wrote it.</code> | `namespace`, `reason`, `supported_version` | [terrine/runtime/schema.py](../../terrine/runtime/schema.py) |
 | `terrine.runtime.sketch_sidecar_unavailable` | <code>Approximate quantile sidecars are unavailable in runtime planning and composition; use ordinary Frame materialization.</code> | None | [terrine/runtime/materialize.py](../../terrine/runtime/materialize.py) |
 | `terrine.runtime.snapshot_invalid` | <code>Runtime snapshot receipt is invalid: {reason}.</code> | `reason` | [terrine/runtime/snapshot.py](../../terrine/runtime/snapshot.py) |
+| `terrine.runtime.unsupported_platform` | <code>Owner control uses a local Unix socket; run the owner on macOS or Linux.</code> | None | [terrine/runtime/control.py](../../terrine/runtime/control.py) |
 
 ## semantic
 
@@ -534,7 +536,7 @@ Check exact endpoints, coverage and arithmetic validity.
 | `terrine.temporal.duplicate_event_id` | <code>Event identifiers must be non-null and unique within each unit.</code> | None | [terrine/temporal/first.py](../../terrine/temporal/first.py) |
 | `terrine.temporal.duplicate_history` | <code>History repeats a start time for the same unit. Keep one history value per unit and start time.</code> | None | [terrine/temporal/attributes.py](../../terrine/temporal/attributes.py) |
 | `terrine.temporal.exact_overflow` | <code>The requested exact result cannot be represented by the native output type. Use a supported exact representation or a semantically sufficient window.</code> | None | [terrine/backends/numeric.py](../../terrine/backends/numeric.py) |
-| `terrine.temporal.exact_unsupported` | <code>Backend {backend!r} lacks exact sparse BIGNUM state. Use the supported DuckDB backend.</code> | `backend` | [terrine/temporal/prefix.py](../../terrine/temporal/prefix.py) |
+| `terrine.temporal.exact_unsupported` | <code>Backend {backend!r} lacks exact sparse BIGNUM state (minimum DuckDB {minimum}). Use DuckDB 1.5 or later.</code> | `backend`, `minimum` | [terrine/temporal/prefix.py](../../terrine/temporal/prefix.py) |
 | `terrine.temporal.first_occurrence_invalid_relation` | <code>First-occurrence input relation is invalid ({reason}).</code> | `reason` | [terrine/temporal/first.py](../../terrine/temporal/first.py) |
 | `terrine.temporal.first_occurrence_unsupported_backend` | <code>First-occurrence point lookup requires the DuckDB, PostgreSQL, BigQuery or Snowflake backend; got {backend!r}.</code> | `backend` | [terrine/temporal/first.py](../../terrine/temporal/first.py) |
 | `terrine.temporal.float64_precision` | <code>Float64 result unavailable ({reason}). Use finite inputs with magnitude below 10**29 whose quantized result fits binary64, or declared integer/decimal values.</code> | `reason` | [terrine/temporal/prefix.py](../../terrine/temporal/prefix.py) |
