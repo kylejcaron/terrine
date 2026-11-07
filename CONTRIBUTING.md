@@ -79,14 +79,10 @@ Before tagging a release:
    uv run python scripts/write_artifact_corpus.py --generation <name>
    ```
 
-5. After publishing, add the released version to `tests/artifacts/RELEASES` so
-   later upgrade checks include it.
-6. For the 1.0.0 release candidate, replace the README's pre-alpha warning with:
-
-   > [!NOTE]
-   > Terrine 1.0.0rc1 is a release candidate for the 1.0 series. Stable APIs follow the documented stability policy; provisional and internal APIs may change. This is not the final 1.0.0 release.
-
-7. Tag the release.
+5. Tag the release as `v0.Y.0` for a 0.x release, or with its 1.x version after
+   the 1.0 stability policy takes effect.
+6. After publishing, append the released version to `tests/artifacts/RELEASES`
+   so later upgrade checks include it.
 
 ## License and the CLA
 

@@ -1,7 +1,9 @@
 # API stability
 
-From 1.0, Terrine follows [Semantic Versioning](https://semver.org/) for its
-stable API. Every module and name is stable, provisional or internal; which
+From `0.1.0`, minor releases may break the API with a changelog entry; patch
+releases do not. From `1.0`, the stable API follows
+[Semantic Versioning](https://semver.org/): breaking changes happen only in a
+major release. Every module and name is stable, provisional or internal; which
 backends verify an operation is a separate question, answered by the capability
 matrix.
 
@@ -70,8 +72,8 @@ least one minor release in which using it emits `DeprecationWarning`.
 ## Signature check
 
 `scripts/api_check.py` compares the stable signatures of the working tree with
-the newest `v1.*` release tag, or with the tag given to `--against`:
-
+the newest tag on its release line: `v0.*` before `1.0.0rc1`, and `v1.*` from
+`1.0.0rc1` onward. Pass `--against` to compare with a specific tag instead:
 ```bash
 uv run python scripts/api_check.py
 uv run python scripts/api_check.py --against v1.2.0
@@ -86,7 +88,7 @@ removed, reordered or newly required parameter.
 
 | Exit status | Meaning |
 | --- | --- |
-| 0 | Compatible, or no 1.x release is tagged yet ("no 1.x release tag") |
+| 0 | Compatible, or no release tag exists on the current release line |
 | 1 | A stable name disappeared or its signature broke, or a current stable export does not resolve to a definition the check can read |
 | 2 | Comparison history unavailable: the tag cannot be loaded, or a shallow clone cannot show which tags exist |
 

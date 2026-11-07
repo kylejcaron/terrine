@@ -116,3 +116,39 @@ def test_formerly_shared_exports_are_compared_with_their_own_current_targets():
         breakages = stable_breakages(release, changed)
 
     assert [line.split(":", 1)[0] for line in breakages] == ["terrine.spec.agg"]
+
+def test_release_tag_prefers_current_line(tmp_path):
+    import subprocess
+
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "config", "user.email", "test@example.com"], check=True
+    )
+    subprocess.run(["git", "-C", str(tmp_path), "config", "user.name", "Test"], check=True)
+    (tmp_path / "file").write_text("")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "file"], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "commit", "-qm", "initial"], check=True)
+    for tag in ("v0.1.0", "v1.0.0rc1"):
+        subprocess.run(["git", "-C", str(tmp_path), "tag", tag], check=True)
+
+    from scripts.api_check import release_tag
+
+    assert release_tag(tmp_path, "0.2.0") == "v0.1.0"
+    assert release_tag(tmp_path, "1.0.0rc1") == "v1.0.0rc1"
+
+
+def test_release_tag_none_when_line_untagged(tmp_path):
+    import subprocess
+
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "config", "user.email", "test@example.com"], check=True
+    )
+    subprocess.run(["git", "-C", str(tmp_path), "config", "user.name", "Test"], check=True)
+    (tmp_path / "file").write_text("")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "file"], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "commit", "-qm", "initial"], check=True)
+
+    from scripts.api_check import release_tag
+
+    assert release_tag(tmp_path, "0.2.0") is None

@@ -14,13 +14,21 @@ from __future__ import annotations
 
 import argparse
 import io
+import re
 import subprocess
 import tarfile
+import tomllib
 from collections.abc import Iterator, Sequence
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import griffe
+
+try:
+    from packaging.version import Version
+except ImportError:
+    Version = None
+
 
 STABLE_FACADES: tuple[str, ...] = (
     "terrine",
@@ -42,9 +50,8 @@ PROVISIONAL_NAMES: frozenset[str] = frozenset(
 )
 
 _PACKAGE = "terrine"
-_RELEASE_TAGS = "v1.*"
-# Pre-releases sort before their final release (1.0.0rc1 < 1.0.0).
 _PRERELEASE_SUFFIXES = ("a", "b", "rc")
+_FIRST_STABLE_LINE_VERSION = "1.0.0rc1"
 
 
 class HistoryUnavailable(Exception):
@@ -184,12 +191,29 @@ def _git(root: Path, *args: str) -> bytes:
     return subprocess.run(["git", *args], cwd=root, check=True, capture_output=True).stdout
 
 
-def _newest_release_tag(root: Path) -> str | None:
+def release_tag(root: Path, current_version: str) -> str | None:
+    """Return the newest release tag on the line containing current_version."""
+    if Version is not None:
+        stable_line = Version(current_version) >= Version(_FIRST_STABLE_LINE_VERSION)
+    else:
+        match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)(?:(a|b|rc)(\d+))?", current_version)
+        if match is None:
+            raise ValueError(f"invalid package version: {current_version}")
+        major, minor, patch = (int(part) for part in match.group(1, 2, 3))
+        prerelease, prerelease_number = match.group(4), match.group(5)
+        stable_line = (major, minor, patch) > (1, 0, 0) or (
+            (major, minor, patch) == (1, 0, 0)
+            and (
+                prerelease is None
+                or (prerelease, int(prerelease_number)) >= ("rc", 1)
+            )
+        )
+    line = "v1.*" if stable_line else "v0.*"
     if _git(root, "rev-parse", "--is-shallow-repository").strip() == b"true":
         raise HistoryUnavailable("the clone is shallow; fetch full history and tags")
     ordering = [f"versionsort.suffix={suffix}" for suffix in _PRERELEASE_SUFFIXES]
     options = [part for setting in ordering for part in ("-c", setting)]
-    tags = _git(root, *options, "tag", "--list", _RELEASE_TAGS, "--sort=-v:refname").split()
+    tags = _git(root, *options, "tag", "--list", line, "--sort=-v:refname").split()
     return tags[0].decode() if tags else None
 
 
@@ -218,24 +242,24 @@ def _reason(error: Exception) -> str:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Check terrine's stable API signatures.")
     parser.add_argument(
-        "--against", metavar="TAG", help="release to compare with (default: newest v1.* tag)"
+        "--against", metavar="TAG", help="release to compare with (default: newest tag on the current release line)"
     )
     args = parser.parse_args(argv)
     try:
         root = Path(_git(Path.cwd(), "rev-parse", "--show-toplevel").decode().strip())
-        tag = args.against or _newest_release_tag(root)
-    except (HistoryUnavailable, subprocess.CalledProcessError, OSError) as error:
+        current_version = tomllib.loads((root / "pyproject.toml").read_text())["project"]["version"]
+        tag = args.against or release_tag(root, current_version)
+    except (HistoryUnavailable, subprocess.CalledProcessError, OSError, ValueError) as error:
         print(f"comparison history unavailable: {_reason(error)}")
         return 2
     current = _load(root)
     try:
         stable_surface(current)
     except LookupError as error:
-        # A release made from this tree could never be compared with.
         print(f"stable API cannot be checked: {error}")
         return 1
     if tag is None:
-        print("no 1.x release tag: the stable API has no baseline yet")
+        print("no release tag on the current release line: the stable API has no baseline yet")
         return 0
     with TemporaryDirectory(prefix="terrine-api-") as directory:
         try:
