@@ -279,6 +279,45 @@ def _annotation_names(annotation: griffe.Expr) -> Iterator[str]:
 
     yield from visit(annotation)
 
+def _is_pydantic_model(owner: griffe.Class) -> bool:
+    """Return whether a class inherits from Pydantic's BaseModel without imports."""
+    pending = [owner]
+    visited = set()
+    while pending:
+        current = pending.pop()
+        if current.path in visited:
+            continue
+        visited.add(current.path)
+        for base in current.bases:
+            path = base.canonical_path
+            if path == "pydantic.BaseModel" or (
+                path is not None and path.startswith("pydantic.") and path.endswith(".BaseModel")
+            ):
+                return True
+            try:
+                resolved = base.resolved
+            except (AttributeError, KeyError):
+                continue
+            if isinstance(resolved, griffe.Class):
+                pending.append(resolved)
+    return False
+
+
+def _is_generated_pydantic_init(
+    owner: griffe.Class,
+    member_name: str,
+    member: griffe.Object | griffe.Alias,
+) -> bool:
+    """Identify inherited or synthetic Pydantic constructors, not authored ones."""
+    if member_name != "__init__" or not _is_pydantic_model(owner):
+        return False
+    constructor = _resolved(member)
+    return (
+        constructor.path != f"{owner.path}.__init__"
+        or getattr(constructor, "lineno", None) is None
+    )
+
+
 def check_signature_types(surface: Mapping[str, griffe.Object]) -> list[str]:
     """Find stable callables whose annotations name non-stable Terrine types."""
     stable_paths = {name for name in surface}
@@ -313,6 +352,7 @@ def check_signature_types(surface: Mapping[str, griffe.Object]) -> list[str]:
                     (name in {"__init__", "__new__"} or not name.startswith("_"))
                     and member_name not in PROVISIONAL_NAMES
                     and member_path not in PROVISIONAL_NAMES
+                    and not _is_generated_pydantic_init(target, name, member)
                 ):
                     check_callable(member_name, member)
         check_callable(qualified, obj)

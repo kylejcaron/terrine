@@ -104,6 +104,11 @@ Each stable callable's parameter and return annotations are checked as well: any
 Terrine type must be exported from a stable facade or classified as a
 provisional variant. An unclassified type fails the check.
 
+Catalog's nested records are governed by the Catalog document version, not by
+the Python signature check. The check therefore exempts only generated
+`__init__` methods of Pydantic `BaseModel` subclasses; handwritten constructors
+remain subject to the annotation rule above.
+
 | Exit status | Meaning |
 | --- | --- |
 | 0 | Compatible, no eligible baseline exists, or breakages are permitted across 0.x minor releases |

@@ -316,3 +316,26 @@ def test_unclassified_type_is_not_hidden_by_stable_nested_type(tmp_path, monkeyp
             "terrine.api.f": module["f"],
         }
     ) == ["terrine.api.f: terrine.api.Hidden"]
+
+
+def test_handwritten_pydantic_constructor_is_not_exempt(tmp_path, monkeypatch):
+    package = tmp_path / "terrine"
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    (package / "api.py").write_text(
+        "from pydantic import BaseModel\n\n"
+        "class Hidden:\n"
+        "    pass\n\n"
+        "class Public(BaseModel):\n"
+        "    def __init__(self, value: Hidden):\n"
+        "        super().__init__()\n"
+    )
+    monkeypatch.chdir(tmp_path)
+    module = griffe.load("terrine.api", search_paths=[tmp_path])
+    public = module["Public"]
+    constructor = public.members["__init__"]
+
+    assert not api_check._is_generated_pydantic_init(public, "__init__", constructor)
+    assert api_check.check_signature_types({"terrine.api.Public": public}) == [
+        "terrine.api.Public.__init__: terrine.api.Hidden"
+    ]
