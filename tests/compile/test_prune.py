@@ -37,3 +37,13 @@ def test_pruning_keeps_rows_and_schema_and_drops_unread_columns(con):
     expected += [("b", 6.0, 2), ("b", 6.0, 3), ("c", 6.0, 1), ("c", 6.0, 2)]
     expected += [("d", None, None), ("d", None, None)]
     assert [tuple(row.values()) for row in con.to_pyarrow(pruned).to_pylist()] == expected
+
+
+def test_pruning_keeps_row_only_reads_of_unions_and_unread_aggregates(con):
+    t = con.create_table("t", pa.table({"k": [1, 2], "x": [1.0, 2.0]}))
+    union = t.union(t, distinct=False)
+    counted = union.aggregate(n=union.count())
+    narrow = t.select("k", "x")
+    total = narrow.aggregate(s=narrow.x.sum()).select(c=ibis.literal(1))
+    for query, expected in ((counted, [{"n": 4}]), (total, [{"c": 1}])):
+        assert con.to_pyarrow(prune_columns(query)).to_pylist() == expected

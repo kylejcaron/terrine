@@ -182,19 +182,32 @@ def test_recipe_sql_within_characters_per_feature(duckdb_measured, recipe):
 
 
 @pytest.mark.scale
-@pytest.mark.parametrize("recipe", _cases(_OVER_DUCKDB, "the hand-written query's time"))
-def test_recipe_duckdb_time_within_three_hand_queries(duckdb_measured, recipe):
+@pytest.mark.parametrize("recipe", list(recipe_cases(_CONFIG)))
+def test_recipe_matches_hand_written_query_on_duckdb(duckdb_measured, recipe):
     measured = duckdb_measured[recipe]
     assert measured.error is None and measured.equal
-    assert measured.ratio <= _DUCKDB_RATIO
+
+
+@pytest.mark.scale
+@pytest.mark.parametrize("recipe", _cases(_OVER_DUCKDB, "the hand-written query's time"))
+def test_recipe_duckdb_time_within_three_hand_queries(duckdb_measured, recipe):
+    assert duckdb_measured[recipe].ratio <= _DUCKDB_RATIO
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize(
+    "recipe",
+    _cases({name: _OVER_POSTGRES[name] for name in ("event_panel",)}, "the hand-written values"),
+)
+def test_recipe_matches_hand_written_query_on_postgres(postgres_measured, recipe):
+    measured = postgres_measured[recipe]
+    assert measured.error is None and measured.equal
 
 
 @pytest.mark.postgres
 @pytest.mark.parametrize("recipe", _cases(_OVER_POSTGRES, "the hand-written query's time"))
 def test_recipe_postgres_time_within_ten_hand_queries(postgres_measured, recipe):
-    measured = postgres_measured[recipe]
-    assert measured.error is None and measured.equal
-    assert measured.ratio <= _POSTGRES_RATIO
+    assert postgres_measured[recipe].ratio <= _POSTGRES_RATIO
 
 
 @pytest.mark.scale

@@ -49,6 +49,20 @@ def _kept(values: FrozenOrderedDict, needed: set[str]) -> list[str]:
     return names or [next(iter(values))]
 
 
+def _metrics(aggregate: Node, needed: set[str]) -> dict[str, Node]:
+    """Needed metrics; an ungrouped aggregate keeps one so it still yields its row."""
+    metrics = {name: value for name, value in aggregate.metrics.items() if name in needed}
+    if not metrics and not aggregate.groups:
+        name = next(iter(aggregate.metrics))
+        metrics = {name: aggregate.metrics[name]}
+    return metrics
+
+
+def _branch(union: Node, needed: set[str]) -> set[str]:
+    """Columns both branches keep; a union read for its rows alone keeps one."""
+    return needed or {union.schema.names[0]}
+
+
 def _requirements(root: Node) -> tuple[dict[Node, set[str]], dict[Node, set[Node]]]:
     """Columns every consumer reads from each relation reachable from ``root``,
     and the relations that consume each one."""
@@ -82,8 +96,7 @@ def _requirements(root: Node) -> tuple[dict[Node, set[str]], dict[Node, set[Node
             read(relation.values[name] for name in _kept(relation.values, needed))
         elif isinstance(relation, ops.Aggregate):
             require(relation.parent, ())
-            metrics = relation.metrics
-            read((*relation.groups.values(), *(metrics[n] for n in metrics if n in needed)))
+            read((*relation.groups.values(), *_metrics(relation, needed).values()))
         elif isinstance(relation, ops.JoinChain):
             for table in relation.tables:
                 require(table, ())
@@ -95,8 +108,8 @@ def _requirements(root: Node) -> tuple[dict[Node, set[str]], dict[Node, set[Node
         elif isinstance(relation, (ops.Limit, ops.Sample, ops.Reference, ops.DropColumns)):
             require(relation.parent, needed)
         elif isinstance(relation, SetUnion) and not relation.distinct:
-            require(relation.left, needed)
-            require(relation.right, needed)
+            require(relation.left, _branch(relation, needed))
+            require(relation.right, _branch(relation, needed))
         else:
             # Any other relation reads every column of its inputs.
             for arg in relation.__children__:
@@ -180,9 +193,7 @@ def prune_columns(table: ibis.Table) -> ibis.Table:
             result = project(relation, build(relation.parent), kept)
         elif isinstance(relation, ops.Aggregate):
             parent = build(relation.parent)
-            metrics = [name for name in relation.metrics if name in needed]
-            if not metrics and not relation.groups:
-                metrics = [next(iter(relation.metrics))]
+            metrics = list(_metrics(relation, needed))
             result = relation.copy(
                 parent=parent,
                 groups=FrozenOrderedDict({n: relink(v) for n, v in relation.groups.items()}),
@@ -200,8 +211,9 @@ def prune_columns(table: ibis.Table) -> ibis.Table:
             values = {n: relink(relation.values[n]) for n in _kept(relation.values, needed)}
             result = relation.copy(first=first, rest=rest, values=FrozenOrderedDict(values))
         elif isinstance(relation, SetUnion) and not relation.distinct:
+            names = _branch(relation, needed)
             result = relation.copy(
-                left=exactly(relation.left, needed), right=exactly(relation.right, needed)
+                left=exactly(relation.left, names), right=exactly(relation.right, names)
             )
         elif isinstance(relation, ops.DropColumns):
             parent = build(relation.parent)
