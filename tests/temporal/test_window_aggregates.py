@@ -253,6 +253,27 @@ def test_native_prefix_overflow_refuses_instead_of_publishing(con, dialect):
             assert error.value.context["reason"] == "bound_overflow"
 
 
+def test_bounded_native_prefix_withholds_cumulative_magnitude(con):
+    """Two groups each admitted on their own are withheld once the magnitudes
+    accumulated through the prefix exceed half the range: the window ending between
+    them publishes, every later non-empty window refuses ``bound_overflow``."""
+    from terrine.backends.dialect import dialect_scope
+
+    with dialect_scope("generic"):
+        pair = _state(
+            con,
+            [6e307, 6e307, 1.0],
+            times=[datetime(2025, 1, d, 12, tzinfo=UTC) for d in (2, 3, 4)],
+            exact=False,
+        )
+        assert _rows(con, _result(_anchors(con), [pair]))[0]["requested"] == 6e307
+        for time in ("2025-01-03 00:00:00+00", "2025-01-04 00:00:00+00"):
+            with pytest.raises(TerrineError) as error:
+                _rows(con, _result(_anchors(con, time=time), [pair]))
+            assert error.value.code == "terrine.temporal.float64_precision"
+            assert error.value.context["reason"] == "bound_overflow"
+
+
 def test_bounded_native_sum_admits_up_to_half_the_range(con):
     """A bounding policy publishes a native sum just below half the binary64 range,
     refuses one at the derived threshold as ``bound_overflow``, and sums a

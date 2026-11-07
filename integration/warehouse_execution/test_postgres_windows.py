@@ -407,6 +407,13 @@ def test_native_float_windows_match_duckdb_within_tolerance(postgres_scratch, tm
             "weight",
             "bound_overflow",
         ),
+        # Two groups admitted on their own whose magnitudes accumulated through the
+        # prefix exceed half the range: the running sum is withheld, not evaluated.
+        (
+            [("2024-12-31 00:00:00", "6e307"), ("2025-01-01 12:00:00", "6e307")],
+            "weight",
+            "bound_overflow",
+        ),
         # A mean whose quotient would round to zero.
         (
             [("2025-01-01 12:00:00", "5e-324"), ("2025-01-01 13:00:00", "0.0")],
