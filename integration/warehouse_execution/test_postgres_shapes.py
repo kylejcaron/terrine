@@ -667,3 +667,9 @@ def test_native_cohort_mean_refuses_where_float8_would_underflow(postgres_scratc
         assert error.value.context["source"] == "cohort"
     finally:
         duckdb.disconnect()
+
+
+def test_not_over_true_false_and_null_matches_duckdb(postgres_scratch):  # noqa: F811
+    from integration.compile.test_boolean_outputs import NEGATION_STATES, negation_states
+
+    assert negation_states(postgres_scratch.con) == NEGATION_STATES

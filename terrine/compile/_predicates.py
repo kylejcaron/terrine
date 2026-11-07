@@ -9,6 +9,7 @@ from typing import Literal
 import ibis
 
 import terrine.reasons as reason_codes
+from terrine.backends.dialect import current_dialect
 from terrine.backends.extrema import greatest, least
 from terrine.data import ColumnMeta, FeatureCutoff
 from terrine.semantic.predicates import lower_predicate
@@ -66,10 +67,10 @@ def compile_predicate(
     def compile_node(node):
         if isinstance(node, Not):
             # Negation keeps its term's reason, support and cutoff: it is unknown exactly when
-            # the term is. "= FALSE" negates with three-valued logic; Ibis renders a negation
-            # followed by IS [NOT] NULL without parentheses, which SQL reads as NOT (x IS NULL).
+            # the term is.
             value, *rest = compile_node(node.term)
-            return builder.put("negation", builder.col(value) == ibis.literal(False)), *rest
+            term = builder.col(value)
+            return builder.put("negation", current_dialect(term).boolean_not(term)), *rest
         if isinstance(node, (And, Or)):
             terms = [compile_node(term) for term in node.terms]
             conjunction = isinstance(node, And)

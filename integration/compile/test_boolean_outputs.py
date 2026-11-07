@@ -153,6 +153,48 @@ def test_any_of_not_combine(boolean_result):
     }
 
 
+NEGATION_STATES = {
+    "t": (False, True, None),
+    "f": (True, True, None),
+    "n": (None, False, "all_values_null"),
+}
+
+
+def negation_states(con):
+    """``not_`` of a known TRUE, FALSE and NULL roster flag: value, completeness, reason."""
+    con.raw_sql("CREATE TABLE users(user_id VARCHAR, flag BOOLEAN)")
+    con.raw_sql("INSERT INTO users VALUES ('t', TRUE), ('f', FALSE), ('n', NULL)")
+    con.raw_sql("CREATE TABLE visits(user_id VARCHAR, ts TIMESTAMPTZ)")
+    con.raw_sql(
+        "INSERT INTO visits SELECT user_id, TIMESTAMPTZ '2024-12-31 00:00:00+00' FROM users"
+    )
+    model = tr.Model.from_tables(
+        con,
+        units={"user": tr.UnitSource("users", "user_id", attributes=("flag",))},
+        events={
+            "visits": tr.Events(
+                "visits", time="ts", key="user_id", complete=("2024-12-01", "2024-12-31")
+            )
+        },
+    )
+    design = tr.Design(
+        "user",
+        tr.FixedDate("2025-01-01"),
+        features={"not_flag": tr.not_(tr.eq(tr.asof("flag"), True))},
+    )
+    frame = design.build(model)
+    result = frame.materialize(budget=tr.Budget(max_rows=10, strict_scan=False))
+    return _states(BooleanResult(result.table, frame._compiled.columns, {}), "not_flag")
+
+
+def test_not_over_true_false_and_null_keeps_completeness():
+    con = ibis.duckdb.connect()
+    try:
+        assert negation_states(con) == NEGATION_STATES
+    finally:
+        con.disconnect()
+
+
 def test_fewer_than_three_orders_eligibility():
     con = ibis.duckdb.connect()
     con.raw_sql("CREATE TABLE users AS SELECT * FROM (VALUES ('none'), ('two'), ('three')) t(id)")

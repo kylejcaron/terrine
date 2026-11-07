@@ -752,6 +752,15 @@ class Dialect:
     def greatest(self, *values: Any) -> Any:
         return ibis.greatest(*_non_null(values))
 
+    def boolean_not(self, value: ir.BooleanValue) -> ir.BooleanValue:
+        """Three-valued NOT, NULL for NULL, that stays a negation inside a null test.
+
+        Ibis renders a negation followed by IS [NOT] NULL without parentheses, and
+        SQL reads ``NOT x IS NULL`` as ``NOT (x IS NULL)``. Comparing with FALSE
+        negates every boolean exactly and keeps its own parentheses.
+        """
+        return value == ibis.literal(False)
+
     def integer_sequence(self, stop: int, name: str) -> ibis.Table:
         return ibis.range(0, stop).unnest().cast("int64").name(name).as_table()
 
