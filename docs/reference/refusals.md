@@ -303,6 +303,7 @@ Use consistent coverage, roles and representable metadata.
 
 | Code | Message template | Interpolation fields | Declaration |
 | --- | --- | --- | --- |
+| `terrine.metadata.invalid` | <code>Materialized frame metadata is invalid ({reason}); use a lossless Terrine Arrow or JSON representation.</code> | `reason` | [terrine/data.py](../../terrine/data.py) |
 | `terrine.metadata.invalid_eligibility_summary` | <code>Eligibility audit did not return one aggregate count record</code> | None | [terrine/execution/gates.py](../../terrine/execution/gates.py) |
 | `terrine.metadata.invalid_eligibility_summary` | <code>Eligibility counts must be nonnegative and reconcile</code> | None | [terrine/data.py](../../terrine/data.py) |
 | `terrine.metadata.invalid_engine_stamp` | <code>Engine stamp is {reason} (present fields {fields!r}); re-materialize the Design with the current Terrine version.</code> | `fields`, `reason` | [terrine/data.py](../../terrine/data.py) |
