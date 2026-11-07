@@ -235,7 +235,11 @@ def _recipe_documents(data: Path) -> dict[str, dict[str, str]]:
 
 def output_schema(frame: Any) -> list[dict[str, str]]:
     """Return the ordered non-support columns of a built Frame's output."""
-    materialized = frame.materialize(budget=_BUDGET)
+    return materialized_schema(frame.materialize(budget=_BUDGET))
+
+
+def materialized_schema(materialized: Any) -> list[dict[str, str]]:
+    """Return the ordered non-support columns of a MaterializedFrame."""
     support = {
         *materialized._bookkeeping_columns(),
         *materialized._support_columns(),
@@ -247,7 +251,7 @@ def output_schema(frame: Any) -> list[dict[str, str]]:
             "type": str(field.type),
             "role": _role(field.name, materialized.roles, materialized.columns),
         }
-        for field in materialized.to_pyarrow().schema
+        for field in materialized.table.schema
         if field.name not in support
     ]
 

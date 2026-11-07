@@ -12,8 +12,8 @@ import pytest
 
 from scripts.write_artifact_corpus import (
     _reproducible_staging,
-    _role,
     bind_model,
+    materialized_schema,
     output_schema,
 )
 from terrine import Budget, Dataset
@@ -192,15 +192,7 @@ if RELEASES:  # An empty list defines no test, rather than collecting a skipped 
                 assert reopened.schema.equals(staged.schema)
                 assert reopened.to_pylist() == staged.to_pylist()
                 materialized = MaterializedFrame.from_arrow(reopened)
-                roles = materialized.roles
-                reopened_schema = [
-                    {
-                        "name": field.name,
-                        "type": str(field.type),
-                        "role": _role(field.name, roles, materialized.columns),
-                    }
-                    for field in reopened.schema
-                ]
+                reopened_schema = materialized_schema(materialized)
                 assert {
                     column["name"]: column
                     for column in reopened_schema
