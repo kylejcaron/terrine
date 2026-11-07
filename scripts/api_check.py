@@ -208,9 +208,8 @@ def release_tag(root: Path, current_version: str) -> str | None:
         devrelease = match.group(7)
         stable_line = (major, minor, patch) > (1, 0, 0) or (
             (major, minor, patch) == (1, 0, 0)
-            and devrelease is None
             and (
-                prerelease is None
+                (prerelease is None and devrelease is None)
                 or (prerelease == "rc" and int(prerelease_number) >= 1)
             )
         )
@@ -220,19 +219,34 @@ def release_tag(root: Path, current_version: str) -> str | None:
     ordering = [f"versionsort.suffix={suffix}" for suffix in _PRERELEASE_SUFFIXES]
     options = [part for setting in ordering for part in ("-c", setting)]
     tags = _git(root, *options, "tag", "--list", line, "--sort=-v:refname").split()
-    if not stable_line:
-        tags = [tag for tag in tags if _is_final_release_tag(tag.decode())]
+    tags = [
+        tag
+        for tag in tags
+        if _is_eligible_release_tag(tag.decode(), allow_release_candidate=stable_line)
+    ]
     return tags[0].decode() if tags else None
 
-def _is_final_release_tag(tag: str) -> bool:
+def _is_eligible_release_tag(tag: str, *, allow_release_candidate: bool) -> bool:
     version = tag.removeprefix("v")
     if Version is not None:
         try:
             parsed = Version(version)
         except ValueError:
             return False
-        return not (parsed.is_prerelease or parsed.is_devrelease or parsed.is_postrelease)
-    return re.fullmatch(r"\d+\.\d+\.\d+", version) is not None
+        if parsed.is_devrelease or parsed.is_postrelease:
+            return False
+        return not parsed.is_prerelease or (
+            allow_release_candidate and parsed.pre[0] == "rc"
+        )
+    match = re.fullmatch(
+        r"\d+\.\d+\.\d+(?:(a|b|rc)\d+)?(?:\.post\d+)?(?:\.dev\d+)?"
+        r"(?:\+[a-zA-Z0-9.-]+)?",
+        version,
+    )
+    if match is None or ".post" in version or ".dev" in version:
+        return False
+    prerelease = match.group(1)
+    return prerelease is None or (allow_release_candidate and prerelease == "rc")
 
 
 def _release_minor(version: str) -> tuple[int, int]:
@@ -252,7 +266,11 @@ def _newest_minor_release_tag(root: Path, version: str) -> str | None:
     tags = _git(
         root, *options, "tag", "--list", f"v{major}.{minor}.*", "--sort=-v:refname"
     ).split()
-    final_tags = [tag for tag in tags if _is_final_release_tag(tag.decode())]
+    final_tags = [
+        tag
+        for tag in tags
+        if _is_eligible_release_tag(tag.decode(), allow_release_candidate=False)
+    ]
     return final_tags[0].decode() if final_tags else None
 
 
