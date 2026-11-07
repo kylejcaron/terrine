@@ -339,3 +339,29 @@ def test_handwritten_pydantic_constructor_is_not_exempt(tmp_path, monkeypatch):
     assert api_check.check_signature_types({"terrine.api.Public": public}) == [
         "terrine.api.Public.__init__: terrine.api.Hidden"
     ]
+
+
+def test_imported_handwritten_pydantic_constructor_is_not_exempt(tmp_path, monkeypatch):
+    package = tmp_path / "terrine"
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    (package / "helpers.py").write_text(
+        "class Hidden:\n"
+        "    pass\n\n"
+        "def custom_init(self, value: Hidden):\n"
+        "    pass\n"
+    )
+    (package / "api.py").write_text(
+        "from pydantic import BaseModel\n\n"
+        "class Public(BaseModel):\n"
+        "    from terrine.helpers import custom_init as __init__\n"
+    )
+    monkeypatch.chdir(tmp_path)
+    module = griffe.load("terrine.api", search_paths=[tmp_path])
+    public = module["Public"]
+    constructor = public.members["__init__"]
+
+    assert not api_check._is_generated_pydantic_init(public, "__init__", constructor)
+    assert api_check.check_signature_types({"terrine.api.Public": public}) == [
+        "terrine.api.Public.__init__: terrine.helpers.Hidden"
+    ]

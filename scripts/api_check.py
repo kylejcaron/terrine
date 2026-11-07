@@ -313,8 +313,11 @@ def _is_generated_pydantic_init(
         return False
     constructor = _resolved(member)
     return (
-        constructor.path != f"{owner.path}.__init__"
-        or getattr(constructor, "lineno", None) is None
+        constructor.path == f"{owner.path}.__init__"
+        and getattr(constructor, "lineno", None) is None
+    ) or (
+        constructor.path.startswith("pydantic.")
+        and constructor.path.endswith(".BaseModel.__init__")
     )
 
 
