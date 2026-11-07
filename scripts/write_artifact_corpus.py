@@ -3,9 +3,8 @@
 ``uv run python scripts/write_artifact_corpus.py --generation <name>`` writes
 ``tests/artifacts/<name>/``: Design, definition and Catalog documents, the manifest and
 retained-input receipt of a staged dataset, the Arrow/Parquet metadata of its Parquet
-export, the tiny source tables, and the ordered output schema and roles of each stored
-Design. Write a new generation only when a stored format changes; an existing generation
-is never rewritten.
+export, tiny source tables, and each recipe's Design and output schema. Existing root
+documents are preserved; recipe documents are refreshed deterministically.
 
 The documents are path-independent and reproducible. Staging draws its random identifiers
 from a fixed seed and runs DuckDB on one thread, and the receipt and manifest name the
@@ -45,13 +44,17 @@ from terrine.dataset.manifest import DatasetManifest
 from terrine.runtime.owner import RuntimeOwner
 from terrine.runtime.snapshot import ReopenableSnapshot, SnapshotAuthority
 from terrine.spec import (
+    BinnedMetricState,
     DatasetDefinition,
     Design,
     FixedDate,
+    Initiation,
     Winsorization,
     agg,
     asof,
+    eq,
     event_time,
+    gt,
     to_json,
     to_yaml,
 )
@@ -140,9 +143,99 @@ def designs() -> dict[str, Design]:
     }
 
 
+def recipe_designs() -> dict[str, Design]:
+    """Return one representative, serializable design for each public recipe."""
+    window = ("-30d", "0s")
+
+    return {
+        "time_series": recipes.time_series(
+            every="1mo",
+            start="2025-02-01",
+            end="2025-02-01",
+            features={"orders_30d": agg("orders", window=window)},
+            outcomes={"spend_next_14d": agg("spend", window=("0s", "14d"))},
+            eligibility={"has_orders": gt(agg("orders", window=window), 0)},
+        ),
+        "trial_panel": recipes.trial_panel(
+            every="1d",
+            start="2025-02-01",
+            end="2025-02-01",
+            treatment=Initiation("orders", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
+            features={"orders_30d": agg("orders", window=window)},
+            eligibility={"paid_status": eq(asof("status"), "paid")},
+        ),
+        "event_panel": recipes.event_panel(
+            event="orders",
+            periods=(-1, 0, 1),
+            period="7d",
+            features={"orders_30d": agg("orders", window=window)},
+        ),
+        "ltv": recipes.ltv(
+            start_event="orders",
+            metric="spend",
+            period="7d",
+            max_periods=2,
+            features={"orders_30d": agg("orders", window=window)},
+        ),
+        "survival": recipes.survival(
+            start_event="orders",
+            end_event="orders",
+            features={"orders_30d": agg("orders", window=window)},
+        ),
+        "life_table": recipes.life_table(
+            start_event="orders",
+            end_event="orders",
+            bin="7d",
+            group_by={"has_orders": gt(agg("orders", window=window), 0)},
+        ),
+        "state_panel": recipes.state_panel(
+            state_source=BinnedMetricState("spend", cutpoints=(0,), levels=("no_spend", "spend")),
+            every="1d",
+            start="2025-02-01",
+            end="2025-02-02",
+            features={"orders_30d": agg("orders", window=window)},
+        ),
+        "event_sequence": recipes.event_sequence(
+            event="orders",
+            horizon="30d",
+            max_events=3,
+            session_gap=None,
+            features={"orders_30d": agg("orders", window=window)},
+        ),
+    }
+
+
+def _recipe_documents(data: Path) -> dict[str, dict[str, str]]:
+    con = ibis.duckdb.connect()
+    try:
+        model = bind_model(con, data)
+        documents = {}
+        for name, design in recipe_designs().items():
+            definition = DatasetDefinition(base_design=design)
+            definition_text = definition.canonical_json().decode()
+            frames = {
+                "design.json": design.build(model),
+                "design.yaml": design.build(model),
+                "definition.json": DatasetDefinition.from_json(definition_text).build(model),
+            }
+            documents[name] = {
+                "design.json": to_json(design),
+                "design.yaml": to_yaml(design),
+                "definition.json": definition_text,
+                "expected_schema.json": json.dumps(
+                    {document: output_schema(frame) for document, frame in frames.items()},
+                    indent=2,
+                )
+                + "\n",
+            }
+    finally:
+        con.disconnect()
+    return documents
+
+
 def output_schema(frame: Any) -> list[dict[str, str]]:
     """Return the ordered names, Arrow types and roles of a built Frame's lossless output."""
-    materialized = frame.materialize()
+    materialized = frame.materialize(budget=_BUDGET)
     return [
         {"name": field.name, "type": str(field.type), "role": _role(field.name, materialized.roles)}
         for field in materialized.to_pyarrow().schema
@@ -258,20 +351,37 @@ def _documents(root: Path, data: Path) -> dict[str, str]:
 
 
 def write_generation(directory: Path) -> None:
-    """Write every corpus document of one generation into a new ``directory``."""
+    """Write generation documents and update the recipe-specific documents."""
+    write_base = not directory.exists()
     with tempfile.TemporaryDirectory(prefix="terrine-corpus-") as temporary:
         root = Path(temporary).resolve()
         staged = root / "generation"
         (staged / "data").mkdir(parents=True)
         for name, table in source_tables().items():
             pq.write_table(table, staged / "data" / f"{name}.parquet")
+        if write_base:
+            with _reproducible_staging():
+                documents = _documents(root, staged / "data")
+            for name, text in documents.items():
+                if temporary in text or str(root) in text:
+                    raise RuntimeError(f"{name} records the staging directory")
+                (staged / name).write_text(text, encoding="utf-8")
         with _reproducible_staging():
-            documents = _documents(root, staged / "data")
-        for name, text in documents.items():
-            if temporary in text or str(root) in text:
-                raise RuntimeError(f"{name} records the staging directory")
-            (staged / name).write_text(text, encoding="utf-8")
-        shutil.copytree(staged, directory)
+            recipe_documents = _recipe_documents(staged / "data")
+        for name, documents in recipe_documents.items():
+            recipe_directory = staged / name
+            recipe_directory.mkdir()
+            for filename, text in documents.items():
+                (recipe_directory / filename).write_text(text, encoding="utf-8")
+        if write_base:
+            shutil.copytree(staged, directory)
+        else:
+            directory.mkdir(parents=True, exist_ok=True)
+            for name, documents in recipe_documents.items():
+                recipe_directory = directory / name
+                recipe_directory.mkdir(exist_ok=True)
+                for filename, text in documents.items():
+                    (recipe_directory / filename).write_text(text, encoding="utf-8")
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -280,10 +390,7 @@ def main(argv: list[str] | None = None) -> None:
     arguments = parser.parse_args(argv)
     if not re.fullmatch(r"[0-9A-Za-z_-]+", arguments.generation):
         parser.error("a generation name contains only letters, digits, '_' and '-'")
-    directory = ARTIFACTS / arguments.generation
-    if directory.exists():
-        parser.error(f"{directory} exists; a stored generation is never rewritten")
-    write_generation(directory)
+    write_generation(ARTIFACTS / arguments.generation)
 
 
 if __name__ == "__main__":

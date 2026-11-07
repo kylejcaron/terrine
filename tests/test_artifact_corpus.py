@@ -21,6 +21,65 @@ from terrine.spec.io import canonical_digest
 ARTIFACTS = Path(__file__).parent / "artifacts"
 GENERATIONS = sorted(path.name for path in ARTIFACTS.iterdir() if path.is_dir())
 
+RECIPE_DESIGNS = sorted(
+    path
+    for path in ARTIFACTS.glob("1/**/design.json")
+    if path.parent != ARTIFACTS / "1"
+)
+GENERATION_ONE = ARTIFACTS / "1"
+GENERATION_ONE_ROOT_FILES = (
+    "design.json",
+    "design.yaml",
+    "definition.json",
+    "expected_schema.json",
+    "manifest.json",
+    "receipt.json",
+    "arrow_metadata.json",
+    "catalog.yaml",
+)
+
+
+def test_corpus_covers_every_recipe():
+    from terrine import recipes
+
+    assert {path.parent.name for path in RECIPE_DESIGNS} == set(recipes.__all__)
+
+
+@pytest.mark.parametrize("design_path", RECIPE_DESIGNS, ids=lambda path: path.parent.name)
+def test_recipe_documents_decode(design_path):
+    from_json(design_path.read_text(encoding="utf-8"))
+    from_yaml(design_path.with_name("design.yaml").read_text(encoding="utf-8"))
+    DatasetDefinition.from_json(
+        design_path.with_name("definition.json").read_text(encoding="utf-8")
+    )
+
+
+@pytest.mark.xdist_group("artifact-corpus")
+def test_corpus_generator_is_deterministic_and_preserves_root_documents():
+    from scripts.write_artifact_corpus import write_generation
+
+    root_before = {
+        name: (GENERATION_ONE / name).read_bytes() for name in GENERATION_ONE_ROOT_FILES
+    }
+    recipe_before = {
+        path: path.read_bytes()
+        for design_path in RECIPE_DESIGNS
+        for path in design_path.parent.iterdir()
+        if path.is_file()
+    }
+    write_generation(GENERATION_ONE)
+    assert root_before == {
+        name: (GENERATION_ONE / name).read_bytes() for name in GENERATION_ONE_ROOT_FILES
+    }
+    assert recipe_before == {
+        path: path.read_bytes()
+        for design_path in RECIPE_DESIGNS
+        for path in design_path.parent.iterdir()
+        if path.is_file()
+    }
+
+
+
 
 @pytest.mark.parametrize("generation", GENERATIONS)
 def test_generation_documents_decode_and_verify(generation):

@@ -55,13 +55,15 @@ model = Model.from_catalog(
     readiness={"orders": Coverage("2025-01-01", "2025-02-28")},
 )
 budget = Budget(max_rows=100, max_output_bytes=1_000_000, strict_scan=False)
-dataset = (
-    from_json((corpus / "design.json").read_text(encoding="utf-8"))
-    .build(model)
-    .stage("corpus", budget=budget)
-)
-(output / "manifest.json").write_text(dataset.manifest.to_json(), encoding="utf-8")
-pq.write_table(dataset.to_pyarrow(), output / "rows.parquet")
+for index, design_path in enumerate(sorted(corpus.glob("**/design.json"))):
+    dataset = (
+        from_json(design_path.read_text(encoding="utf-8"))
+        .build(model)
+        .stage(f"corpus-{index}", budget=budget)
+    )
+    if index == 0:
+        (output / "manifest.json").write_text(dataset.manifest.to_json(), encoding="utf-8")
+        pq.write_table(dataset.to_pyarrow(), output / "rows.parquet")
 
 state_panel = recipes.state_panel(
     state_source=BinnedMetricState("spend", cutpoints=(0,), levels=("no_spend", "spend")),

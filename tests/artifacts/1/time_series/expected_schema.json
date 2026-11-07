@@ -1,0 +1,323 @@
+{
+  "design.json": [
+    {
+      "name": "unit",
+      "type": "string",
+      "role": "unit"
+    },
+    {
+      "name": "anchor_id",
+      "type": "string",
+      "role": "anchor"
+    },
+    {
+      "name": "t0",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "t0"
+    },
+    {
+      "name": "orders_30d",
+      "type": "int64",
+      "role": "feature"
+    },
+    {
+      "name": "orders_30d__complete",
+      "type": "bool",
+      "role": "support"
+    },
+    {
+      "name": "orders_30d__reason",
+      "type": "string",
+      "role": "support"
+    },
+    {
+      "name": "spend_next_14d",
+      "type": "double",
+      "role": "outcome"
+    },
+    {
+      "name": "spend_next_14d__complete",
+      "type": "bool",
+      "role": "support"
+    },
+    {
+      "name": "spend_next_14d__reason",
+      "type": "string",
+      "role": "support"
+    },
+    {
+      "name": "has_orders",
+      "type": "bool",
+      "role": "support"
+    },
+    {
+      "name": "has_orders__complete",
+      "type": "bool",
+      "role": "support"
+    },
+    {
+      "name": "has_orders__reason",
+      "type": "string",
+      "role": "support"
+    },
+    {
+      "name": "_observed_from",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "support"
+    },
+    {
+      "name": "_observed_until",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "support"
+    },
+    {
+      "name": "anchor_provenance",
+      "type": "string",
+      "role": "support"
+    },
+    {
+      "name": "__terrine_value_0_observed_from",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "support"
+    },
+    {
+      "name": "__terrine_value_0_observed_until",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "support"
+    },
+    {
+      "name": "__terrine_value_1_observed_from",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "support"
+    },
+    {
+      "name": "__terrine_value_1_observed_until",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "support"
+    },
+    {
+      "name": "__terrine_window_2_predicate_from",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "support"
+    },
+    {
+      "name": "__terrine_window_3_predicate_until",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "support"
+    }
+  ],
+  "design.yaml": [
+    {
+      "name": "unit",
+      "type": "string",
+      "role": "unit"
+    },
+    {
+      "name": "anchor_id",
+      "type": "string",
+      "role": "anchor"
+    },
+    {
+      "name": "t0",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "t0"
+    },
+    {
+      "name": "orders_30d",
+      "type": "int64",
+      "role": "feature"
+    },
+    {
+      "name": "orders_30d__complete",
+      "type": "bool",
+      "role": "support"
+    },
+    {
+      "name": "orders_30d__reason",
+      "type": "string",
+      "role": "support"
+    },
+    {
+      "name": "spend_next_14d",
+      "type": "double",
+      "role": "outcome"
+    },
+    {
+      "name": "spend_next_14d__complete",
+      "type": "bool",
+      "role": "support"
+    },
+    {
+      "name": "spend_next_14d__reason",
+      "type": "string",
+      "role": "support"
+    },
+    {
+      "name": "has_orders",
+      "type": "bool",
+      "role": "support"
+    },
+    {
+      "name": "has_orders__complete",
+      "type": "bool",
+      "role": "support"
+    },
+    {
+      "name": "has_orders__reason",
+      "type": "string",
+      "role": "support"
+    },
+    {
+      "name": "_observed_from",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "support"
+    },
+    {
+      "name": "_observed_until",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "support"
+    },
+    {
+      "name": "anchor_provenance",
+      "type": "string",
+      "role": "support"
+    },
+    {
+      "name": "__terrine_value_0_observed_from",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "support"
+    },
+    {
+      "name": "__terrine_value_0_observed_until",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "support"
+    },
+    {
+      "name": "__terrine_value_1_observed_from",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "support"
+    },
+    {
+      "name": "__terrine_value_1_observed_until",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "support"
+    },
+    {
+      "name": "__terrine_window_2_predicate_from",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "support"
+    },
+    {
+      "name": "__terrine_window_3_predicate_until",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "support"
+    }
+  ],
+  "definition.json": [
+    {
+      "name": "unit",
+      "type": "string",
+      "role": "unit"
+    },
+    {
+      "name": "anchor_id",
+      "type": "string",
+      "role": "anchor"
+    },
+    {
+      "name": "t0",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "t0"
+    },
+    {
+      "name": "orders_30d",
+      "type": "int64",
+      "role": "feature"
+    },
+    {
+      "name": "orders_30d__complete",
+      "type": "bool",
+      "role": "support"
+    },
+    {
+      "name": "orders_30d__reason",
+      "type": "string",
+      "role": "support"
+    },
+    {
+      "name": "spend_next_14d",
+      "type": "double",
+      "role": "outcome"
+    },
+    {
+      "name": "spend_next_14d__complete",
+      "type": "bool",
+      "role": "support"
+    },
+    {
+      "name": "spend_next_14d__reason",
+      "type": "string",
+      "role": "support"
+    },
+    {
+      "name": "has_orders",
+      "type": "bool",
+      "role": "support"
+    },
+    {
+      "name": "has_orders__complete",
+      "type": "bool",
+      "role": "support"
+    },
+    {
+      "name": "has_orders__reason",
+      "type": "string",
+      "role": "support"
+    },
+    {
+      "name": "_observed_from",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "support"
+    },
+    {
+      "name": "_observed_until",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "support"
+    },
+    {
+      "name": "anchor_provenance",
+      "type": "string",
+      "role": "support"
+    },
+    {
+      "name": "__terrine_value_0_observed_from",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "support"
+    },
+    {
+      "name": "__terrine_value_0_observed_until",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "support"
+    },
+    {
+      "name": "__terrine_value_1_observed_from",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "support"
+    },
+    {
+      "name": "__terrine_value_1_observed_until",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "support"
+    },
+    {
+      "name": "__terrine_window_2_predicate_from",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "support"
+    },
+    {
+      "name": "__terrine_window_3_predicate_until",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "support"
+    }
+  ]
+}
