@@ -192,3 +192,14 @@ def test_release_tag_fallback_keeps_rc1_dev_before_v1_boundary(monkeypatch, tmp_
 
     assert api_check.release_tag(tmp_path, "1.0.0rc1.dev1") == "v0.1.0"
 
+def test_release_tag_fallback_treats_rc1_post_development_as_v1(monkeypatch, tmp_path):
+    def fake_git(root, *args):
+        if "--is-shallow-repository" in args:
+            return b"false"
+        return b"v1.0.0rc1\n" if "v1.*" in args else b""
+
+    monkeypatch.setattr(api_check, "Version", None)
+    monkeypatch.setattr(api_check, "_git", fake_git)
+
+    assert api_check.release_tag(tmp_path, "1.0.0rc1.post1.dev1") == "v1.0.0rc1"
+
