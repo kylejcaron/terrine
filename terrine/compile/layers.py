@@ -13,6 +13,10 @@ from terrine.windows import Duration
 
 LayerResolution = Literal["day", "event", "point", "period"]
 LayerName = Literal["daily", "prefix", "anchor", "state_point", "state_period"]
+# The persisted prefix state's schema, part of every layer identity: a layer
+# written under another format is rebuilt, never read. 2 added the exact float
+# state's ``float64_below_resolution_count``.
+PREFIX_STATE_FORMAT = 2
 
 
 @dataclass(frozen=True, slots=True)
@@ -239,7 +243,7 @@ def plan_layers(design: Design, model) -> LayerPlan:
     }
     definition_hash = hashlib.sha256(
         json.dumps(
-            [design.spec_hash, model.model_hash, source_schema],
+            [design.spec_hash, model.model_hash, source_schema, PREFIX_STATE_FORMAT],
             sort_keys=True,
             separators=(",", ":"),
         ).encode()

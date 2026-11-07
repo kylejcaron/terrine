@@ -233,8 +233,12 @@ refuses finite results whose admission bound leaves the safe range:
   and publishes; a zero numerator divides to zero;
 - a cohort total or cumulative trajectory whose summed magnitudes reach half
   the range, and a cohort mean whose normalizing quotient (a unit value over
-  the cohort's largest magnitude, so at most one) falls below $2^{-1020}$, or
-  whose rescaling product falls below $2^{-1020}$ or above half the range.
+  the cohort's largest magnitude $m$) falls below $2^{-1020}$ while $m \ge 1$,
+  or whose rescaling product (the mean of the normalized values times $m$)
+  falls below $2^{-1020}$ while $m < 1$ or above half the range while
+  $m \ge 1$; the other side of each guard cannot be reached, because a
+  quotient over a divisor below one exceeds its numerator and a product by a
+  factor below one stays below it.
 
 These are the price of never evaluating an operation the engine would raise
 on; DuckDB publishes the same finite results.

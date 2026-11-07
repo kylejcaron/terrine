@@ -68,8 +68,10 @@ _FLOAT_TINY = 2.0**-900
 # Admitted binary64 sums stay within half the range, so a difference of two fits.
 _FLOAT_HALF_RANGE = math.ldexp(sys.float_info.max, -1)
 _FLOAT_LIMIT = math.ldexp(_FLOAT_HALF_RANGE, -64)
-# A binary64 quotient is evaluated only when it is known to lie within 2**±1020;
-# a product only within 2**-1020 and half the range.
+# A binary64 quotient is evaluated only where it cannot round to zero (below
+# 2**-1020, checked when the divisor's magnitude is at least one) or overflow
+# (above 2**1020, checked when it is below one); a product likewise against
+# 2**-1020 for a factor below one and half the range for a factor of at least one.
 _QUOTIENT_RANGE = 2.0**1020
 
 
