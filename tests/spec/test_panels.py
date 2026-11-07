@@ -4,6 +4,7 @@ import pytest
 
 from terrine.errors import TerrineError
 from terrine.spec import (
+    AnchorRange,
     Design,
     EventAnchor,
     EventPanel,
@@ -67,6 +68,35 @@ def test_event_panel_emits_only_declared_relative_periods():
 
     assert isinstance(panel.shape, EventPanelSpec)
     assert panel.shape.periods == (-1, 0, 2)
+
+
+def test_event_panel_keeps_administrative_cutoff_and_treatment():
+    cutoff = datetime(2025, 6, 1, tzinfo=UTC)
+    event_base = Design(
+        "customer_id",
+        EventAnchor("purchase", "first"),
+        administrative_cutoff=cutoff,
+    )
+
+    panel = EventPanel(event_base, periods=(-1, 0, 2), period="1d")
+
+    assert panel.administrative_cutoff == cutoff
+
+    anchor_range = AnchorRange("2025-01-01", "2025-01-02")
+    sample = MatchedT0Sample(("region",), controls_per_treated=2, seed=17)
+    sequential_base = Design(
+        "customer_id",
+        Schedule("1d", "2025-01-01", "2025-01-02"),
+        anchor_range=anchor_range,
+        sample=sample,
+    )
+    treatment = Initiation("started", history_start=datetime(2024, 1, 1, tzinfo=UTC))
+
+    sequential = Sequential(sequential_base, treatment=treatment)
+
+    assert sequential.anchor_range == anchor_range
+    assert sequential.sample == sample
+    assert sequential.shape.treatment == treatment
 
 
 def test_treatment_initiation_and_persistent_state_are_distinct():
