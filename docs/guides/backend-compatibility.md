@@ -506,7 +506,8 @@ and native unload `False`; read primitives, scan bounds and cancellation
 
 ## Python and dependency support
 
-The package requires Python 3.12 or later, with no upper version bound; CI
+The package requires Python 3.12 or later, with no upper version bound, and supports
+macOS and Linux; the owner runtime and Parquet export refuse on Windows. CI
 exercises CPython 3.12 and 3.14. Native dataset execution requires
 `terrine[duckdb]`; base Terrine has no mandatory backend, dataframe, orchestration
 or modeling library. The local engine supports DuckDB `>=1.5,<2`. Before the

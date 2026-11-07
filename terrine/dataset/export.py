@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import json
 import os
+import sys
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,6 +25,10 @@ _INVALID = RefusalSpec("terrine.dataset.invalid_export", "Invalid Parquet export
 _CONFLICT = RefusalSpec(
     "terrine.dataset.export_conflict",
     "Export destination conflicts with an existing export or partial export.",
+)
+_UNSUPPORTED_PLATFORM = RefusalSpec(
+    "terrine.dataset.unsupported_platform",
+    "Parquet export is unavailable on this operating system; export on macOS or Linux.",
 )
 
 
@@ -239,6 +243,10 @@ def export_dataset(
     target_file_bytes: int = 134_217_728,
     budget: Budget | None = None,
 ) -> ExportManifest:
+    if sys.platform == "win32":
+        raise _UNSUPPORTED_PLATFORM.error(reason="windows")
+    import fcntl
+
     dataset._require_arrow_batches()
     for warning in _scan_policy(budget):
         warnings.warn(warning, RuntimeWarning, stacklevel=2)

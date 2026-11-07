@@ -6,6 +6,7 @@ import os
 import socket
 import socketserver
 import stat
+import sys
 import threading
 from dataclasses import asdict, dataclass
 from datetime import datetime
@@ -45,6 +46,10 @@ _INVALID_CONFIGURATION = RefusalSpec(
     "terrine.runtime.invalid_configuration",
     "Owner runtime configuration {field} is invalid: {reason}.",
 )
+_UNSUPPORTED_PLATFORM = RefusalSpec(
+    "terrine.runtime.unsupported_platform",
+    "Owner control uses a local Unix socket; run the owner on macOS or Linux.",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,6 +88,8 @@ class ControlServer:
         self._endpoint_identity: tuple[int, int] | None = None
 
     def start(self) -> None:
+        if sys.platform == "win32":
+            raise _UNSUPPORTED_PLATFORM.error(reason="windows")
         if self._server is not None:
             return
         self.endpoint.path.parent.mkdir(parents=True, exist_ok=True)
