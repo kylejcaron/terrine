@@ -163,8 +163,11 @@ documents are version 2; manifest and saved-plan envelopes are version 1.
   roles.
 - Release tags in the 0.x series require a successful CI run. Release candidates
   and final tags require successful CI, PostgreSQL, and scale jobs; the scale
-  tier includes the release-upgrade test. BigQuery and Snowflake runs are
-  advisory.
+  tier includes the release-upgrade test. BigQuery and Snowflake are advisory
+  in the automated gate, but each needs a green run within seven days of the
+  tag or a waiver recorded in the release notes. The [backend compatibility
+  table](backend-compatibility.md#operation-regression-environment) records
+  the latest release each cloud backend passed (`verified at vX.Y`).
 - An [upgrade test](../../integration/test_release_upgrade.py) installs each
   released 1.x wheel listed in `tests/artifacts/RELEASES` into an isolated
   interpreter, stages a dataset with it and reopens that dataset in place with
