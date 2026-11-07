@@ -48,10 +48,10 @@ changelog entry:
   `matched_t0` and `CalendarComparisonSpec`;
 - `windows.duration`, `approx_distinct`, `approx_quantile` and
   `Model.from_increment`;
-- VerifiedInputBinding, ChangeSet, RefreshPlan, DatasetManifest, lower-level
-  data and JSON aliases, and concrete expression result records when they appear
-  in stable signatures. These types describe variants and returned values, not
-  additional stable construction inputs.
+- `VerifiedInputBinding`, `ChangeSet`, `RefreshPlan`, `DatasetManifest`, lower-level
+  data, filter and JSON aliases, and concrete expression result records when
+  they appear in stable signatures. These types describe variants and returned
+  values, not additional stable construction inputs.
 - refusal context fields such as `reason` and `field`. Refusal codes are frozen
   only when raised by a stable name.
 

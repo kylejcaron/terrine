@@ -253,3 +253,44 @@ def test_main_fails_when_stable_signature_names_hidden_type(tmp_path, monkeypatc
     monkeypatch.setattr(api_check, "_newest_minor_release_tag", lambda root, version: None)
 
     assert api_check.main([]) == 1
+
+
+def test_constructor_signature_type_leak_detected(tmp_path, monkeypatch):
+    package = tmp_path / "terrine"
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    (package / "api.py").write_text(
+        "class Hidden:\n"
+        "    pass\n\n"
+        "class Public:\n"
+        "    def __init__(self, value: Hidden):\n"
+        "        pass\n"
+    )
+    monkeypatch.chdir(tmp_path)
+    module = griffe.load("terrine.api", search_paths=[tmp_path])
+
+    assert api_check.check_signature_types({"terrine.api.Public": module["Public"]}) == [
+        "terrine.api.Public.__init__: terrine.api.Hidden"
+    ]
+
+
+def test_qualified_stable_annotation_has_no_module_prefix_leak(tmp_path, monkeypatch):
+    package = tmp_path / "terrine"
+    package.mkdir()
+    (package / "__init__.py").write_text(
+        "from .api import f\n"
+        "from .types import Hidden\n"
+        '__all__ = ["f", "Hidden"]\n'
+    )
+    (package / "types.py").write_text("class Hidden:\n    pass\n")
+    (package / "api.py").write_text(
+        "import terrine.types as types\n\n"
+        "def f(value: types.Hidden):\n"
+        "    pass\n"
+    )
+    monkeypatch.chdir(tmp_path)
+    module = griffe.load("terrine", search_paths=[tmp_path])
+
+    assert api_check.check_signature_types(
+        {"terrine.Hidden": module["Hidden"], "terrine.f": module["f"]}
+    ) == []

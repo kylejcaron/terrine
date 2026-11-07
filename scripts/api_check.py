@@ -93,6 +93,9 @@ PROVISIONAL_NAMES: frozenset[str] = frozenset(
         "terrine.spec.expressions.Gt",
         "terrine.spec.expressions.IsNull",
         "terrine.spec.expressions.And",
+        "terrine.spec.panels.CalendarComparisonSpec",
+        "terrine.spec.transforms.WinsorizationFit",
+        "terrine.semantic.models.Filter",
     }
 )
 
@@ -253,11 +256,19 @@ def _stable_objects(package: griffe.Module) -> dict[str, griffe.Object]:
 def _annotation_names(annotation: griffe.Expr) -> Iterator[str]:
     if isinstance(annotation, str):
         return
+    paths = set()
     for expression in annotation.iterate():
         if not isinstance(expression, griffe.ExprName | griffe.ExprAttribute):
             continue
         path = expression.canonical_path
-        if path is not None and path.startswith(f"{_PACKAGE}."):
+        if (
+            path is not None
+            and path.startswith(f"{_PACKAGE}.")
+            and all(part.isidentifier() for part in path.split("."))
+        ):
+            paths.add(path)
+    for path in sorted(paths):
+        if not any(other.startswith(f"{path}.") for other in paths):
             yield path
 
 def check_signature_types(surface: Mapping[str, griffe.Object]) -> list[str]:
@@ -291,7 +302,7 @@ def check_signature_types(surface: Mapping[str, griffe.Object]) -> list[str]:
                 member_name = f"{qualified}.{name}"
                 member_path = f"{target.path}.{name}"
                 if (
-                    not name.startswith("_")
+                    (name in {"__init__", "__new__"} or not name.startswith("_"))
                     and member_name not in PROVISIONAL_NAMES
                     and member_path not in PROVISIONAL_NAMES
                 ):
