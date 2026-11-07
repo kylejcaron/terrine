@@ -1032,8 +1032,8 @@ def test_filter_lowering_parity(column_model):
     from terrine.compile._predicates import CompiledValue, compile_predicate
     from terrine.data import ColumnMeta, FeatureCutoff
     from terrine.semantic.bind import source_filter_predicate
-    from terrine.semantic.filters import lower_filter
     from terrine.semantic.models import BoundFilter, Filter, PropertyBinding
+    from terrine.semantic.predicates import lower_predicate
     from terrine.temporal.daily import _predicate
 
     table = column_model.con.sql("""
@@ -1065,7 +1065,7 @@ def test_filter_lowering_parity(column_model):
         ("score", 11.0, [False, True, None]),
     ):
         filt = Filter(property=column, op="equals", values=(threshold,))
-        lowered = lower_filter(table, filt, table[column])
+        lowered = lower_predicate(filt, table.__getitem__)
         membership = source_filter_predicate(table, replace(source, where=(filt,)))
         metric = _predicate(
             table, replace(measure, filters=(BoundFilter(column, "equals", (threshold,)),)), source

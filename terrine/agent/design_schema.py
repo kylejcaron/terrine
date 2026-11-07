@@ -54,7 +54,8 @@ def design_schema() -> dict[str, Any]:
         ]
     }
     expression = union("MetricAgg", "AttributeAsOf", "EventTime")
-    predicate = union("Gt", "Eq", "IsNull", "And")
+    comparisons = ("Eq", "Ne", "Gt", "Gte", "Lt", "Lte")
+    predicate = union(*comparisons, "IsIn", "Between", "IsNull", "And", "Or", "Not")
     named = mapping(expression)
     outputs = mapping({"anyOf": [expression, predicate]})
     nodes = {
@@ -111,10 +112,13 @@ def design_schema() -> dict[str, Any]:
             "relative_to": nullable(ref("EventTime")),
             "measure": {"enum": ["time", "elapsed"]},
         },
-        "Gt": {"expr": expression, "value": scalar},
-        "Eq": {"expr": expression, "value": scalar},
+        **{name: {"expr": expression, "value": scalar} for name in comparisons},
+        "IsIn": {"expr": expression, "values": {**array(scalar), "minItems": 1}},
+        "Between": {"expr": expression, "low": scalar, "high": scalar},
         "IsNull": {"expr": expression, "negate": boolean},
-        "And": {"terms": array(predicate)},
+        "And": {"terms": {**array(predicate), "minItems": 1}},
+        "Or": {"terms": {**array(predicate), "minItems": 1}},
+        "Not": {"term": predicate},
         "Treatment": {"attribute": text, "at": duration, "known_at_t0": boolean},
         "StateObservations": {
             "property": text,

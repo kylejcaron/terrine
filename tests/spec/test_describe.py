@@ -308,6 +308,35 @@ def test_describe_reads_expression_metadata_and_only_required_sources(shapes_mod
     assert "churn" not in text
 
 
+def test_describe_renders_new_predicates(shapes_model):
+    purchases = tr.agg("purchases", window=("-9d", "-1d"))
+    plan = tr.asof("plan", before="-1d")
+    design = Design(
+        None,
+        FixedDate("2025-02-01"),
+        eligibility={
+            "eligible": tr.all_of(
+                tr.any_of(tr.lt(purchases, 3), tr.gte(purchases, 10)),
+                tr.not_(tr.isin(plan, ["free", "trial"])),
+            ),
+            "band": tr.between(purchases, 1, 5),
+            "capped": tr.lte(purchases, 7),
+            "changed": tr.ne(plan, "basic"),
+        },
+        gap="1d",
+    )
+    text = " ".join(design.describe(shapes_model).split())
+    for fragment in (
+        "< 3 or ",
+        ">= 10) and not (",
+        " in ('free', 'trial'))",
+        " between 1 and 5",
+        " <= 7",
+        " != 'basic'",
+    ):
+        assert fragment in text
+
+
 def test_describe_retains_calendar_clamping_and_bounds_long_schedules(shapes_model):
     design = recipes.time_series(every="1mo", start="2025-01-31", end="2026-12-31")
     text = design.describe(shapes_model)

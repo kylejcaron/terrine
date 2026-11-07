@@ -82,6 +82,9 @@ def _inputs():
             "true_and_unknown": tr.all_of(tr.eq(short, 0), tr.gt(week, 0)),
             "many_items": tr.gt(distinct, 2),
             "items_7d": distinct,
+            "false_or_unknown": tr.any_of(tr.gt(short, 0), tr.gt(week, 0)),
+            "true_or_unknown": tr.any_of(tr.eq(short, 0), tr.gt(week, 0)),
+            "not_converted": tr.not_(tr.gt(week, 0)),
         },
     )
     return con, model, design
@@ -137,6 +140,51 @@ def test_churned_30d_eq_zero(boolean_result):
         "b": (True, True, None),
         "c": (None, False, "incomplete_observation"),
     }
+
+
+def test_any_of_not_combine(boolean_result):
+    unknown = (None, False, "incomplete_observation")
+    assert _states(boolean_result, "true_or_unknown")["c"] == (True, True, None)
+    assert _states(boolean_result, "false_or_unknown")["c"] == unknown
+    assert _states(boolean_result, "not_converted") == {
+        "a": (False, True, None),
+        "b": (True, True, None),
+        "c": unknown,
+    }
+
+
+def test_fewer_than_three_orders_eligibility():
+    con = ibis.duckdb.connect()
+    con.raw_sql("CREATE TABLE users AS SELECT * FROM (VALUES ('none'), ('two'), ('three')) t(id)")
+    con.raw_sql("""
+        CREATE TABLE orders AS SELECT id, ts::TIMESTAMP AS ts
+        FROM (VALUES ('none', '2024-12-20'), ('two', '2025-01-10'), ('two', '2025-01-20'),
+                     ('three', '2025-01-05'), ('three', '2025-01-15'), ('three', '2025-01-25'))
+            AS o(id, ts)
+    """)
+    model = tr.Model.from_tables(
+        con,
+        units={"user": tr.UnitSource("users", "id")},
+        events={
+            "orders": tr.Events(
+                "orders",
+                time="ts",
+                key="id",
+                metrics={"orders": tr.count()},
+                complete=("2024-12-01", "2025-01-31"),
+            )
+        },
+    )
+    design = tr.Design(
+        "user",
+        tr.FixedDate("2025-02-01"),
+        eligibility={"low": tr.lt(tr.agg("orders", window=("-30d", "0s")), 3)},
+    )
+    try:
+        result = design.build(model).materialize(budget=tr.Budget(max_rows=10, strict_scan=False))
+        assert sorted(result.table["unit"].to_pylist()) == ["none", "two"]
+    finally:
+        con.disconnect()
 
 
 def test_is_null_event_time_feature_and_arrow_metadata_round_trip(boolean_result):

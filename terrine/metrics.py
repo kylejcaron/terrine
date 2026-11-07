@@ -9,11 +9,9 @@ from pydantic import ValidationError
 
 from terrine.data import EventMetric, Ratio, Where
 from terrine.errors import RefusalSpec
-from terrine.semantic.models import Filter
+from terrine.semantic.models import Filter, FilterOp
 
 __all__ = ["count", "sum", "mean", "min", "max", "count_distinct", "ratio"]
-
-type _Op = Literal["equals", "not_equals", "in", "not_in", "gt", "gte", "lt", "lte", "between"]
 
 _INVALID_FILTER = RefusalSpec(
     "terrine.model.invalid_binding",
@@ -26,7 +24,7 @@ _INVALID_ARGUMENT = RefusalSpec(
     "Metric argument {field!r} is unusable: name a column or metric, pass per='event' "
     "or per='day' and exact=True or exact=False, and give where= as a mapping keyed by label.",
 )
-_OPERATORS: dict[str, _Op] = {
+_OPERATORS: dict[str, FilterOp] = {
     "ne": "not_equals",
     "in": "in",
     "not_in": "not_in",
@@ -68,7 +66,9 @@ def _filter(key: object, value: object) -> Filter:
     label, separator, suffix = key.partition("__")
     if not label or "__" in suffix or (separator and suffix not in _OPERATORS):
         raise _INVALID_FILTER.error(reason="invalid_filter", key=key)
-    op: _Op = _OPERATORS[suffix] if separator else "in" if isinstance(value, _LISTS) else "equals"
+    op: FilterOp = (
+        _OPERATORS[suffix] if separator else "in" if isinstance(value, _LISTS) else "equals"
+    )
     if op == "between":
         # A range is an ordered pair: a set has no order and a reversed pair matches nothing.
         if not isinstance(value, (list, tuple)) or len(value) != 2 or _reversed(*value):

@@ -599,17 +599,17 @@ literals mean their stored binary64 values. On an exact numeric property, a
 native literal contract, not a claim of compatibility with another system's
 implicit coercions. Quote decimal prices and rates for every comparator:
 
-| Operator | Example threshold(s) for an exact `price` property |
-| --- | --- |
-| `equals` | `"0.10"` |
-| `not_equals` | `"0.10"` |
-| `gt` | `"0.105"` |
-| `gte` | `"0.10"` |
-| `lt` | `"0.105"` |
-| `lte` | `"0.10"` |
-| `in` | `["0.10", "0.20"]` |
-| `not_in` | `["0.10", "0.20"]` |
-| `between` | `["0.10", "0.20"]` (inclusive) |
+| Operator | `where=` key | Design predicate | Example threshold(s) for an exact `price` property |
+| --- | --- | --- | --- |
+| `equals` | `price` | `tr.eq` | `"0.10"` |
+| `not_equals` | `price__ne` | `tr.ne` | `"0.10"` |
+| `gt` | `price__gt` | `tr.gt` | `"0.105"` |
+| `gte` | `price__gte` | `tr.gte` | `"0.10"` |
+| `lt` | `price__lt` | `tr.lt` | `"0.105"` |
+| `lte` | `price__lte` | `tr.lte` | `"0.10"` |
+| `in` | `price` (a list) or `price__in` | `tr.isin` | `["0.10", "0.20"]` |
+| `not_in` | `price__not_in` | `tr.not_(tr.isin(...))` | `["0.10", "0.20"]` |
+| `between` | `price__between` | `tr.between` | `["0.10", "0.20"]` (inclusive) |
 
 For example, an exact decimal price `0.10` equals `"0.1"`, but does **not**
 equal float `0.1`; that binary64 value is slightly larger than exact
@@ -637,6 +637,16 @@ filters remain typed.
 
 For DuckDB's signed `HUGEINT`, threshold clipping covers its full signed
 128-bit range even when Ibis reports the column as `Decimal(38, 0)`.
+
+Design comparisons share these operators and their typed lowering with
+`where=` filters and Catalog filters: each record's `op` is the Catalog
+operator, and a Design comparison over a value compiles to the same predicate
+as the matching filter over a column. A Design comparison over an incomplete
+or null value is unknown (null) with that value's reason; a null literal gives
+`null_comparison`. `all_of`, `any_of` and `not_` combine comparisons and
+`is_null` with SQL three-valued AND, OR and NOT: a known false term settles
+`all_of`, a known true term settles `any_of`, and `not_` of an unknown rule
+stays unknown.
 
 ### Exact numeric state
 

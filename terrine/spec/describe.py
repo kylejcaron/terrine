@@ -15,14 +15,22 @@ from terrine.spec.expressions import (
     ApproxMetricDistinct,
     ApproxMetricQuantile,
     AttributeAsOf,
+    Between,
     Eq,
     EventTime,
     Expr,
     Gt,
+    Gte,
+    IsIn,
     IsNull,
     JsonScalar,
+    Lt,
+    Lte,
     MetricAgg,
     MetricQuantile,
+    Ne,
+    Not,
+    Or,
     Predicate,
     RetentionMetric,
 )
@@ -290,15 +298,29 @@ class _Renderer:
             if expr.measure == "elapsed":
                 return f"time since {occurrence} {expr.event}{label} in {own}{relative}"
             return f"time of the {occurrence} {expr.event} event{label} in {own}{relative}"
-        if isinstance(expr, Gt):
-            return f"{self._expression(expr.expr, origin)} > {_scalar(expr.value)}"
-        if isinstance(expr, Eq):
-            return f"{self._expression(expr.expr, origin)} == {_scalar(expr.value)}"
+        if isinstance(expr, (Eq, Ne, Gt, Gte, Lt, Lte)):
+            symbol = "==" if isinstance(expr, Eq) else _OPERATORS[expr.op]
+            return f"{self._expression(expr.expr, origin)} {symbol} {_scalar(expr.value)}"
+        if isinstance(expr, IsIn):
+            listed = ", ".join(_scalar(value) for value in expr.values)
+            return f"{self._expression(expr.expr, origin)} in ({listed})"
+        if isinstance(expr, Between):
+            low, high = _scalar(expr.low), _scalar(expr.high)
+            return f"{self._expression(expr.expr, origin)} between {low} and {high}"
         if isinstance(expr, IsNull):
             state = "not null" if expr.negate else "null"
             return f"{self._expression(expr.expr, origin)} is {state}"
-        assert isinstance(expr, And)
-        return " and ".join(self._expression(term, origin) for term in expr.terms)
+        if isinstance(expr, Not):
+            return f"not ({self._expression(expr.term, origin)})"
+        assert isinstance(expr, (And, Or))
+        joiner = " and " if isinstance(expr, And) else " or "
+        return joiner.join(
+            # A nested connective of the other kind keeps its grouping.
+            f"({self._expression(term, origin)})"
+            if isinstance(term, (And, Or)) and type(term) is not type(expr)
+            else self._expression(term, origin)
+            for term in expr.terms
+        )
 
     # Sections
 

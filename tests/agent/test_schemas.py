@@ -104,20 +104,42 @@ def test_discovery_schema_accepts_boolean_features_and_outcomes():
     from jsonschema import Draft202012Validator
 
     from terrine.agent.design_schema import design_schema
-    from terrine.spec import Design, FixedDate, agg, all_of, eq, event_time, gt, is_null
+    from terrine.spec import (
+        Design,
+        FixedDate,
+        agg,
+        all_of,
+        any_of,
+        asof,
+        between,
+        eq,
+        event_time,
+        gt,
+        gte,
+        is_null,
+        isin,
+        lt,
+        lte,
+        ne,
+        not_,
+    )
     from terrine.spec.io import to_json
 
+    week = agg("orders", window=("0s", "7d"))
+    tier = asof("tier")
     design = Design(
         "user",
         FixedDate("2025-01-01"),
         features={"missing": is_null(event_time("order", window=("-7d", "0s")))},
         outcomes={
-            "converted": gt(agg("orders", window=("0s", "7d")), 0),
+            "converted": gt(week, 0),
             "churned": eq(agg("orders", window=("0s", "30d")), 0),
-            "both": all_of(
-                gt(agg("orders", window=("0s", "7d")), 0),
-                eq(agg("orders", window=("7d", "30d")), 0),
-            ),
+            "both": all_of(gt(week, 0), eq(agg("orders", window=("7d", "30d")), 0)),
+            "either": any_of(lt(week, 1), gte(week, 5), not_(lte(week, 2))),
+        },
+        eligibility={
+            "band": between(tier, "a", "m"),
+            "known": all_of(ne(tier, "x"), isin(tier, [1])),
         },
     )
     Draft202012Validator(design_schema()).validate(json.loads(to_json(design)))

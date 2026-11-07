@@ -77,7 +77,7 @@ shadowing Python's builtins in your own namespace.
 | Bind and build | `Model`, `Design`, `Dataset`, `Events`, `History`, `Coverage`, `UnitSource`, `Budget`, `preview` | First dataset; [event tables and catalogs](temporal-engine.md) |
 | Metrics on `Events` | `count`, `sum`, `mean`, `min`, `max`, `count_distinct`, `ratio` | [Binding event tables](temporal-engine.md#binding-event-tables) |
 | Anchors | `FixedDate`, `EventAnchor`, `AnchorRange`, `Schedule` | [Anchors](candidate-anchors.md) |
-| Feature/outcome expressions and eligibility | `agg`, `asof`, `event_time`, `since`, `eq`, `gt`, `is_null`, `all_of` | [Temporal semantics](temporal-engine.md) |
+| Feature/outcome expressions and eligibility | `agg`, `asof`, `event_time`, `since`, `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `isin`, `between`, `is_null`, `all_of`, `any_of`, `not_` | [Temporal semantics](temporal-engine.md) |
 | Common dataset types | `recipes` | Construction layers above |
 | Save a design or handle a refusal | `from_yaml`, `to_yaml`, `TerrineError`, `UnverifiedBackendWarning` | [Design specifications](design-specs.md), [refusal reference](../reference/refusals.md) |
 

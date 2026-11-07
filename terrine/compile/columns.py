@@ -52,15 +52,12 @@ from terrine.spec.anchors import FixedDate, Schedule
 from terrine.spec.design import _RESERVED_OUTPUT_NAME as _RESERVED_NAME
 from terrine.spec.design import Design
 from terrine.spec.expressions import (
-    And,
+    _PREDICATE_NODES,
     ApproxMetricDistinct,
     ApproxMetricQuantile,
     AttributeAsOf,
-    Eq,
     EventTime,
     Expr,
-    Gt,
-    IsNull,
     MetricAgg,
     MetricQuantile,
     Predicate,
@@ -1292,7 +1289,7 @@ def compile_columns(
     expression_timings = {}
     for role, named in (("feature", design.features), ("outcome", design.outcomes)):
         for name, node in named.items():
-            if isinstance(node, (Gt, Eq, IsNull, And)):
+            if isinstance(node, _PREDICATE_NODES):
                 for leaf in _output_leaves(node):
                     expression(leaf)
                 result = compile_predicate(table, node, values, output=name, role=role)

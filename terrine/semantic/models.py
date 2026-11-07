@@ -175,9 +175,13 @@ class Dimension(_Record):
     properties: tuple[StrictStr, ...]
 
 
+# Comparison operators shared by Catalog filters, where= keys and Design comparisons.
+type FilterOp = Literal["equals", "not_equals", "in", "not_in", "gt", "gte", "lt", "lte", "between"]
+
+
 class Filter(_Record):
     property: StrictStr
-    op: Literal["equals", "not_equals", "in", "not_in", "gt", "gte", "lt", "lte", "between"]
+    op: FilterOp
     values: tuple[object, ...]
 
     @model_validator(mode="before")
@@ -310,7 +314,7 @@ class Catalog(_Record):
 @dataclass(frozen=True, slots=True)
 class BoundFilter:
     property_name: str
-    op: Literal["equals", "not_equals", "in", "not_in", "gt", "gte", "lt", "lte", "between"]
+    op: FilterOp
     values: tuple[None | bool | int | float | str, ...]
 
 

@@ -26,15 +26,12 @@ from terrine.execution._metadata import metadata_operation
 from terrine.spec.anchors import AnchorRange, EventAnchor, FixedDate, Schedule, _aware_instant
 from terrine.spec.expressions import (
     _ELAPSED_SELECTOR,
-    And,
+    _PREDICATE_NODES,
     ApproxMetricDistinct,
     ApproxMetricQuantile,
     AttributeAsOf,
-    Eq,
     EventTime,
     Expr,
-    Gt,
-    IsNull,
     MetricAgg,
     MetricQuantile,
     Predicate,
@@ -283,50 +280,20 @@ class Design:
             raise _INVALID.error(reason="negative", field="gap")
         object.__setattr__(self, "unit", unit)
         object.__setattr__(self, "anchor", anchor)
-        object.__setattr__(
-            self,
-            "features",
-            _named_nodes(
-                features,
-                (
-                    MetricAgg,
-                    MetricQuantile,
-                    ApproxMetricQuantile,
-                    ApproxMetricDistinct,
-                    RetentionMetric,
-                    AttributeAsOf,
-                    EventTime,
-                    Gt,
-                    Eq,
-                    IsNull,
-                    And,
-                ),
-                "features",
-            ),
+        outputs = (
+            MetricAgg,
+            MetricQuantile,
+            ApproxMetricQuantile,
+            ApproxMetricDistinct,
+            RetentionMetric,
+            AttributeAsOf,
+            EventTime,
+            *_PREDICATE_NODES,
         )
+        object.__setattr__(self, "features", _named_nodes(features, outputs, "features"))
+        object.__setattr__(self, "outcomes", _named_nodes(outcomes, outputs, "outcomes"))
         object.__setattr__(
-            self,
-            "outcomes",
-            _named_nodes(
-                outcomes,
-                (
-                    MetricAgg,
-                    MetricQuantile,
-                    ApproxMetricQuantile,
-                    ApproxMetricDistinct,
-                    RetentionMetric,
-                    AttributeAsOf,
-                    EventTime,
-                    Gt,
-                    Eq,
-                    IsNull,
-                    And,
-                ),
-                "outcomes",
-            ),
-        )
-        object.__setattr__(
-            self, "eligibility", _named_nodes(eligibility, (Gt, Eq, IsNull, And), "eligibility")
+            self, "eligibility", _named_nodes(eligibility, _PREDICATE_NODES, "eligibility")
         )
         if isinstance(shape, StatePanel):
             for name in shape.baseline_features:

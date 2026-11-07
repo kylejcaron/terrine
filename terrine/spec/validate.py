@@ -28,16 +28,13 @@ from terrine.spec.anchors import EventAnchor, FixedDate, Schedule
 from terrine.spec.design import Design
 from terrine.spec.expressions import (
     _ELAPSED_SELECTOR,
+    _PREDICATE_NODES,
     _SKETCH_UNAVAILABLE,
-    And,
     ApproxMetricDistinct,
     ApproxMetricQuantile,
     AttributeAsOf,
-    Eq,
     EventTime,
     Expr,
-    Gt,
-    IsNull,
     MetricAgg,
     MetricQuantile,
     Predicate,
@@ -550,7 +547,7 @@ def _check_expression_timing(
 
 def _check_predicate_operands(value: Expr | Predicate) -> None:
     """Refuse approximate quantile operands before evaluating a boolean rule."""
-    if isinstance(value, (Gt, Eq, IsNull, And)):
+    if isinstance(value, _PREDICATE_NODES):
         for leaf in _output_leaves(value):
             if isinstance(leaf, ApproxMetricQuantile):
                 raise _APPROX_PREDICATE.error()
@@ -566,7 +563,7 @@ def _expression(
     *,
     name: str,
 ) -> None:
-    if isinstance(expr, (Gt, Eq, IsNull, And)):
+    if isinstance(expr, _PREDICATE_NODES):
         _check_predicate_operands(expr)
         for leaf in _output_leaves(expr):
             _expression(leaf, role, design, model, required, obligations, name=name)

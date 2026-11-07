@@ -23,8 +23,8 @@ from terrine.backends.numeric import (
 )
 from terrine.backends.timestamps import local_day
 from terrine.semantic.bind import _MISSING, _SCHEMA
-from terrine.semantic.filters import lower_filter
 from terrine.semantic.models import BoundMeasure, BoundSource, Filter
+from terrine.semantic.predicates import lower_predicate
 from terrine.semantic.rules import (
     UNSUPPORTED_TEMPORAL_AGGREGATION,
     supports_temporal_aggregation,
@@ -140,8 +140,9 @@ def _predicate(events: ibis.Table, measure: BoundMeasure, source: BoundSource):
     aliases = _enriched_property_columns(source.dimensions, _raw_columns(source))
     for filt in measure.filters:
         value, found = _filter_property(events, source, filt.property_name, aliases)
-        comparison = lower_filter(
-            events, Filter(property=filt.property_name, op=filt.op, values=filt.values), value
+        comparison = lower_predicate(
+            Filter(property=filt.property_name, op=filt.op, values=filt.values),
+            {filt.property_name: value}.__getitem__,
         )
         # Missing dimension history is unknown even for an accidental nonnull placeholder.
         comparison = found.ifelse(comparison, ibis.null().cast("boolean"))

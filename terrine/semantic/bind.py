@@ -385,11 +385,11 @@ def bind_metric(catalog: Catalog, metric_name: str) -> BoundMetric:
 
 def source_filter_predicate(table: ibis.Table, source: BoundSource) -> ir.BooleanValue:
     """Preserve unknown membership until the source-integrity check decides it."""
-    from terrine.semantic.filters import lower_filter
+    from terrine.semantic.predicates import lower_predicate
 
     predicate = cast(ir.BooleanValue, ibis.literal(True))
     for filt in source.where:
-        predicate &= lower_filter(table, filt, table[filt.property])
+        predicate &= lower_predicate(filt, table.__getitem__)
     return predicate
 
 
