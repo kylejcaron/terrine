@@ -161,9 +161,13 @@ documents are version 2; manifest and saved-plan envelopes are version 1.
   [integration test](../../integration/test_artifact_corpus_schema.py) compiles
   each stored Design with the current code and requires the recorded schema and
   roles.
+- Release tags in the 0.x series require a successful CI run. Release candidates
+  and final tags require successful CI, PostgreSQL, and scale jobs; the scale
+  tier includes the release-upgrade test. BigQuery and Snowflake runs are
+  advisory.
 - An [upgrade test](../../integration/test_release_upgrade.py) installs each
   released 1.x wheel listed in `tests/artifacts/RELEASES` into an isolated
   interpreter, stages a dataset with it and reopens that dataset in place with
-  the current code. It runs in the weekly scale tier and before each release.
+  the current code. It runs in the weekly scale tier.
 - Adding a format generation, and adding a release to `RELEASES`, are release
   checklist steps.
