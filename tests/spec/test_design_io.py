@@ -498,3 +498,18 @@ def test_since_round_trips_design_documents():
             },
         ).spec_hash
     )
+
+
+def test_legacy_minute_identity_preserves_literal_comparands():
+    from terrine.spec.io import _legacy_minute_digest, _legacy_minutes
+
+    payload = {
+        "window": {"start": "1h30min", "end": "0s"},
+        "equals": "5min",
+    }
+    old_spelling = _legacy_minutes(payload)
+
+    assert old_spelling == {"window": {"start": "90m", "end": "0s"}, "equals": "5min"}
+    assert _legacy_minute_digest(payload) != _legacy_minute_digest(
+        {**payload, "equals": "5m"}
+    )

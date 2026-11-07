@@ -138,16 +138,10 @@ def canonical_digest(payload: Mapping[str, Any]) -> str:
 
 
 _CANONICAL_MINUTE = re.compile(r"([+-]?)(?:(\d+)h)?(\d+)min")
+_DURATION_FIELDS = frozenset({"at", "every", "gap", "offset"})
 
 
-def _legacy_minutes(value: Any) -> Any:
-    """Encode canonical minute durations as their former ``m`` spelling."""
-    if isinstance(value, Mapping):
-        return {key: _legacy_minutes(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_legacy_minutes(item) for item in value]
-    if not isinstance(value, str):
-        return value
+def _legacy_minute_text(value: str) -> str:
     match = _CANONICAL_MINUTE.fullmatch(value)
     if match is None:
         return value
@@ -160,10 +154,38 @@ def _legacy_minutes(value: Any) -> Any:
     magnitude = abs(seconds)
     unit, size = next(
         (unit, size)
-        for unit, size in (("w", 604_800), ("d", 86_400), ("h", 3_600), ("m", 60), ("s", 1))
+        for unit, size in (
+            ("w", 604_800),
+            ("d", 86_400),
+            ("h", 3_600),
+            ("m", 60),
+            ("s", 1),
+        )
         if magnitude % size == 0
     )
     return f"{'-' if seconds < 0 else ''}{magnitude // size}{unit}"
+
+
+def _legacy_minutes(value: Any) -> Any:
+    """Encode only typed duration fields as their former ``m`` spelling."""
+    if isinstance(value, Mapping):
+        result: dict[Any, Any] = {}
+        for key, item in value.items():
+            if key in _DURATION_FIELDS and isinstance(item, str):
+                result[key] = _legacy_minute_text(item)
+            elif key == "window" and isinstance(item, Mapping):
+                result[key] = {
+                    name: _legacy_minute_text(part)
+                    if name in {"start", "end"} and isinstance(part, str)
+                    else _legacy_minutes(part)
+                    for name, part in item.items()
+                }
+            else:
+                result[key] = _legacy_minutes(item)
+        return result
+    if isinstance(value, (list, tuple)):
+        return [_legacy_minutes(item) for item in value]
+    return value
 
 
 def _legacy_minute_digest(payload: Mapping[str, Any]) -> str:
