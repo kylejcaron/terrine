@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+import duckdb
 import ibis
 import pytest
 
@@ -65,3 +66,22 @@ def test_exact_witness_refuses_on_wrong_known_answer(monkeypatch):
         assert caught.value.context["status"] == "witness_failed"
     finally:
         con.disconnect()
+
+
+def test_exact_witness_refuses_shadowed_aggregate_before_udf():
+    con = duckdb.connect()
+    calls = []
+    con.create_function(
+        "witness_probe",
+        lambda: calls.append(True) or 1,
+        return_type=duckdb.sqltype("INTEGER"),
+    )
+    con.execute("CREATE MACRO sum(value) AS witness_probe()")
+    try:
+        with pytest.raises(TerrineError) as caught:
+            _native.verify_exact_arithmetic(ibis.duckdb.from_connection(con))
+
+        assert caught.value.code == "terrine.execution.snapshot_unavailable"
+        assert calls == []
+    finally:
+        con.close()
