@@ -19,6 +19,7 @@ import subprocess
 import tarfile
 import tomllib
 from collections.abc import Iterator, Mapping, Sequence
+from dataclasses import fields
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -256,20 +257,27 @@ def _stable_objects(package: griffe.Module) -> dict[str, griffe.Object]:
 def _annotation_names(annotation: griffe.Expr) -> Iterator[str]:
     if isinstance(annotation, str):
         return
-    paths = set()
-    for expression in annotation.iterate():
-        if not isinstance(expression, griffe.ExprName | griffe.ExprAttribute):
-            continue
-        path = expression.canonical_path
-        if (
-            path is not None
-            and path.startswith(f"{_PACKAGE}.")
-            and all(part.isidentifier() for part in path.split("."))
-        ):
-            paths.add(path)
-    for path in sorted(paths):
-        if not any(other.startswith(f"{path}.") for other in paths):
-            yield path
+
+    def visit(expression: griffe.Expr) -> Iterator[str]:
+        if isinstance(expression, griffe.ExprAttribute | griffe.ExprName):
+            path = expression.canonical_path
+            if (
+                path is not None
+                and path.startswith(f"{_PACKAGE}.")
+                and all(part.isidentifier() for part in path.split("."))
+            ):
+                yield path
+            return
+        for field in fields(expression):
+            value = getattr(expression, field.name)
+            if isinstance(value, griffe.Expr):
+                yield from visit(value)
+            elif isinstance(value, Sequence) and not isinstance(value, str):
+                for item in value:
+                    if isinstance(item, griffe.Expr):
+                        yield from visit(item)
+
+    yield from visit(annotation)
 
 def check_signature_types(surface: Mapping[str, griffe.Object]) -> list[str]:
     """Find stable callables whose annotations name non-stable Terrine types."""

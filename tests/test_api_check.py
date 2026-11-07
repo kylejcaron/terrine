@@ -294,3 +294,25 @@ def test_qualified_stable_annotation_has_no_module_prefix_leak(tmp_path, monkeyp
     assert api_check.check_signature_types(
         {"terrine.Hidden": module["Hidden"], "terrine.f": module["f"]}
     ) == []
+
+
+def test_unclassified_type_is_not_hidden_by_stable_nested_type(tmp_path, monkeypatch):
+    package = tmp_path / "terrine"
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    (package / "api.py").write_text(
+        "class Hidden:\n"
+        "    class Public:\n"
+        "        pass\n\n"
+        "def f(value: Hidden | Hidden.Public):\n"
+        "    pass\n"
+    )
+    monkeypatch.chdir(tmp_path)
+    module = griffe.load("terrine.api", search_paths=[tmp_path])
+
+    assert api_check.check_signature_types(
+        {
+            "terrine.api.Hidden.Public": module["Hidden"]["Public"],
+            "terrine.api.f": module["f"],
+        }
+    ) == ["terrine.api.f: terrine.api.Hidden"]
