@@ -5,7 +5,6 @@ The package-root workflow for binding data, describing a Design, and creating a 
 ::: terrine
     options:
       members:
-        - Model
         - UnitSource
         - Events
         - History
@@ -17,7 +16,6 @@ The package-root workflow for binding data, describing a Design, and creating a 
         - max
         - count_distinct
         - ratio
-        - Design
         - FixedDate
         - EventAnchor
         - Schedule
@@ -44,6 +42,18 @@ The package-root workflow for binding data, describing a Design, and creating a 
         - to_yaml
         - from_yaml
         - TerrineError
+
+## Model
+
+::: terrine.Model
+    options:
+      members:
+        - from_tables
+        - from_catalog
+        - to_catalog
+
+`Design` is the stable full-flexibility compilation target; see
+[`terrine.spec.Design`](spec.md#terrine.spec.Design) for its stable reference.
 
 `UnverifiedBackendWarning` is also a stable root export. It marks an explicitly
 admitted Ibis backend whose read or consistency guarantees are not verified; see

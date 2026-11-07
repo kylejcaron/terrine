@@ -68,7 +68,9 @@ def _example_blocks(doc: str) -> Iterator[str]:
 def test_public_names_document_themselves_with_an_example(name: str, obj: object):
     doc = inspect.getdoc(obj)
     assert doc, name
-    assert all(_example_blocks(doc)), name
+    examples = list(_example_blocks(doc))
+    assert examples, name
+    assert all(examples), name
 
 
 def test_public_callables_document_every_parameter():

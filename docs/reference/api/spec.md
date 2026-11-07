@@ -27,7 +27,6 @@ Stable data-only declarations and expressions for the full-flexibility Design AP
         - CohortGrouping
         - CohortSpec
         - LifeTable
-        - Design
         - EventAnchor
         - EventTime
         - FixedDate
@@ -64,3 +63,15 @@ Stable data-only declarations and expressions for the full-flexibility Design AP
         - to_json
         - since
         - to_yaml
+
+## Design
+
+The stable Design describes row grain, anchors, expressions, predicates and
+completeness. Provisional specialized shapes are omitted; see the [facade
+stability table](../../guides/public-api.md#focused-facades).
+
+::: terrine.spec.Design
+    options:
+      show_docstring_parameters: false
+      show_docstring_attributes: false
+      show_signature_annotations: false
