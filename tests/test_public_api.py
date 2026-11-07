@@ -1,9 +1,13 @@
+import importlib
 import json
+from pathlib import Path
 from typing import Any, cast
 
+import griffe
 import pytest
 
 import terrine as tr
+from scripts.api_check import PROVISIONAL_NAMES, STABLE_FACADES, stable_surface
 from terrine.spec import DatasetDefinition
 
 ROOT = {
@@ -79,3 +83,56 @@ def test_recipes_dir_shows_only_recipes():
 
     public = {name for name in dir(r) if not name.startswith("_")}
     assert public == set(r.__all__)
+
+
+def test_provisional_names_are_still_exported():
+    expected = {
+        "terrine.Dataset",
+        "terrine.frame.Frame.stage",
+        "terrine.frame.Frame.expr",
+        "terrine.spec.Sequential",
+        "terrine.spec.EventPanel",
+        "terrine.spec.CalendarPanel",
+        "terrine.spec.CalendarComparisonPanel",
+        "terrine.spec.matched_t0",
+        "terrine.spec.CalendarComparisonSpec",
+        "terrine.windows.duration",
+        "terrine.data.Provenance",
+        "terrine.data.ColumnMeta",
+        "terrine.data.Roles",
+        "terrine.data.Preview",
+        "terrine.data.ExpressionTiming",
+        "terrine.data.SamplingMeta",
+        "terrine.data.ExecutionSnapshot",
+        "terrine.data.FeatureCutoff",
+        "terrine.data.MaterializedFrame",
+        "terrine.data.ApproximationMeta",
+        "terrine.data.CalendarComparisonMeta",
+        "terrine.data.CohortOperationMeta",
+        "terrine.data.DatasetViewMeta",
+        "terrine.data.SequenceMeta",
+        "terrine.data.StatePanelMeta",
+        "terrine.data.TreatmentHistoryMeta",
+    }
+    assert expected <= PROVISIONAL_NAMES
+    assert "terrine.metrics" in STABLE_FACADES
+    for qualified in PROVISIONAL_NAMES:
+        parts = qualified.split(".")
+        for module_end in range(len(parts), 0, -1):
+            try:
+                module = importlib.import_module(".".join(parts[:module_end]))
+            except ModuleNotFoundError:
+                continue
+            for name in parts[module_end:]:
+                module = getattr(module, name)
+            assert module is not None
+            break
+        else:
+            raise AssertionError(f"{qualified} does not resolve")
+
+
+def test_stable_surface_excludes_provisional_members():
+    root = Path(__file__).resolve().parents[1]
+    package = cast(griffe.Module, griffe.load("terrine", search_paths=[str(root)]))
+    surface = stable_surface(package)
+    assert "terrine.frame.Frame.stage" not in surface

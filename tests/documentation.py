@@ -124,15 +124,35 @@ def recovery_guide(code: str) -> tuple[str, str]:
         raise ValueError(f"Refusal namespace needs recovery guidance: {namespace}")
     return _RECOVERY[namespace]
 
+_PROVISIONAL_REFUSAL_FAMILIES = frozenset(
+    {
+        "agent",
+        "diff_diff",
+        "execution",
+        "export",
+        "increment",
+        "lifelines",
+        "runtime",
+        "simulate",
+    }
+)
+
+
+def refusal_tier(code: str) -> str:
+    """Return the stability tier associated with a refusal-code family."""
+    family = code.split(".")[1]
+    return "Provisional" if family in _PROVISIONAL_REFUSAL_FAMILIES else "Stable"
+
 
 def render_refusals(declarations: tuple[RefusalDeclaration, ...]) -> str:
     lines = [
         "# Refusal codes",
         "",
         "This reference is generated from every module-owned `RefusalSpec` declaration,",
-        "including inline declarations. Codes are stable; message wording is not an API.",
-        "Interpolation fields below are required by the message template, **not** an",
-        "exhaustive context schema. Inspect the immutable `TerrineError.context` for",
+        "including inline declarations. A refusal code is stable only when raised by a",
+        "stable name; the Tier column identifies its code family. Message wording is not",
+        "an API. Interpolation fields below are required by the message template, **not**",
+        "an exhaustive context schema. Inspect the immutable `TerrineError.context` for",
         "additional request-specific fields, exact reasons and available routes.",
         "Multiple message variants for the same code are retained. Do not retry a",
         "refusal by silently widening a budget, changing an input or dropping rows.",
@@ -157,8 +177,8 @@ def render_refusals(declarations: tuple[RefusalDeclaration, ...]) -> str:
         )
         lines.extend(
             [
-                "| Code | Message template | Interpolation fields | Declaration |",
-                "| --- | --- | --- | --- |",
+                "| Code | Tier | Message template | Interpolation fields | Declaration |",
+                "| --- | --- | --- | --- | --- |",
             ]
         )
         for item in sorted(
@@ -169,7 +189,8 @@ def render_refusals(declarations: tuple[RefusalDeclaration, ...]) -> str:
             template = html.escape(item.template).replace("|", "&#124;").replace("\n", "<br>")
             fields = ", ".join(f"`{field}`" for field in item.fields) or "None"
             lines.append(
-                f"| `{item.code}` | <code>{template}</code> | {fields} | "
+                f"| `{item.code}` | {refusal_tier(item.code)} | "
+                f"<code>{template}</code> | {fields} | "
                 f"[{item.source}](../../{item.source}) |"
             )
         lines.append("")

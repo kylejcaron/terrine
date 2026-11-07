@@ -14,25 +14,24 @@ matrix.
 From 1.0, breaking changes happen only in a major release.
 
 - The `terrine` root facade and `terrine.recipes`.
-- `terrine.spec`, except the approximate expressions `approx_distinct` and
-  `approx_quantile`.
+- `terrine.metrics` and the constructors exported from it.
+- `terrine.spec`, except provisional transforms and members listed below.
 - `terrine.windows`, including `Window`, `Duration` and `Months`.
-- `terrine.errors` and the [refusal codes](../reference/refusals.md).
+- `terrine.errors` and refusal codes raised by stable names.
 - `terrine.dataset`, `terrine.model` (except `Model.from_increment`) and
-  `terrine.frame`.
-- The names `terrine.data` exports: binding inputs such as `Coverage` and
-  `Events`, and the metadata types Terrine returns.
+  `terrine.frame`, except provisional members listed below.
+- The input declarations and metric types exported by `terrine.data`; returned
+  metadata records are provisional.
+- `terrine.reasons`: the missing-value reason vocabulary.
 - The Design, dataset definition, Catalog, manifest and Arrow/Parquet metadata
   formats (see [saved artifacts](#saved-artifacts)).
 - Frame output column names, types and roles for each shape.
 
-`Dataset` behavior and the artifacts it writes stay stable even though its
-implementation uses provisional runtime code.
-
 Stability follows exports, not module names: a stable name is one listed in a
-stable facade's `__all__`, together with its members (methods, attributes and
-parameters). Import it from that facade. The defining module behind a facade,
-such as `terrine.spec.expressions`, is internal.
+stable facade's `__all__`, together with its stable members (methods, attributes
+and parameters). Import it from that facade. The defining module behind a facade,
+such as `terrine.spec.expressions`, is internal. Provisional members of stable
+classes are excluded from the stable surface.
 
 ### Provisional
 
@@ -40,10 +39,16 @@ A provisional name may change in a minor release, and every such change has a
 changelog entry:
 
 - `terrine.runtime`, `terrine.execution`, `terrine.agent`,
-  `terrine.orchestration`, `terrine.adapters`, `terrine.export` and
-  `terrine.simulate`, with their modules;
-- `terrine.spec.approx_distinct`, `terrine.spec.approx_quantile` and
-  `Model.from_increment`.
+  `terrine.orchestration`, `terrine.adapters`, `terrine.export`,
+  `terrine.simulate` and the `terrine` CLI;
+- `Dataset`, `Frame.stage`, `Frame.expr`, and the result-metadata records
+  exported by `terrine.data`;
+- `Sequential`, `EventPanel`, `CalendarPanel`, `CalendarComparisonPanel`,
+  `matched_t0` and `CalendarComparisonSpec`;
+- `windows.duration`, `approx_distinct`, `approx_quantile` and
+  `Model.from_increment`;
+- refusal context fields such as `reason` and `field`. Refusal codes are frozen
+  only when raised by a stable name.
 
 Their docstrings say they are provisional, and the
 [focused facades](public-api.md#focused-facades) table lists each facade's tier.
