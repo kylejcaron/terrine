@@ -17,6 +17,7 @@ import terrine.reasons as reason_codes
 from terrine.errors import RefusalSpec, TerrineError
 from terrine.semantic.time import instant
 from terrine.spec.io import _drop_defaults
+from terrine.windows import Duration
 
 __all__ = [
     "TimeSplit",
@@ -126,7 +127,7 @@ class TimeSplit:
         *,
         train_until: date | datetime | str,
         validation_until: date | datetime | str | None = None,
-        embargo: str | timedelta | _SecondDuration = "0d",
+        embargo: str | Duration | timedelta = "0d",
         groups: GroupSplit | None = None,
     ) -> None:
         train = _boundary(train_until, "train_until")
