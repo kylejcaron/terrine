@@ -30,7 +30,7 @@ def test_life_table_grouping_features_retain_conservative_surrogate_timing():
                 administrative_cutoff=datetime(2025, 1, 22, tzinfo=UTC),
             )
             .build(model)
-            .materialize(Budget(max_rows=100, max_output_bytes=1_000_000))
+            .materialize(budget=Budget(max_rows=100, max_output_bytes=1_000_000))
         )
         for feature in ("region", "north"):
             surrogate = to_surrogate_arrow(life, features=(feature,), outcomes=("events",))

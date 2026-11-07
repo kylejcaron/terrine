@@ -36,8 +36,8 @@ def design_schema() -> dict[str, Any]:
     scalar = {"type": ["string", "number", "boolean", "null"]}
     duration = {
         "type": "string",
-        "pattern": "^[+-]?[0-9]+[smhdw]$",
-        "description": "Elapsed duration: a signed integer with an s, m, h, d or w unit.",
+        "pattern": "^[+-]?(?:[0-9]+(min|[shdw])|[0-9]+h[0-9]+min)$",
+        "description": "Elapsed duration: a signed integer with an s, min, h, d or w unit.",
     }
     definitions = {"Temporal": obj({"type": {"enum": ["date", "datetime"]}, "value": text})}
     definitions["Cutpoint"] = {
@@ -69,7 +69,7 @@ def design_schema() -> dict[str, Any]:
         "Schedule": {
             "every": {
                 "type": "string",
-                "pattern": "^(\\+?[0-9]+[smhdw]|[0-9]+(mo|y))$",
+                "pattern": "^(\\+?(?:[0-9]+(?:min|[shdw])|[0-9]+h[0-9]+min)|[0-9]+(mo|y))$",
                 "description": (
                     "Positive step between anchors: an elapsed duration such as 1w, or "
                     "calendar months such as 1mo or 1y, each clamped to its month's last day."

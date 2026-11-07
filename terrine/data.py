@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any, Literal
 import pyarrow as pa
 
 from terrine.backends.registry import get_engine
-from terrine.errors import RefusalSpec, freeze, parameter_names, thaw
+from terrine.errors import RefusalSpec, TerrineError, freeze, parameter_names, thaw
 from terrine.windows import Window, _elapsed, _seconds
 
 if TYPE_CHECKING:
@@ -127,6 +127,11 @@ _INVALID_ENGINE_STAMP = RefusalSpec(
     "terrine.metadata.invalid_engine_stamp",
     "Engine stamp is {reason} (present fields {fields!r}); re-materialize the Design "
     "with the current Terrine version.",
+)
+_INVALID_METADATA = RefusalSpec(
+    "terrine.metadata.invalid",
+    "Materialized frame metadata is invalid ({reason}); use a lossless Terrine Arrow or JSON "
+    "representation.",
 )
 _ENGINE_STAMP_FIELDS = ("dialect", "engine_name", "engine_status")
 _ARROW_METADATA_KEY = b"terrine.materialized_frame.v2"
@@ -503,9 +508,15 @@ class Events:
         complete: tuple[date | str, date | str] | None = None,
     ) -> None:
         bound = _table_input(table, "table")
+        if not isinstance(time, str):
+            raise _INVALID_BINDING.error(reason="wrong_type", field="time")
         _binding_name(time, "time")
+        if not isinstance(key, str):
+            raise _INVALID_BINDING.error(reason="wrong_type", field="key")
         _binding_name(key, "key")
         if unit is not None:
+            if not isinstance(unit, str):
+                raise _INVALID_BINDING.error(reason="wrong_type", field="unit")
             _binding_name(unit, "unit")
         declared = {} if metrics is None else metrics
         if not isinstance(declared, Mapping) or any(
@@ -1919,20 +1930,27 @@ class MaterializedFrame:
             raise _UNSUPPORTED_METADATA_VERSION.error(version=1)
         if raw is None:
             raise ValueError("Arrow schema has no Terrine metadata")
-        payload = json.loads(raw.decode("utf-8"))
-        if payload.get("version") != 2:
-            raise _UNSUPPORTED_METADATA_VERSION.error(version=payload.get("version"))
-        roles = _decode(payload["roles"], Roles)
-        columns = {key: _decode(item, ColumnMeta) for key, item in payload["columns"].items()}
-        provenance = _decode(payload["provenance"], Provenance)
-        missing = tuple(
-            name for name in payload["bookkeeping_columns"] if name not in table.column_names
-        )
-        if missing:
-            raise _MISSING_COLUMNS.error(columns=missing)
-        clean = dict(table.schema.metadata or {})
-        del clean[_ARROW_METADATA_KEY]
-        return cls(table.replace_schema_metadata(clean or None), roles, columns, provenance)
+        try:
+            payload = json.loads(raw.decode("utf-8"))
+            if payload.get("version") != 2:
+                raise _UNSUPPORTED_METADATA_VERSION.error(version=payload.get("version"))
+            roles = _decode(payload["roles"], Roles)
+            columns = {
+                key: _decode(item, ColumnMeta) for key, item in payload["columns"].items()
+            }
+            provenance = _decode(payload["provenance"], Provenance)
+            missing = tuple(
+                name for name in payload["bookkeeping_columns"] if name not in table.column_names
+            )
+            if missing:
+                raise _MISSING_COLUMNS.error(columns=missing)
+            clean = dict(table.schema.metadata or {})
+            del clean[_ARROW_METADATA_KEY]
+            return cls(table.replace_schema_metadata(clean or None), roles, columns, provenance)
+        except TerrineError:
+            raise
+        except Exception as error:
+            raise _INVALID_METADATA.error(reason="invalid_arrow_metadata") from error
 
     def to_json(self) -> str:
         """Serialize metadata plus an Arrow IPC stream, without pickle."""
@@ -1945,12 +1963,20 @@ class MaterializedFrame:
 
     @classmethod
     def from_json(cls, serialized: str) -> MaterializedFrame:
-        payload = json.loads(serialized)
-        if payload.pop("version") != 1:
-            raise ValueError("unsupported Terrine metadata version")
-        raw = b64decode(payload.pop("arrow_ipc"), validate=True)
-        table = pa.ipc.open_stream(pa.py_buffer(raw)).read_all()
-        roles = _decode(payload["roles"], Roles)
-        columns = {key: _decode(item, ColumnMeta) for key, item in payload["columns"].items()}
-        provenance = _decode(payload["provenance"], Provenance)
-        return cls(table, roles, columns, provenance)
+        try:
+            payload = json.loads(serialized)
+            version = payload.pop("version")
+            if version != 1:
+                raise _UNSUPPORTED_METADATA_VERSION.error(version=version)
+            raw = b64decode(payload.pop("arrow_ipc"), validate=True)
+            table = pa.ipc.open_stream(pa.py_buffer(raw)).read_all()
+            roles = _decode(payload["roles"], Roles)
+            columns = {key: _decode(item, ColumnMeta) for key, item in payload["columns"].items()}
+            provenance = _decode(payload["provenance"], Provenance)
+            return cls(table, roles, columns, provenance)
+        except TerrineError:
+            raise
+        except json.JSONDecodeError as error:
+            raise _INVALID_METADATA.error(reason="malformed_json") from error
+        except Exception as error:
+            raise _INVALID_METADATA.error(reason="invalid_json_metadata") from error

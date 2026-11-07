@@ -578,12 +578,12 @@ Fit on training rows; reuse unchanged frozen scoring limits.
 
 ## window
 
-Use ordered integral elapsed endpoints with s/m/h/d/w units.
+Use ordered integral elapsed endpoints with s/min/h/d/w units.
 
 [Recovery guide](../guides/design-specs.md)
 
 | Code | Message template | Interpolation fields | Declaration |
 | --- | --- | --- | --- |
 | `terrine.window.invalid_duration` | <code>{field}={value!r} is not a calendar step: use a whole number of months such as Months(3), or text such as &quot;3mo&quot; or &quot;1y&quot;.</code> | `field`, `value` | [terrine/windows.py](../../terrine/windows.py) |
-| `terrine.window.invalid_duration` | <code>{field}={value!r} is not an elapsed duration: use a signed integer with a unit such as &quot;-30s&quot;, &quot;-30d&quot;, or &quot;4w&quot;; bare 0 is allowed. Calendar months (&quot;1mo&quot;, &quot;1y&quot;) are accepted only by a Schedule&#x27;s every.</code> | `field`, `value` | [terrine/windows.py](../../terrine/windows.py) |
+| `terrine.window.invalid_duration` | <code>{field}={value!r} is not an elapsed duration: use a signed integer with a unit such as &quot;-30s&quot;, &quot;-30min&quot;, or &quot;4w&quot;; bare 0 is allowed. Calendar months (&quot;1mo&quot;, &quot;1y&quot;) are accepted only by a Schedule&#x27;s every.</code> | `field`, `value` | [terrine/windows.py](../../terrine/windows.py) |
 | `terrine.window.invalid_window` | <code>Window start {start_offset!r} is not before end {end_offset!r}. Use window=(earlier_time, later_time); the start is included and the end is excluded.</code> | `end_offset`, `start_offset` | [terrine/windows.py](../../terrine/windows.py) |

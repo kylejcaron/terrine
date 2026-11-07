@@ -251,7 +251,12 @@ def test_time_to_event_duration_keeps_submicrosecond_precision(snowflake_scratch
         WHERE "user_id" = 'a' AND "amount" = 2.50"""
     )
     model = shapes._model(scratch.con, tmp_path, "snowflake")
-    table = shapes._DESIGNS["time_to_first_order"].build(model).materialize(shapes._BUDGET).table
+    table = (
+        shapes._DESIGNS["time_to_first_order"]
+        .build(model)
+        .materialize(budget=shapes._BUDGET)
+        .table
+    )
     row = next(index for index, unit in enumerate(table["unit"].to_pylist()) if unit == "a")
     assert table.schema.field("duration").type == pa.duration("ns")
     assert table["duration"].cast(pa.int64())[row].as_py() == 86_400_000_000_001
@@ -284,7 +289,7 @@ def test_time_to_event_duration_outside_nanosecond_range_refuses(snowflake_scrat
         administrative_cutoff=datetime(2201, 1, 1, tzinfo=UTC),
     )
     with pytest.raises(TerrineError) as error:
-        design.build(model).materialize(shapes._BUDGET)
+        design.build(model).materialize(budget=shapes._BUDGET)
     assert error.value.code == "terrine.execution.arrow_timestamp_range"
 
 

@@ -130,12 +130,15 @@ def connection_lock(raw: Any) -> threading.RLock:
         return lock
 
 
-def _snapshot_error(reason: str):
-    return _SNAPSHOT_UNAVAILABLE.error(reason=reason)
+def _snapshot_error(reason: str, *, hint: str | None = None):
+    context = {"reason": reason}
+    if hint is not None:
+        context["hint"] = hint
+    return _SNAPSHOT_UNAVAILABLE.error(**context)
 
 
-def _binding_error(reason: str):
-    return _snapshot_error(reason)
+def _binding_error(reason: str, *, hint: str | None = None):
+    return _snapshot_error(reason, hint=hint)
 
 
 @dataclass(frozen=True, slots=True)
@@ -262,7 +265,13 @@ def _match(
         raise _binding_error(f"ambiguous relation {ref.name!r}; use qualified SQL or publication")
     obj = matches[0]
     if (obj.temporary and not allow_temporary) or obj.internal:
-        raise _binding_error(f"relation {ref.name!r} resolves to a temporary/internal object")
+        raise _binding_error(
+            f"relation {ref.name!r} resolves to a temporary/internal object",
+            hint=(
+                "create a table with CREATE TABLE name AS SELECT * FROM df, or omit con to query "
+                "the DataFrame directly"
+            ),
+        )
     if obj.kind not in {"table", "view"}:
         raise _binding_error(f"unsupported relation kind for {ref.name!r}")
     return obj

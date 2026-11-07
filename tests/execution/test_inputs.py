@@ -297,6 +297,36 @@ def test_identical_opaque_roots_share_one_publication_capture(tmp_path):
     finally:
         con.close()
 
+def test_registered_view_refusal_names_fix():
+    import copy
+    import pickle
+
+    import pyarrow as pa
+
+    from terrine.execution._native import _match, native_objects
+    from terrine.semantic.models import TableRef
+
+    con = duckdb.connect()
+    try:
+        con.register("registered_view", pa.table({"value": [1]}))
+        with pytest.raises(TerrineError) as error:
+            _match(TableRef(kind="table", name="registered_view"), native_objects(con))
+        assert error.value.code == "terrine.execution.snapshot_unavailable"
+        assert error.value.context["hint"] == (
+            "create a table with CREATE TABLE name AS SELECT * FROM df, or omit con to query "
+            "the DataFrame directly"
+        )
+
+        for restored in (
+            copy.deepcopy(error.value),
+            pickle.loads(pickle.dumps(error.value)),
+        ):
+            assert restored.context == error.value.context
+            with pytest.raises(TypeError):
+                restored.context["hint"] = "change"  # ty: ignore[invalid-assignment]
+    finally:
+        con.close()
+
 
 def _catalog(*, table: str = "events") -> Catalog:
     return Catalog.model_validate(

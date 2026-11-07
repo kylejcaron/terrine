@@ -20,7 +20,8 @@ from terrine.spec.expressions import (
 
 def test_durations_normalize_and_invalid_values_refuse():
     assert (
-        agg("sessions", window=("60s", "1h")).window == agg("sessions", window=("1m", "60m")).window
+        agg("sessions", window=("60s", "1h")).window
+        == agg("sessions", window=("1min", "60min")).window
     )
     assert agg("sessions", window=("-24h", "0d")).window.start.seconds == -86400
     for duration in ("1.5h", "1h30m", "1mo", "9223372036854775807w"):

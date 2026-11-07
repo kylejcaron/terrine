@@ -1056,3 +1056,9 @@ def test_cross_unit_source_property_refuses_with_incompatible_unit(con):
         ).validate(model)
     assert error.value.code == "terrine.design.incompatible_unit"
     assert error.value.context == {"unit": "account", "name": "status"}
+def test_events_time_wrong_type_reason():
+    with pytest.raises(TerrineError) as error:
+        Events("orders", time=cast(Any, 1), key="customer_id")
+    assert error.value.code == "terrine.model.invalid_binding"
+    assert error.value.context["reason"] == "wrong_type"
+    assert error.value.context["field"] == "time"

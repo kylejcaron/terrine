@@ -44,7 +44,7 @@ def test_state_panel_stage_matches_ordinary_normalization_and_support(events_wor
         )
     )
     budget = Budget(max_rows=100, max_output_bytes=100_000, strict_scan=False)
-    ordinary = frame.materialize(budget)
+    ordinary = frame.materialize(budget=budget)
     staged = frame.stage("periods", budget=budget)
     batches = list(staged.to_arrow_batches(batch_size=1))
     actual = MaterializedFrame.from_arrow(pa.Table.from_batches(batches))
@@ -117,7 +117,7 @@ def test_staged_batches_preserve_frame_metadata_and_verify_definition_ownership(
 ):
     frame, con = _durable_frame(events_world, tmp_path)
     training = frame.training_set(label="churn", incomplete_labels="keep")
-    expected = training.materialize(Budget(strict_scan=False))
+    expected = training.materialize(budget=Budget(strict_scan=False))
     dataset = training.stage("training", budget=Budget(strict_scan=False))
     batches = list(dataset.to_arrow_batches(batch_size=1))
     actual = MaterializedFrame.from_arrow(pa.Table.from_batches(batches))
@@ -334,7 +334,7 @@ def common_scenario(request, tmp_path_factory, interop_world):
 
 
 def test_local_arrow_preserves_exact_temporal_values_and_semantic_metadata(common_scenario):
-    materialized = common_scenario.frame.materialize(Budget(max_rows=3))
+    materialized = common_scenario.frame.materialize(budget=Budget(max_rows=3))
     arrow = materialized.to_pyarrow().sort_by("unit")
     assert arrow.schema.field("amount").type == pa.decimal128(38, 2)
     assert arrow.schema.field("t0").type == pa.timestamp("us", tz="UTC")
@@ -508,7 +508,7 @@ def test_since_staged_read_preserves_elapsed_values_and_selected_instants(
                 incomplete_labels="keep",
                 split=TimeSplit(train_until="2025-01-07T00:00:00Z"),
             )
-        expected = frame.materialize(Budget(strict_scan=False))
+        expected = frame.materialize(budget=Budget(strict_scan=False))
         dataset = frame.stage("recency", budget=Budget(strict_scan=False))
         actual = MaterializedFrame.from_arrow(dataset.to_pyarrow())
         assert pa.types.is_duration(actual.table["recency"].type)

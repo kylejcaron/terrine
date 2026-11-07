@@ -298,7 +298,7 @@ def _sample(design: Design, model: Model, budget: Budget) -> tuple[dict[str, flo
     start = time.perf_counter()
     frame = design.build(model)
     built = time.perf_counter()
-    result = frame.materialize(budget)
+    result = frame.materialize(budget=budget)
     done = time.perf_counter()
     return {
         "build_seconds": built - start,

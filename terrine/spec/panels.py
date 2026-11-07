@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import math
 from collections.abc import Iterable, Mapping
 from dataclasses import KW_ONLY, dataclass
@@ -444,17 +445,7 @@ def _copy_design(
     | EventPanelSpec
     | CalendarComparisonSpec,
 ) -> Design:
-    return Design(
-        base.unit,
-        base.anchor,
-        features=base.features,
-        outcomes=base.outcomes,
-        eligibility=base.eligibility,
-        gap=base.gap,
-        shape=shape,
-        anchor_range=base.anchor_range,
-        sample=base.sample,
-    )
+    return dataclasses.replace(base, shape=shape)
 
 
 def Sequential(

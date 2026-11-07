@@ -47,7 +47,13 @@ from terrine.spec.state_panel import (
     encode_cutpoint,
 )
 from terrine.spec.trajectory import CohortSpec, LifeTable, TimeToEvent, Trajectory
-from terrine.windows import Window
+from terrine.windows import (
+    Duration,
+    Months,
+    Window,
+    _seconds,
+    calendar_or_duration,
+)
 
 __all__ = [
     "SCHEMA_VERSION",
@@ -128,6 +134,8 @@ def canonical_digest(payload: Mapping[str, Any]) -> str:
     decoded from it.
     """
     return hashlib.sha256(_canonical_bytes(payload)).hexdigest()
+
+
 
 
 def _is_default(item: Any, default: Any) -> bool:
@@ -583,10 +591,18 @@ def _decimal_string(value: Any) -> Decimal:
     return Decimal(value)
 
 
-def _duration_text(value: Any) -> str:
+def _duration_text(value: Any) -> Duration:
     if not isinstance(value, str):
         raise ValueError("duration must be text")
-    return value
+    return Duration(_seconds(value, field="document", legacy_minutes=True))
+
+
+def _step_text(value: Any) -> Duration | Months:
+    if not isinstance(value, str):
+        raise ValueError("schedule interval must be text")
+    if value.endswith(("mo", "y")):
+        return calendar_or_duration(value, field="document")
+    return Duration(_seconds(value, field="document", legacy_minutes=True))
 
 
 def _node(value: Any) -> Any:
@@ -629,7 +645,7 @@ def _node(value: Any) -> Any:
         start, end = _read_date(item["start"]), _read_date(item["end"])
         if isinstance(start, datetime) or isinstance(end, datetime):
             raise ValueError("Schedule bounds require dates")
-        return Schedule(_duration_text(item["every"]), start, end)
+        return Schedule(_step_text(item["every"]), start, end)
     if tag == "AnchorRange":
         item = _fields(value, "AnchorRange", {"type"})
         start = None if item["start"] is None else _read_date(item["start"])

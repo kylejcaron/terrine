@@ -39,8 +39,8 @@ import ibis
 import pyarrow.parquet as pq
 
 import terrine
-from terrine import Budget, Coverage, Model, UnitSource
-from terrine.spec import from_json
+from terrine import Budget, Coverage, Model, UnitSource, recipes
+from terrine.spec import BinnedMetricState, from_json
 
 location = Path(terrine.__file__).resolve()
 assert not location.is_relative_to(checkout), f"terrine was imported from {location}"
@@ -54,13 +54,22 @@ model = Model.from_catalog(
     units={"customer": UnitSource("customers", "customer_id")},
     readiness={"orders": Coverage("2025-01-01", "2025-02-28")},
 )
+budget = Budget(max_rows=100, max_output_bytes=1_000_000, strict_scan=False)
 dataset = (
     from_json((corpus / "design.json").read_text(encoding="utf-8"))
     .build(model)
-    .stage("corpus", budget=Budget(max_rows=100, max_output_bytes=1_000_000, strict_scan=False))
+    .stage("corpus", budget=budget)
 )
 (output / "manifest.json").write_text(dataset.manifest.to_json(), encoding="utf-8")
 pq.write_table(dataset.to_pyarrow(), output / "rows.parquet")
+
+state_panel = recipes.state_panel(
+    state_source=BinnedMetricState("spend", cutpoints=(0,), levels=("no_spend", "spend")),
+    every="1d",
+    start="2025-01-01",
+    end="2025-01-02",
+).build(model).stage("state_panel", budget=budget)
+(output / "state-panel-manifest.json").write_text(state_panel.manifest.to_json(), encoding="utf-8")
 con.disconnect()
 """
 
@@ -120,7 +129,14 @@ if RELEASES:  # An empty list defines no test, rather than collecting a skipped 
         manifest = DatasetManifest.from_json((tmp_path / "manifest.json").read_text("utf-8"))
         con = ibis.duckdb.connect(str(tmp_path / "owner.duckdb"))
         try:
-            reopened = Dataset.from_manifest(manifest, con=con).to_pyarrow()
+            reopened_dataset = Dataset.from_manifest(manifest, con=con)
+            reopened = reopened_dataset.to_pyarrow()
+            restored_manifest = DatasetManifest.from_json(
+                (tmp_path / "state-panel-manifest.json").read_text("utf-8")
+            )
+            restored = Dataset.from_manifest(restored_manifest, con=con)
+            assert restored.manifest.frame_metadata["provenance"]["state_panel"] is not None
+            restored.to_pandas()
         finally:
             con.disconnect()
         staged = pq.read_table(tmp_path / "rows.parquet")

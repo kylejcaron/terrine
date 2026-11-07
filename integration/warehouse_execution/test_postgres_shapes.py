@@ -177,7 +177,7 @@ _DESIGNS = {
 
 
 def _rows(model, design):
-    table = design.build(model).materialize(_BUDGET).table
+    table = design.build(model).materialize(budget=_BUDGET).table
     kept = [name for name in table.column_names if name != "anchor_id"]
     return sorted(table.select(kept).to_pylist(), key=lambda row: (row["unit"], row["t0"]))
 
@@ -365,7 +365,7 @@ def test_source_filters_match_duckdb_and_refuse_unknown_membership(postgres_scra
         for model in (duckdb, postgres):
             model.con.raw_sql("UPDATE events SET amount = NULL WHERE user_id = 'c'")
             with pytest.raises(TerrineError) as error:
-                design.build(bind(model)).materialize(_BUDGET)
+                design.build(bind(model)).materialize(budget=_BUDGET)
             assert error.value.code == "terrine.compile.anchor_integrity"
             assert error.value.context["check_key"] == "unknown_event_filter_value"
     finally:
@@ -415,7 +415,7 @@ def test_forecast_and_ltv_use_set_based_lookups_and_anchor_joins(
             },
             outcomes={"spend_next_30d": tr.agg("spend", window=("0s", "30d"))},
         ),
-        "ltv": tr.recipes.ltv(start_event="orders", metric="spend", period="30d", periods=4),
+        "ltv": tr.recipes.ltv(start_event="orders", metric="spend", period="30d", max_periods=4),
     }[recipe]
     sql = con.compile(design.build(model).expr)
     if recipe == "ltv":

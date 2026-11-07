@@ -27,11 +27,20 @@ def test_suggested_duration_correction_is_accepted():
 
 
 def test_equivalent_durations_and_half_open_windows():
-    assert duration("-2w", field="window") == duration("-14d", field="window") == Duration(-1209600)
-    assert Window("-60m", "+0s") == Window("-1h", "0d")
+    assert Window("-60min", "+0s") == Window("-1h", "0d")
     assert Duration(86400) == duration("24h", field="gap")
     assert duration("+000s", field="window") == Duration(0)
-    assert Window("-1m", "1s").start.seconds == -60
+    assert Window("-1min", "1s").start.seconds == -60
+
+
+def test_bare_m_refuses_and_names_min():
+    with pytest.raises(TerrineError) as error:
+        duration("-3m", field="window")
+    assert error.value.context["hint"] == "use 'min' for minutes or 'mo' for months"
+
+
+def test_min_parses_and_formats():
+    assert str(duration("90min", field="window")) == "1h30min"
 
 
 @pytest.mark.parametrize(

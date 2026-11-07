@@ -18,7 +18,7 @@ The runnable [`examples/materialization_runtime.py`](../../examples/materializat
 uv run python examples/materialization_runtime.py
 ```
 
-The example publishes per-user one-day event totals and an effective-dated tier from a local DuckDB source, then verifies each exact-receipt result against a fresh `design.build(model).materialize(budget)` of the same Model/Design and source state. It then inserts an event and corrects the effective-dated tier, captures a new retained snapshot, saves a new plan against the first generation, and queries that second receipt. The totals change from `3, 4` to `8, 4`, and the tier changes from `gold` to `silver`; the first receipt remains bound to its original generation. Saved plans use the production `DesignExecutor`; no application-specific aggregation executor is involved in this example.
+The example publishes per-user one-day event totals and an effective-dated tier from a local DuckDB source, then verifies each exact-receipt result against a fresh `design.build(model).materialize(budget=budget)` of the same Model/Design and source state. It then inserts an event and corrects the effective-dated tier, captures a new retained snapshot, saves a new plan against the first generation, and queries that second receipt. The totals change from `3, 4` to `8, 4`, and the tier changes from `gold` to `silver`; the first receipt remains bound to its original generation. Saved plans use the production `DesignExecutor`; no application-specific aggregation executor is involved in this example.
 
 In the example Catalog, the `tier` property references the `history` dimension, whose `starts` and `ends` columns define validity intervals in `user_tier`. The Design requests `"tier": asof("tier", before="0s")`, so the attribute is taken strictly before the anchor from the effective-dated event history. Updating those dimension rows requires a new retained snapshot just as inserting an event does. The example reopens the first receipt after publishing the correction and checks that its original rows are unchanged.
 
@@ -268,7 +268,7 @@ with publish_native_inputs(model.catalog, con=con, units=model.units) as stored:
         event_ids=model.event_ids,
         input_binding=binding,
     )
-    result = design.build(pinned).materialize(budget)
+    result = design.build(pinned).materialize(budget=budget)
 ```
 
 Keep the publication open for new builds. An execution already holding a lease

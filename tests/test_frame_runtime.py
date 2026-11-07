@@ -111,9 +111,9 @@ def test_bounded_preview_caps_the_summary_read_but_not_the_checks(native_inputs,
 def test_materialization_aborts_instead_of_returning_partial_data(native_inputs, budget, code):
     frame = _design().build(_model(native_inputs))
     with pytest.raises(TerrineError) as error:
-        frame.materialize(budget)
+        frame.materialize(budget=budget)
     assert error.value.code == code
-    complete = frame.materialize(Budget(max_rows=2))
+    complete = frame.materialize(budget=Budget(max_rows=2))
     assert sorted(complete.table.column("unit").to_pylist()) == ["a", "b"]
     assert complete.provenance.eligibility_summary.retained == 2
 
@@ -122,7 +122,7 @@ def test_sequence_provenance_round_trips_on_bounded_materialization(native_input
     frame = _design(shape=EventSequence("session", Window("0s", "1d"), max_events=10)).build(
         _model(native_inputs)
     )
-    materialized = frame.materialize(Budget(max_rows=100, max_output_bytes=1_000_000))
+    materialized = frame.materialize(budget=Budget(max_rows=100, max_output_bytes=1_000_000))
     metadata = materialized.provenance.sequence_meta
     assert metadata.event == "session"
     assert metadata.representation == "positions"
@@ -136,6 +136,7 @@ def test_sequence_provenance_round_trips_on_bounded_materialization(native_input
     restored = type(materialized).from_arrow(materialized.to_pyarrow())
     assert restored.provenance.sequence_meta == metadata
     assert restored.provenance == materialized.provenance
+    assert len(restored.to_pandas()) == materialized.table.num_rows
 
 
 def test_unresolved_eligibility_refuses_export_with_only_aggregate_counts():
@@ -194,10 +195,12 @@ def test_strict_scan_policy_precedes_integrity_reads(native_inputs):
     )
     frame = _design().build(model)
     with pytest.raises(TerrineError) as error:
-        frame.materialize(Budget(max_scan_bytes=1))
+        frame.materialize(budget=Budget(max_scan_bytes=1))
     assert error.value.code == "terrine.budget.scan_unknown"
     with pytest.raises(TerrineError) as error:
-        frame.materialize()
+        assert frame.materialize(
+            budget=Budget(max_scan_bytes=1, strict_scan=False)
+        ).table.num_rows == 2
     assert error.value.code == "terrine.compile.anchor_integrity"
 
 

@@ -87,6 +87,7 @@ CODES: frozenset[str] = frozenset(
         "terrine.lifelines.delayed_entry",
         "terrine.lifelines.invalid_input",
         "terrine.lifelines.unsupported_shape",
+        "terrine.metadata.invalid",
         "terrine.metadata.invalid_eligibility_summary",
         "terrine.metadata.invalid_engine_stamp",
         "terrine.metadata.missing_columns",

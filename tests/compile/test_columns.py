@@ -949,7 +949,7 @@ def test_since_refuses_in_state_panel_baseline_and_ltv(column_model, shape):
                 start_event="amount",
                 metric="total",
                 period="1d",
-                periods=2,
+                max_periods=2,
                 features={"recency": elapsed},
             )
         else:

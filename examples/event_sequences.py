@@ -102,8 +102,8 @@ def main() -> None:
         )
         budget = tr.Budget(max_rows=100, max_output_bytes=1_000_000)
         sequence = recipes.event_sequence(
-            "user", event="activity", horizon="2h", max_events=4, session_gap="30m",
-        ).build(model).materialize(budget)
+            "user", event="activity", horizon="2h", max_events=4, session_gap="30min",
+        ).build(model).materialize(budget=budget)
         recipe_rows = sequence.table.to_pylist()
         headers = {row["unit"]: row for row in recipe_rows if not row["is_event"]}
         assert {unit: row["event_count"] for unit, row in headers.items()} == {
@@ -134,7 +134,7 @@ def main() -> None:
                 funnel=FunnelSpec("kind", ("view", "purchase"), within="2h"),
             ),
         )
-        positions = design.build(model).materialize(budget)
+        positions = design.build(model).materialize(budget=budget)
         children = [row for row in positions.table.to_pylist() if row["is_event"]]
         assert [row["event_id"] for row in children if row["unit"] == "u1"] == [
             "a-view",
@@ -161,7 +161,7 @@ def main() -> None:
             event_ids={"events": "event_id"},
             readiness={"events": tr.Coverage("2025-03-01", "2025-03-02")},
         )
-        limited = design.build(limited_model).materialize(budget)
+        limited = design.build(limited_model).materialize(budget=budget)
         limited_header = next(
             row for row in limited.table.to_pylist() if row["unit"] == "u2" and not row["is_event"]
         )
@@ -178,7 +178,7 @@ def main() -> None:
                 "activity", Window("0s", "2h"), max_events=4, representation="arrays"
             ),
         )
-        arrays = arrays_design.build(model).materialize(budget)
+        arrays = arrays_design.build(model).materialize(budget=budget)
         assert arrays.table.num_rows == 3
         print(positions.table.to_pylist())
         print(arrays.table.to_pylist())

@@ -10,7 +10,7 @@ constructors with assertions on values and materialized roles.
 ## Cumulative LTV
 
 `recipes.ltv` returns one row per unit/cohort origin and age. Required arguments
-are `start_event`, `metric`, `period`, and positive `periods`; `unit` is the
+are `start_event`, `metric`, `period`, and positive `max_periods`; `unit` is the
 model's only unit unless named (see [unit inference](design-specs.md#unit-inference)). `metric`
 must be an untransformed native metric backed by exactly one SUM measure.
 With `Model.from_tables`, that is a `tr.sum(column)` metric declared on the
@@ -18,7 +18,7 @@ With `Model.from_tables`, that is a `tr.sum(column)` metric declared on the
 Other aggregations, multi-measure metrics, and transforms refuse with
 `terrine.design.invalid` (reason `trajectory_metric_must_be_additive`).
 The first start event is the origin; each age represents a period of elapsed
-time from it. For ages `a = 0, ..., periods - 1` and positive period width `p`,
+time from it. For ages `a = 0, ..., max_periods - 1` and positive period width `p`,
 let `m_j` be the metric value in `[t0 + j*p, t0 + (j+1)*p)`. The cumulative
 value is `m_0 + ... + m_a`, the total in `[t0, t0 + (a+1)*p)`.
 **Age 0 includes the origin event**, rather than starting
@@ -37,7 +37,7 @@ from terrine import recipes
 
 cutoff = datetime(2025, 1, 22, tzinfo=UTC)
 ltv = recipes.ltv(
-    start_event="purchase", metric="net_revenue", period="7d", periods=3,
+    start_event="purchase", metric="net_revenue", period="7d", max_periods=3,
     administrative_cutoff=cutoff,
 )
 ```

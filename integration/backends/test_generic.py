@@ -451,7 +451,7 @@ def _event(user, when, *, qty=1, amount="0.00", weight=0.0):
 
 def _values(model, **features):
     design = tr.Design("user", tr.FixedDate("2025-01-02"), features=features)
-    table = design.build(model).materialize(_BUDGET).table
+    table = design.build(model).materialize(budget=_BUDGET).table
     return {row["unit"]: row for row in table.to_pylist()}
 
 
