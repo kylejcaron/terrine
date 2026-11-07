@@ -527,6 +527,12 @@ class _ClosingArrowReader:
     def schema(self) -> pa.Schema:
         return self._schema
 
+    def replace_schema_metadata(
+        self, metadata: Mapping[bytes, bytes] | None
+    ) -> _ClosingArrowReader:
+        self._schema = self._schema.with_metadata(metadata)
+        return self
+
     def __iter__(self) -> _ClosingArrowReader:
         return self
 
