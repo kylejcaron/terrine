@@ -21,6 +21,16 @@
       "role": "feature"
     },
     {
+      "name": "has_orders__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "has_orders__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
       "name": "time_bin",
       "type": "int64",
       "role": "feature"
@@ -31,9 +41,29 @@
       "role": "outcome"
     },
     {
+      "name": "at_risk__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "at_risk__reason",
+      "type": "list<item: string>",
+      "role": "output"
+    },
+    {
       "name": "events",
       "type": "int64",
       "role": "outcome"
+    },
+    {
+      "name": "events__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "events__reason",
+      "type": "list<item: string>",
+      "role": "output"
     },
     {
       "name": "censored",
@@ -41,9 +71,29 @@
       "role": "outcome"
     },
     {
+      "name": "censored__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "censored__reason",
+      "type": "list<item: string>",
+      "role": "output"
+    },
+    {
       "name": "censored_by_reason",
       "type": "map<string, int64>",
       "role": "outcome"
+    },
+    {
+      "name": "censored_by_reason__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "censored_by_reason__reason",
+      "type": "list<item: string>",
+      "role": "output"
     },
     {
       "name": "delayed_entries",
@@ -51,14 +101,54 @@
       "role": "outcome"
     },
     {
+      "name": "delayed_entries__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "delayed_entries__reason",
+      "type": "list<item: string>",
+      "role": "output"
+    },
+    {
       "name": "event_rate",
       "type": "double",
       "role": "outcome"
     },
     {
+      "name": "event_rate__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "event_rate__reason",
+      "type": "list<item: string>",
+      "role": "output"
+    },
+    {
       "name": "censor_rate",
       "type": "double",
       "role": "outcome"
+    },
+    {
+      "name": "censor_rate__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "censor_rate__reason",
+      "type": "list<item: string>",
+      "role": "output"
+    },
+    {
+      "name": "__terrine_has_orders_start_bound",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "output"
+    },
+    {
+      "name": "__terrine_has_orders_end_bound",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "output"
     }
   ],
   "design.yaml": [
@@ -83,6 +173,16 @@
       "role": "feature"
     },
     {
+      "name": "has_orders__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "has_orders__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
       "name": "time_bin",
       "type": "int64",
       "role": "feature"
@@ -93,9 +193,29 @@
       "role": "outcome"
     },
     {
+      "name": "at_risk__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "at_risk__reason",
+      "type": "list<item: string>",
+      "role": "output"
+    },
+    {
       "name": "events",
       "type": "int64",
       "role": "outcome"
+    },
+    {
+      "name": "events__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "events__reason",
+      "type": "list<item: string>",
+      "role": "output"
     },
     {
       "name": "censored",
@@ -103,9 +223,29 @@
       "role": "outcome"
     },
     {
+      "name": "censored__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "censored__reason",
+      "type": "list<item: string>",
+      "role": "output"
+    },
+    {
       "name": "censored_by_reason",
       "type": "map<string, int64>",
       "role": "outcome"
+    },
+    {
+      "name": "censored_by_reason__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "censored_by_reason__reason",
+      "type": "list<item: string>",
+      "role": "output"
     },
     {
       "name": "delayed_entries",
@@ -113,14 +253,54 @@
       "role": "outcome"
     },
     {
+      "name": "delayed_entries__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "delayed_entries__reason",
+      "type": "list<item: string>",
+      "role": "output"
+    },
+    {
       "name": "event_rate",
       "type": "double",
       "role": "outcome"
     },
     {
+      "name": "event_rate__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "event_rate__reason",
+      "type": "list<item: string>",
+      "role": "output"
+    },
+    {
       "name": "censor_rate",
       "type": "double",
       "role": "outcome"
+    },
+    {
+      "name": "censor_rate__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "censor_rate__reason",
+      "type": "list<item: string>",
+      "role": "output"
+    },
+    {
+      "name": "__terrine_has_orders_start_bound",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "output"
+    },
+    {
+      "name": "__terrine_has_orders_end_bound",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "output"
     }
   ],
   "definition.json": [
@@ -145,6 +325,16 @@
       "role": "feature"
     },
     {
+      "name": "has_orders__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "has_orders__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
       "name": "time_bin",
       "type": "int64",
       "role": "feature"
@@ -155,9 +345,29 @@
       "role": "outcome"
     },
     {
+      "name": "at_risk__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "at_risk__reason",
+      "type": "list<item: string>",
+      "role": "output"
+    },
+    {
       "name": "events",
       "type": "int64",
       "role": "outcome"
+    },
+    {
+      "name": "events__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "events__reason",
+      "type": "list<item: string>",
+      "role": "output"
     },
     {
       "name": "censored",
@@ -165,9 +375,29 @@
       "role": "outcome"
     },
     {
+      "name": "censored__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "censored__reason",
+      "type": "list<item: string>",
+      "role": "output"
+    },
+    {
       "name": "censored_by_reason",
       "type": "map<string, int64>",
       "role": "outcome"
+    },
+    {
+      "name": "censored_by_reason__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "censored_by_reason__reason",
+      "type": "list<item: string>",
+      "role": "output"
     },
     {
       "name": "delayed_entries",
@@ -175,14 +405,54 @@
       "role": "outcome"
     },
     {
+      "name": "delayed_entries__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "delayed_entries__reason",
+      "type": "list<item: string>",
+      "role": "output"
+    },
+    {
       "name": "event_rate",
       "type": "double",
       "role": "outcome"
     },
     {
+      "name": "event_rate__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "event_rate__reason",
+      "type": "list<item: string>",
+      "role": "output"
+    },
+    {
       "name": "censor_rate",
       "type": "double",
       "role": "outcome"
+    },
+    {
+      "name": "censor_rate__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "censor_rate__reason",
+      "type": "list<item: string>",
+      "role": "output"
+    },
+    {
+      "name": "__terrine_has_orders_start_bound",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "output"
+    },
+    {
+      "name": "__terrine_has_orders_end_bound",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "output"
     }
   ]
 }

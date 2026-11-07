@@ -21,9 +21,29 @@
       "role": "feature"
     },
     {
+      "name": "orders_30d__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "orders_30d__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
       "name": "paid_status",
       "type": "bool",
       "role": "eligibility"
+    },
+    {
+      "name": "paid_status__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "paid_status__reason",
+      "type": "string",
+      "role": "output"
     },
     {
       "name": "treatment",
@@ -31,9 +51,29 @@
       "role": "treatment"
     },
     {
+      "name": "treatment__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "treatment__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
       "name": "trial_id",
       "type": "string",
       "role": "trial"
+    },
+    {
+      "name": "trial_id__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "trial_id__reason",
+      "type": "string",
+      "role": "output"
     }
   ],
   "design.yaml": [
@@ -58,9 +98,29 @@
       "role": "feature"
     },
     {
+      "name": "orders_30d__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "orders_30d__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
       "name": "paid_status",
       "type": "bool",
       "role": "eligibility"
+    },
+    {
+      "name": "paid_status__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "paid_status__reason",
+      "type": "string",
+      "role": "output"
     },
     {
       "name": "treatment",
@@ -68,9 +128,29 @@
       "role": "treatment"
     },
     {
+      "name": "treatment__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "treatment__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
       "name": "trial_id",
       "type": "string",
       "role": "trial"
+    },
+    {
+      "name": "trial_id__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "trial_id__reason",
+      "type": "string",
+      "role": "output"
     }
   ],
   "definition.json": [
@@ -95,9 +175,29 @@
       "role": "feature"
     },
     {
+      "name": "orders_30d__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "orders_30d__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
       "name": "paid_status",
       "type": "bool",
       "role": "eligibility"
+    },
+    {
+      "name": "paid_status__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "paid_status__reason",
+      "type": "string",
+      "role": "output"
     },
     {
       "name": "treatment",
@@ -105,9 +205,29 @@
       "role": "treatment"
     },
     {
+      "name": "treatment__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "treatment__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
       "name": "trial_id",
       "type": "string",
       "role": "trial"
+    },
+    {
+      "name": "trial_id__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "trial_id__reason",
+      "type": "string",
+      "role": "output"
     }
   ]
 }

@@ -40,16 +40,10 @@ def test_generation_designs_compile_to_recorded_schema(design_path):
                     model
                 ),
             }
-            schemas = {
-                name: [column for column in output_schema(frame) if column["role"] != "support"]
-                for name, frame in frames.items()
-            }
+            schemas = {name: output_schema(frame) for name, frame in frames.items()}
         finally:
             con.disconnect()
-    expected_schema = {
-        name: [column for column in columns if column["role"] != "support"]
-        for name, columns in json.loads(read("expected_schema.json")).items()
-    }
+    expected_schema = json.loads(read("expected_schema.json"))
     assert schemas == expected_schema
     if directory.name == "ltv":
         assert "age" in {column["name"] for column in schemas["design.json"]}

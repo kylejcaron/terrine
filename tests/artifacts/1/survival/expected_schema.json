@@ -21,9 +21,29 @@
       "role": "feature"
     },
     {
+      "name": "orders_30d__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "orders_30d__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
       "name": "event_time",
       "type": "timestamp[us, tz=UTC]",
       "role": "outcome"
+    },
+    {
+      "name": "event_time__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "event_time__reason",
+      "type": "string",
+      "role": "output"
     },
     {
       "name": "censor_time",
@@ -36,9 +56,29 @@
       "role": "outcome"
     },
     {
+      "name": "duration__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "duration__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
       "name": "event",
       "type": "bool",
       "role": "outcome"
+    },
+    {
+      "name": "event__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "event__reason",
+      "type": "string",
+      "role": "output"
     },
     {
       "name": "entry_time",
@@ -49,6 +89,16 @@
       "name": "censor_reason",
       "type": "string",
       "role": "outcome"
+    },
+    {
+      "name": "censor_reason__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "censor_reason__reason",
+      "type": "string",
+      "role": "output"
     }
   ],
   "design.yaml": [
@@ -73,9 +123,29 @@
       "role": "feature"
     },
     {
+      "name": "orders_30d__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "orders_30d__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
       "name": "event_time",
       "type": "timestamp[us, tz=UTC]",
       "role": "outcome"
+    },
+    {
+      "name": "event_time__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "event_time__reason",
+      "type": "string",
+      "role": "output"
     },
     {
       "name": "censor_time",
@@ -88,9 +158,29 @@
       "role": "outcome"
     },
     {
+      "name": "duration__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "duration__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
       "name": "event",
       "type": "bool",
       "role": "outcome"
+    },
+    {
+      "name": "event__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "event__reason",
+      "type": "string",
+      "role": "output"
     },
     {
       "name": "entry_time",
@@ -101,6 +191,16 @@
       "name": "censor_reason",
       "type": "string",
       "role": "outcome"
+    },
+    {
+      "name": "censor_reason__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "censor_reason__reason",
+      "type": "string",
+      "role": "output"
     }
   ],
   "definition.json": [
@@ -125,9 +225,29 @@
       "role": "feature"
     },
     {
+      "name": "orders_30d__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "orders_30d__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
       "name": "event_time",
       "type": "timestamp[us, tz=UTC]",
       "role": "outcome"
+    },
+    {
+      "name": "event_time__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "event_time__reason",
+      "type": "string",
+      "role": "output"
     },
     {
       "name": "censor_time",
@@ -140,9 +260,29 @@
       "role": "outcome"
     },
     {
+      "name": "duration__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "duration__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
       "name": "event",
       "type": "bool",
       "role": "outcome"
+    },
+    {
+      "name": "event__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "event__reason",
+      "type": "string",
+      "role": "output"
     },
     {
       "name": "entry_time",
@@ -153,6 +293,16 @@
       "name": "censor_reason",
       "type": "string",
       "role": "outcome"
+    },
+    {
+      "name": "censor_reason__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "censor_reason__reason",
+      "type": "string",
+      "role": "output"
     }
   ]
 }

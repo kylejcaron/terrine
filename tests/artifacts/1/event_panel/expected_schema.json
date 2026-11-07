@@ -34,6 +34,16 @@
       "name": "orders_30d",
       "type": "int64",
       "role": "feature"
+    },
+    {
+      "name": "orders_30d__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "orders_30d__reason",
+      "type": "string",
+      "role": "output"
     }
   ],
   "design.yaml": [
@@ -71,6 +81,16 @@
       "name": "orders_30d",
       "type": "int64",
       "role": "feature"
+    },
+    {
+      "name": "orders_30d__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "orders_30d__reason",
+      "type": "string",
+      "role": "output"
     }
   ],
   "definition.json": [
@@ -108,6 +128,16 @@
       "name": "orders_30d",
       "type": "int64",
       "role": "feature"
+    },
+    {
+      "name": "orders_30d__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "orders_30d__reason",
+      "type": "string",
+      "role": "output"
     }
   ]
 }

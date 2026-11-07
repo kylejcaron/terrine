@@ -41,9 +41,29 @@
       "role": "event_property"
     },
     {
+      "name": "event_count__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "event_count__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
       "name": "orders_30d",
       "type": "int64",
       "role": "feature"
+    },
+    {
+      "name": "orders_30d__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "orders_30d__reason",
+      "type": "string",
+      "role": "output"
     }
   ],
   "design.yaml": [
@@ -88,9 +108,29 @@
       "role": "event_property"
     },
     {
+      "name": "event_count__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "event_count__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
       "name": "orders_30d",
       "type": "int64",
       "role": "feature"
+    },
+    {
+      "name": "orders_30d__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "orders_30d__reason",
+      "type": "string",
+      "role": "output"
     }
   ],
   "definition.json": [
@@ -135,9 +175,29 @@
       "role": "event_property"
     },
     {
+      "name": "event_count__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "event_count__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
       "name": "orders_30d",
       "type": "int64",
       "role": "feature"
+    },
+    {
+      "name": "orders_30d__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "orders_30d__reason",
+      "type": "string",
+      "role": "output"
     }
   ]
 }

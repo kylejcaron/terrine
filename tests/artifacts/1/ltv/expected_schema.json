@@ -26,6 +26,16 @@
       "role": "outcome"
     },
     {
+      "name": "period_value__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "period_value__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
       "name": "period_value_mature",
       "type": "bool",
       "role": "output"
@@ -36,9 +46,39 @@
       "role": "feature"
     },
     {
+      "name": "orders_30d__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "orders_30d__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
       "name": "cumulative_value",
       "type": "double",
       "role": "outcome"
+    },
+    {
+      "name": "cumulative_value__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "cumulative_value__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
+      "name": "period_value_observed_from",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "output"
+    },
+    {
+      "name": "period_value_observed_until",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "output"
     }
   ],
   "design.yaml": [
@@ -68,6 +108,16 @@
       "role": "outcome"
     },
     {
+      "name": "period_value__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "period_value__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
       "name": "period_value_mature",
       "type": "bool",
       "role": "output"
@@ -78,9 +128,39 @@
       "role": "feature"
     },
     {
+      "name": "orders_30d__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "orders_30d__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
       "name": "cumulative_value",
       "type": "double",
       "role": "outcome"
+    },
+    {
+      "name": "cumulative_value__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "cumulative_value__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
+      "name": "period_value_observed_from",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "output"
+    },
+    {
+      "name": "period_value_observed_until",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "output"
     }
   ],
   "definition.json": [
@@ -110,6 +190,16 @@
       "role": "outcome"
     },
     {
+      "name": "period_value__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "period_value__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
       "name": "period_value_mature",
       "type": "bool",
       "role": "output"
@@ -120,9 +210,39 @@
       "role": "feature"
     },
     {
+      "name": "orders_30d__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "orders_30d__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
       "name": "cumulative_value",
       "type": "double",
       "role": "outcome"
+    },
+    {
+      "name": "cumulative_value__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "cumulative_value__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
+      "name": "period_value_observed_from",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "output"
+    },
+    {
+      "name": "period_value_observed_until",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "output"
     }
   ]
 }

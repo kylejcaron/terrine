@@ -23,10 +23,10 @@ import re
 import shutil
 import tempfile
 import uuid
-from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import fields, replace
 from datetime import UTC, datetime
+from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any
 from unittest import mock
@@ -239,24 +239,38 @@ def output_schema(frame: Any) -> list[dict[str, str]]:
 
 
 def materialized_schema(materialized: Any) -> list[dict[str, str]]:
-    """Return the ordered non-support columns of a MaterializedFrame."""
-    support = {
-        *materialized._bookkeeping_columns(),
-        *materialized._support_columns(),
-        *(name for name in materialized.table.column_names if name.startswith("__terrine_")),
-    }
+    """Return output columns except support columns used only by the compiler."""
     return [
         {
             "name": field.name,
             "type": str(field.type),
-            "role": _role(field.name, materialized.roles, materialized.columns),
+            "role": role,
         }
         for field in materialized.table.schema
-        if field.name not in support
+        if (
+            role := _role(field.name, materialized.roles, materialized.columns)
+        ) != "support"
+        or not _is_internal_support(field.name)
     ]
 
 
+def _is_internal_support(name: str) -> bool:
+    """Whether a support column is compiler bookkeeping rather than stable output."""
+    return any(
+        fnmatchcase(name, pattern)
+        for pattern in (
+            "__terrine_window_*",
+            "__w*_predicate_*",
+            "__terrine_value_*_observed_*",
+            "anchor_provenance",
+            "_observed_*",
+        )
+    )
+
+
 def _role(name: str, roles: Roles, columns: Any) -> str:
+    if _is_internal_support(name):
+        return "support"
     for role in fields(roles):
         value = getattr(roles, role.name)
         if value == name:

@@ -46,9 +46,29 @@
       "role": "prior_state"
     },
     {
+      "name": "from_state__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "from_state__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
       "name": "to_state",
       "type": "string",
       "role": "outcome"
+    },
+    {
+      "name": "to_state__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "to_state__reason",
+      "type": "string",
+      "role": "output"
     },
     {
       "name": "terminal",
@@ -59,6 +79,41 @@
       "name": "orders_30d",
       "type": "int64",
       "role": "feature"
+    },
+    {
+      "name": "orders_30d__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "orders_30d__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
+      "name": "from_state_observed_from",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "output"
+    },
+    {
+      "name": "from_state_observed_until",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "output"
+    },
+    {
+      "name": "to_state_observed_from",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "output"
+    },
+    {
+      "name": "to_state_observed_until",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "output"
+    },
+    {
+      "name": "__terrine_panel_start",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "output"
     }
   ],
   "design.yaml": [
@@ -108,9 +163,29 @@
       "role": "prior_state"
     },
     {
+      "name": "from_state__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "from_state__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
       "name": "to_state",
       "type": "string",
       "role": "outcome"
+    },
+    {
+      "name": "to_state__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "to_state__reason",
+      "type": "string",
+      "role": "output"
     },
     {
       "name": "terminal",
@@ -121,6 +196,41 @@
       "name": "orders_30d",
       "type": "int64",
       "role": "feature"
+    },
+    {
+      "name": "orders_30d__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "orders_30d__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
+      "name": "from_state_observed_from",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "output"
+    },
+    {
+      "name": "from_state_observed_until",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "output"
+    },
+    {
+      "name": "to_state_observed_from",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "output"
+    },
+    {
+      "name": "to_state_observed_until",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "output"
+    },
+    {
+      "name": "__terrine_panel_start",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "output"
     }
   ],
   "definition.json": [
@@ -170,9 +280,29 @@
       "role": "prior_state"
     },
     {
+      "name": "from_state__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "from_state__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
       "name": "to_state",
       "type": "string",
       "role": "outcome"
+    },
+    {
+      "name": "to_state__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "to_state__reason",
+      "type": "string",
+      "role": "output"
     },
     {
       "name": "terminal",
@@ -183,6 +313,41 @@
       "name": "orders_30d",
       "type": "int64",
       "role": "feature"
+    },
+    {
+      "name": "orders_30d__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "orders_30d__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
+      "name": "from_state_observed_from",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "output"
+    },
+    {
+      "name": "from_state_observed_until",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "output"
+    },
+    {
+      "name": "to_state_observed_from",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "output"
+    },
+    {
+      "name": "to_state_observed_until",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "output"
+    },
+    {
+      "name": "__terrine_panel_start",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "output"
     }
   ]
 }

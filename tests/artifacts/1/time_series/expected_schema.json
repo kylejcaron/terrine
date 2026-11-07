@@ -21,14 +21,44 @@
       "role": "feature"
     },
     {
+      "name": "orders_30d__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "orders_30d__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
       "name": "spend_next_14d",
       "type": "double",
       "role": "outcome"
     },
     {
+      "name": "spend_next_14d__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "spend_next_14d__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
       "name": "has_orders",
       "type": "bool",
       "role": "eligibility"
+    },
+    {
+      "name": "has_orders__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "has_orders__reason",
+      "type": "string",
+      "role": "output"
     }
   ],
   "design.yaml": [
@@ -53,14 +83,44 @@
       "role": "feature"
     },
     {
+      "name": "orders_30d__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "orders_30d__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
       "name": "spend_next_14d",
       "type": "double",
       "role": "outcome"
     },
     {
+      "name": "spend_next_14d__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "spend_next_14d__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
       "name": "has_orders",
       "type": "bool",
       "role": "eligibility"
+    },
+    {
+      "name": "has_orders__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "has_orders__reason",
+      "type": "string",
+      "role": "output"
     }
   ],
   "definition.json": [
@@ -85,14 +145,44 @@
       "role": "feature"
     },
     {
+      "name": "orders_30d__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "orders_30d__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
       "name": "spend_next_14d",
       "type": "double",
       "role": "outcome"
     },
     {
+      "name": "spend_next_14d__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "spend_next_14d__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
       "name": "has_orders",
       "type": "bool",
       "role": "eligibility"
+    },
+    {
+      "name": "has_orders__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "has_orders__reason",
+      "type": "string",
+      "role": "output"
     }
   ]
 }
