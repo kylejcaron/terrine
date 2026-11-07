@@ -59,7 +59,7 @@ for index, design_path in enumerate(sorted(corpus.glob("**/design.json"))):
     dataset = (
         from_json(design_path.read_text(encoding="utf-8"))
         .build(model)
-        .stage(f"corpus-{index}", budget=budget)
+        .stage(f"corpus_{index}", budget=budget)
     )
     if index == 0:
         (output / "manifest.json").write_text(dataset.manifest.to_json(), encoding="utf-8")

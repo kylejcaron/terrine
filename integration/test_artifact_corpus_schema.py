@@ -1,6 +1,7 @@
 """Every stored Design compiles with the current code to its recorded schema and roles."""
 
 import json
+import shutil
 from pathlib import Path
 
 import ibis
@@ -10,6 +11,7 @@ from scripts.write_artifact_corpus import (
     _reproducible_staging,
     bind_model,
     output_schema,
+    write_generation,
 )
 from terrine.spec import DatasetDefinition, from_json, from_yaml
 
@@ -42,3 +44,23 @@ def test_generation_designs_compile_to_recorded_schema(design_path):
         finally:
             con.disconnect()
     assert schemas == json.loads(read("expected_schema.json"))
+
+
+def test_corpus_generator_is_deterministic_without_mutating_baseline(tmp_path):
+    baseline = ARTIFACTS / "1"
+    regenerated = tmp_path / "generation"
+    shutil.copytree(baseline, regenerated)
+
+    def contents(directory: Path) -> dict[Path, bytes]:
+        return {
+            path.relative_to(directory): path.read_bytes()
+            for path in directory.rglob("*")
+            if path.is_file()
+        }
+
+    expected = contents(baseline)
+    write_generation(regenerated)
+
+    actual = contents(regenerated)
+    assert actual == expected, [path for path in expected if actual.get(path) != expected[path]]
+    assert contents(baseline) == expected
