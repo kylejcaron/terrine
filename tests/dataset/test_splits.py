@@ -79,6 +79,19 @@ def test_timesplit_accepts_duration():
     assert policy.embargo == timedelta(hours=1)
 
 
+def test_time_split_embargo_accepts_canonical_minutes_and_rejects_bare_m():
+    policy = TimeSplit(train_until="2025-02-01", embargo="30min")
+    assert policy.embargo == timedelta(minutes=30)
+
+    assert TimeSplit(
+        train_until="2025-02-01", embargo=timedelta(minutes=30)
+    ).embargo == timedelta(minutes=30)
+    with pytest.raises(TerrineError) as error:
+        TimeSplit(train_until="2025-02-01", embargo="30m")
+    assert error.value.code == "terrine.window.invalid_duration"
+    assert error.value.context["hint"] == "use 'min' for minutes or 'mo' for months"
+
+
 def test_group_split_rejects_ambiguous_keys_and_invalid_fractions() -> None:
     policy = GroupSplit()
     for key in (True, None, 1.0):

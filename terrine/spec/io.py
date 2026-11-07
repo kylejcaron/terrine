@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 from collections.abc import Mapping
 from datetime import UTC, date, datetime
 from decimal import Decimal
@@ -137,80 +136,6 @@ def canonical_digest(payload: Mapping[str, Any]) -> str:
     return hashlib.sha256(_canonical_bytes(payload)).hexdigest()
 
 
-_CANONICAL_MINUTE = re.compile(r"([+-]?)(?:(\d+)h)?(\d+)min")
-
-def _legacy_minute_text(value: str) -> str:
-    match = _CANONICAL_MINUTE.fullmatch(value)
-    if match is None:
-        return value
-    sign, hours, minutes = match.groups()
-    seconds = (int(hours or 0) * 60 + int(minutes)) * 60
-    if sign == "-":
-        seconds = -seconds
-    if seconds == 0:
-        return "0s"
-    magnitude = abs(seconds)
-    unit, size = next(
-        (unit, size)
-        for unit, size in (
-            ("w", 604_800),
-            ("d", 86_400),
-            ("h", 3_600),
-            ("m", 60),
-            ("s", 1),
-        )
-        if magnitude % size == 0
-    )
-    return f"{'-' if seconds < 0 else ''}{magnitude // size}{unit}"
-
-
-def _legacy_minutes(value: Any) -> Any:
-    """Encode tagged duration fields as their former ``m`` spelling."""
-    if isinstance(value, Mapping):
-        kind = value.get("type")
-        design = "unit" in value and "anchor" in value
-        feature_hash = {
-            "unit",
-            "unit_binding",
-            "gap",
-            "features",
-            "semantic",
-        } <= value.keys()
-        result: dict[Any, Any] = {}
-        for key, item in value.items():
-            if key == "semantic" and feature_hash:
-                result[key] = item
-            else:
-                duration_field = (
-                    (key == "gap" and (design or feature_hash or kind == "SessionSpec"))
-                    or (key == "every" and kind == "Schedule")
-                    or (key == "offset" and kind == "EventAnchor")
-                    or (key == "at" and kind == "Treatment")
-                    or (key == "before" and kind == "AttributeAsOf")
-                    or (key == "horizon" and kind == "RetentionMetric")
-                    or (key == "within" and kind == "FunnelSpec")
-                    or (
-                        key in {"anticipation", "reference_period"}
-                        and kind == "SequentialSpec"
-                    )
-                    or (key == "period" and kind in {"EventPanelSpec", "Trajectory"})
-                    or (key == "bin" and kind == "LifeTable")
-                    or (kind == "Window" and key in {"start", "end"})
-                )
-                result[key] = (
-                    _legacy_minute_text(item)
-                    if duration_field and isinstance(item, str)
-                    else _legacy_minutes(item)
-                )
-        return result
-    if isinstance(value, (list, tuple)):
-        return [_legacy_minutes(item) for item in value]
-    return value
-
-
-def _legacy_minute_digest(payload: Mapping[str, Any]) -> str:
-    """Hash a payload using the pre-1.0 elapsed-minute canonical spelling."""
-    return hashlib.sha256(_canonical_bytes(_legacy_minutes(payload))).hexdigest()
 
 
 def _is_default(item: Any, default: Any) -> bool:

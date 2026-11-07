@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta, tzinfo
 from decimal import Decimal
 from fractions import Fraction
+from importlib import import_module
 from typing import Any, Literal, Protocol, runtime_checkable
 
 import terrine.reasons as reason_codes
@@ -79,14 +80,9 @@ def _duration(value: str | timedelta | _SecondDuration) -> timedelta:
         except OverflowError as error:
             raise _INVALID.error(reason="out_of_range", field="embargo") from error
     elif isinstance(value, str):
-        import re
-
-        match = re.fullmatch(r"(\d+(?:\.\d+)?)([dhms])", value)
-        if not match:
-            raise _INVALID.error(reason="invalid_duration", field="embargo")
-        unit = {"d": "days", "h": "hours", "m": "minutes", "s": "seconds"}[match[2]]
+        parsed = import_module("terrine.windows").duration(value, field="embargo")
         try:
-            result = timedelta(**{unit: float(match[1])})
+            result = timedelta(seconds=parsed.seconds)
         except OverflowError as error:
             raise _INVALID.error(reason="out_of_range", field="embargo") from error
     else:
@@ -104,8 +100,8 @@ class TimeSplit:
         train_until: Exclusive training t0 cutoff, as a date, aware datetime or ISO string.
         validation_until: Exclusive validation t0 cutoff in the same formats; None has no later test
             split.
-        embargo: Unsigned decimal string ending in d/h/m/s (e.g. "1.5d") or nonnegative timedelta;
-            "0d" leaves no gap. Weeks, signs and compound strings are refused.
+        embargo: Nonnegative elapsed-duration string accepted by `terrine.windows`, a `Duration`,
+            or a nonnegative timedelta; "0d" leaves no gap.
         groups: GroupSplit requiring unit groups to agree with the time bucket; None uses time
             alone.
 
