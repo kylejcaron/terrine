@@ -169,7 +169,13 @@ def _legacy_minutes(value: Any) -> Any:
     if isinstance(value, Mapping):
         kind = value.get("type")
         design = "unit" in value and "anchor" in value
-        feature_hash = "unit_binding" in value
+        feature_hash = {
+            "unit",
+            "unit_binding",
+            "gap",
+            "features",
+            "semantic",
+        } <= value.keys()
         result: dict[Any, Any] = {}
         for key, item in value.items():
             if key == "semantic" and feature_hash:

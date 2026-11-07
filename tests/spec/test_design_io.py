@@ -542,6 +542,7 @@ def test_legacy_minute_identity_converts_typed_durations_and_preserves_comparand
 
     feature_payload = {
         "unit": "user",
+        "gap": "0s",
         "unit_binding": {},
         "semantic": {"source": {"type": "AttributeAsOf", "before": "5min"}},
         "features": {
@@ -554,3 +555,7 @@ def test_legacy_minute_identity_converts_typed_durations_and_preserves_comparand
     old_feature_payload = _legacy_minutes(feature_payload)
     assert old_feature_payload["semantic"] == feature_payload["semantic"]
     assert old_feature_payload["features"]["semantic"]["window"]["start"] == "5m"
+
+    sibling_outputs = {"unit_binding": event_time, "semantic": event_time}
+    legacy_outputs = _legacy_minutes(sibling_outputs)
+    assert legacy_outputs["semantic"]["window"]["start"] == "90m"
