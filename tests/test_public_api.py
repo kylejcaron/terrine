@@ -1,13 +1,12 @@
 import importlib
 import json
-from pathlib import Path
 from typing import Any, cast
 
 import griffe
 import pytest
 
 import terrine as tr
-from scripts.api_check import PROVISIONAL_NAMES, STABLE_FACADES, stable_surface
+from scripts.api_check import PROVISIONAL_NAMES, STABLE_FACADES, stable_breakages, stable_surface
 from terrine.spec import DatasetDefinition
 
 ROOT = {
@@ -134,8 +133,32 @@ def test_provisional_names_are_still_exported():
             raise AssertionError(f"{qualified} does not resolve")
 
 
-def test_stable_surface_excludes_provisional_members():
-    root = Path(__file__).resolve().parents[1]
-    package = cast(griffe.Module, griffe.load("terrine", search_paths=[str(root)]))
-    surface = stable_surface(package)
-    assert "terrine.frame.Frame.stage" not in surface
+def test_provisional_frame_member_does_not_hide_stable_member_breakages(
+    tmp_path, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
+    release = {
+        "__init__.py": "from terrine.frame import Frame\n__all__ = ['Frame']\n",
+        "frame.py": (
+            "__all__ = ['Frame']\n\n"
+            "class Frame:\n"
+            "    def stage(self, path, snapshot): pass\n"
+            "    def to_pandas(self, schema): pass\n"
+        ),
+    }
+    current = {
+        **release,
+        "frame.py": release["frame.py"].replace(
+            "stage(self, path, snapshot)", "stage(self, path)"
+        ).replace("to_pandas(self, schema)", "to_pandas(self)"),
+    }
+    with (
+        griffe.temporary_visited_package("terrine", release) as old,
+        griffe.temporary_visited_package("terrine", current) as new,
+    ):
+        assert "terrine.Frame" in stable_surface(old)
+        breakages = stable_breakages(old, new)
+
+    assert len(breakages) == 1
+    assert "to_pandas" in breakages[0]
+    assert "schema" in breakages[0]
