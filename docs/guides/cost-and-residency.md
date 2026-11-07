@@ -67,33 +67,38 @@ These are measured workloads, not a promise of billion-row performance. Remote
 warehouse runs require owner authorization, credentials and separate measured
 backend evidence; none is inferred from SQL compilation.
 
-## Generated SQL and query-time budget
+## Generated SQL budget and query-time targets
 
 The scheduled scale tier ([cost budget](../../integration/test_cost_budget.py))
 builds one ordinary Design per recipe over the synthetic workload at 10,000
-units and 300,000 events, and a hand-written query returning the same values
+units and 300,000 events, and a hand-written query of the same semantics
 ([reference queries](../../benchmarks/workloads.py)). On that workload every
-window lies inside declared coverage, so completeness flags are constant and
-the check first asserts that both queries return equal values. Query time is
-the fastest of seven evaluations of each statement into a temporary table on
-the server; Python-side compilation and validation are measured separately by
-the [overhead benchmark](../../benchmarks/README.md#fixed-compiler-overhead).
-SQL size is `len(ibis.to_sql(frame.expr))`, the formatted statement; the
-statement sent for execution is more compact.
+window lies inside declared coverage, so completeness flags are constant; the
+check asserts that each recipe returns the hand-written query's values on
+DuckDB and on PostgreSQL 16. SQL size is `len(ibis.to_sql(frame.expr))`, the
+formatted statement; the statement sent for execution is more compact.
 
-| Budget | Ceiling |
+| Checked budget | Ceiling |
 | --- | --- |
 | Recipe SQL | 30,000 characters per feature (declared features and outcomes, plus one for the measurement the recipe's shape adds) |
-| Recipe query time on DuckDB | 3 times the hand-written query |
-| Recipe query time on PostgreSQL 16 | 10 times the hand-written query |
 | README design SQL | 20,000 characters |
 | 5 metrics by 10 windows, BigQuery dialect | 1,000,000 characters (BigQuery accepts 1,024k) |
 
-Measured on 2026-11-07 (Apple M3 Pro; DuckDB 1.5.6; PostgreSQL 16.15). A value
-above its ceiling is open work: the check records it as an expected failure
-that turns into a failure once the recipe meets its ceiling.
+A size above its ceiling is open work: the check records it as an expected
+failure that becomes a failure once the recipe meets its ceiling.
 
-| Recipe | Features | SQL characters | DuckDB time ratio | PostgreSQL time ratio |
+Query time is a tracked target, not a guarantee or a test gate: a recipe should
+evaluate within 3 times (DuckDB) or 10 times (PostgreSQL 16) the time of its
+hand-written query. `uv run python -m benchmarks.run_cost` prints both times and
+their ratio per recipe; add `--postgres-url postgres://...` to measure a
+PostgreSQL database too, in a schema it creates and drops. Each time is the
+fastest of seven evaluations of the statement into a temporary table on the
+server; Python-side compilation and validation are measured separately by the
+[overhead benchmark](../../benchmarks/README.md#fixed-compiler-overhead).
+
+Measured on 2026-11-07 (Apple M3 Pro; DuckDB 1.5.6; PostgreSQL 16.15):
+
+| Recipe | Features | SQL characters | DuckDB time ratio (target 3) | PostgreSQL time ratio (target 10) |
 | --- | ---: | ---: | ---: | ---: |
 | `time_series` | 3 | 21,555 | 2.6 | 5.8 |
 | `trial_panel` | 3 | 17,922 | 4.0 | 4.6 |

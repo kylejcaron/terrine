@@ -25,6 +25,7 @@ mutate:
 		--sample $(MUTATION_SAMPLE) --seed $(MUTATION_SEED) $(MUTATION_TESTS)
 
 # Scheduled scale tier: resource-bound scale, oracle and live-warehouse checks.
+# Cases also marked `postgres` need the TERRINE_TEST_POSTGRES_* settings.
 test-scale:
 	$(PYTEST_TIME) uv run pytest $(SCALE_TESTS) -m scale
 
@@ -33,8 +34,9 @@ test-scale:
 # a throwaway local server and prints the settings. The extras provide the driver
 # and the DuckDB reference backend. The second run compiles the same conformance
 # known answers through the portable base expression policy on the server.
+# PostgreSQL cases of the scale tier run with it instead.
 test-postgres:
-	$(PYTEST_TIME) uv run --extra duckdb --extra postgres pytest integration -n $(WAREHOUSE_WORKERS) -m postgres
+	$(PYTEST_TIME) uv run --extra duckdb --extra postgres pytest integration -n $(WAREHOUSE_WORKERS) -m "postgres and not scale"
 	$(PYTEST_TIME) uv run --extra duckdb --extra postgres pytest integration/conformance --generic-dialect -n $(WAREHOUSE_WORKERS) -m postgres
 
 # Live BigQuery probes; requires TERRINE_TEST_BIGQUERY_PROJECT/_DATASET and

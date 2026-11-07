@@ -107,7 +107,9 @@ Reached schedules and deadlines use notify.* for the current owner, or the autho
   `TERRINE_TEST_POSTGRES_*` settings. Start a throwaway local server with
   `eval "$(uv run python -m tests.integration.postgres_scratch start)"` and stop it
   with `uv run python -m tests.integration.postgres_scratch stop`. CI runs them
-  on every push against a PostgreSQL 16 service container. Each probe owns a
+  on every push against a PostgreSQL 16 service container. Cases also marked
+  `scale` run only in the scheduled scale tier, which has its own PostgreSQL 16
+  service. Each probe owns a
   uniquely named schema; never share a warehouse namespace between tests.
 - `uv run pytest integration/conformance` runs known answers on DuckDB by default,
   with parameters derived from the verified engine registry. Select the same cases
