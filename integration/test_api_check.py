@@ -50,7 +50,7 @@ def test_check_passes_without_a_current_line_release_tag(repo, capsys):
     _release(repo, "v1.0.0")
 
     assert main([]) == 0
-    assert "no release tag on the current release line" in capsys.readouterr().out
+    assert "no release tag for the current 0.x minor release" in capsys.readouterr().out
 
 
 def test_check_requires_every_current_stable_export_to_resolve(repo, capsys):
@@ -92,6 +92,7 @@ def test_check_rejects_breaking_change_in_0x_patch(repo, capsys):
     _write_package(repo, _RELEASE)
     _write_version(repo, "0.2.0")
     _release(repo, "v0.2.0")
+    _release(repo, "v0.3.0")
     _write_package(repo, _changed("spec/expressions.py", "agg(metric, window)", "agg(metric)"))
     _write_version(repo, "0.2.1")
 

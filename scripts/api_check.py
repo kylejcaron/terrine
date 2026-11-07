@@ -226,6 +226,16 @@ def _release_minor(version: str) -> tuple[int, int]:
     return int(match.group(1)), int(match.group(2))
 
 
+def _newest_minor_release_tag(root: Path, version: str) -> str | None:
+    major, minor = _release_minor(version)
+    ordering = [f"versionsort.suffix={suffix}" for suffix in _PRERELEASE_SUFFIXES]
+    options = [part for setting in ordering for part in ("-c", setting)]
+    tags = _git(
+        root, *options, "tag", "--list", f"v{major}.{minor}.*", "--sort=-v:refname"
+    ).split()
+    return tags[0].decode() if tags else None
+
+
 def _load(search_path: Path) -> griffe.Module:
     package = griffe.load(
         _PACKAGE, search_paths=[search_path], try_relative_path=False, allow_inspection=False
@@ -258,6 +268,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         root = Path(_git(Path.cwd(), "rev-parse", "--show-toplevel").decode().strip())
         current_version = tomllib.loads((root / "pyproject.toml").read_text())["project"]["version"]
         tag = args.against or release_tag(root, current_version)
+        if args.against is None and current_version.startswith("0."):
+            tag = _newest_minor_release_tag(root, current_version)
     except (HistoryUnavailable, subprocess.CalledProcessError, OSError, ValueError) as error:
         print(f"comparison history unavailable: {_reason(error)}")
         return 2
@@ -268,14 +280,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"stable API cannot be checked: {error}")
         return 1
     if tag is None:
-        print("no release tag on the current release line: the stable API has no baseline yet")
-        return 0
-    if (
-        args.against is None
-        and current_version.startswith("0.")
-        and _release_minor(current_version) != _release_minor(tag.removeprefix("v"))
-    ):
-        print("no release tag for the current 0.x minor release: minor releases may break the API")
+        if current_version.startswith("0."):
+            print("no release tag for the current 0.x minor release: minor releases may break the API")
+        else:
+            print("no release tag on the current release line: the stable API has no baseline yet")
         return 0
     with TemporaryDirectory(prefix="terrine-api-") as directory:
         try:
