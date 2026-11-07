@@ -96,6 +96,7 @@ def test_event_panel_keeps_administrative_cutoff_and_treatment():
 
     assert sequential.anchor_range == anchor_range
     assert sequential.sample == sample
+    assert isinstance(sequential.shape, SequentialSpec)
     assert sequential.shape.treatment == treatment
 
 
