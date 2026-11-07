@@ -60,10 +60,24 @@ def resolve_measure(
         if column not in events.columns:
             raise _SCHEMA.error(field=f"event {measure.event}", column=column)
         dtype = events[column].type()
-        if measure.aggregation != "count" and not (
-            dtype.is_integer() or dtype.is_decimal() or dtype.is_floating()
-        ):
-            raise _SCHEMA.error(field=f"numeric event {measure.event}", column=column)
+        if measure.aggregation == "count_distinct":
+            supported = (
+                dtype.is_integer()
+                or dtype.is_decimal()
+                or dtype.is_floating()
+                or dtype.is_string()
+                or dtype.is_date()
+                or dtype.is_boolean()
+            )
+        else:
+            supported = dtype.is_integer() or dtype.is_decimal() or dtype.is_floating()
+        if measure.aggregation != "count" and not supported:
+            field = (
+                f"distinct-count event column {column}"
+                if measure.aggregation == "count_distinct"
+                else f"numeric event {measure.event}"
+            )
+            raise _SCHEMA.error(field=field, column=column)
         if dtype.is_floating() and not (dtype.is_float32() or dtype.is_float64()):
             raise _SCHEMA.error(field=f"binary64 event {measure.event}", column=column)
     value_type = str(dtype)

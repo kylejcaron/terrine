@@ -34,8 +34,8 @@ _EXACT_PRECISION = RefusalSpec(
 )
 _UNSUPPORTED_TYPE = RefusalSpec(
     "terrine.metric.nonadditive_type_unsupported",
-    "Exact {operation} cannot use event values of type {value_type!r}. "
-    "Use a metric over integer, Decimal or floating-point event values.",
+    "Exact {operation} cannot use column {column!r} of type {value_type!r}. "
+    "Use a value type supported for this exact operation.",
 )
 _QUANTILE_TYPE = RefusalSpec(
     "terrine.metric.nonadditive_type_unsupported",
@@ -97,12 +97,29 @@ def exact_quantile(values: Iterable[int | Decimal | None], probability: Decimal)
     return _decimal_exact(Fraction(left) + (Fraction(right) - Fraction(left)) * remainder)
 
 
-def _exact_numeric_dtype(value_type: str, operation: str, probability: Decimal | None):
+def _exact_numeric_dtype(
+    value_type: str, operation: str, probability: Decimal | None, *, column: str | None = None
+):
     dtype = dt.dtype(value_type)
-    if operation in {"min", "max", "count_distinct"}:
+    if operation == "count_distinct":
+        if (
+            dtype.is_integer()
+            or dtype.is_decimal()
+            or dtype.is_floating()
+            or dtype.is_string()
+            or dtype.is_date()
+            or dtype.is_boolean()
+        ):
+            return dtype
+        raise _UNSUPPORTED_TYPE.error(
+            operation=operation, value_type=value_type, column=column or value_type
+        )
+    if operation in {"min", "max"}:
         if dtype.is_integer() or dtype.is_decimal() or dtype.is_floating():
             return dtype
-        raise _UNSUPPORTED_TYPE.error(operation=operation, value_type=value_type)
+        raise _UNSUPPORTED_TYPE.error(
+            operation=operation, value_type=value_type, column=column or value_type
+        )
     if operation == "approx_count_distinct":
         return dt.int64
     if not (dtype.is_integer() or isinstance(dtype, dt.Decimal)):
@@ -156,10 +173,10 @@ def aggregate_nonadditive_window(
     if measure.value_type is None:
         raise ValueError("nonadditive aggregation requires a resolved measure")
     value_type = measure.value_type
-    output_type = _exact_numeric_dtype(value_type, operation, probability)
     value_column = source.events[measure.event]
     if value_column is None:
         raise _VALUE_REQUIRED.error(operation=operation, value_type="event_count")
+    output_type = _exact_numeric_dtype(value_type, operation, probability, column=value_column)
     if (
         unit_column not in anchors.columns
         or "_unit" not in events.columns

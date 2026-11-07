@@ -605,6 +605,26 @@ def test_count_is_always_exact(con):
     assert all(measure.exact for measure in model.catalog.measures.values())
 
 
+def test_count_distinct_admits_string_date_and_boolean_columns(con):
+    model = Model.from_tables(
+        con,
+        units=UNITS,
+        events={
+            "orders": orders(
+                metrics={
+                    "statuses": tr.count_distinct("status"),
+                    "days": tr.count_distinct("day"),
+                    "flags": tr.count_distinct("flag"),
+                }
+            )
+        },
+    )
+    assert set(model.metrics) == {"statuses", "days", "flags"}
+    assert all(metric.measures[0].exact for metric in model.metrics.values())
+
+
+
+
 README_ROWS = {
     ("alice", "2025-02-01"): (2, 75.0, 25.0, None),
     ("bob", "2025-02-01"): (1, 80.0, 0.0, None),
