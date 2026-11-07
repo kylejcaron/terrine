@@ -79,18 +79,17 @@ Before tagging a release:
    differences are informational during 0.x and enforced from `1.0.0rc1`.
    Confirm CI is green for the release commit after adding the snapshot, before
    tagging.
-4. Run the release-upgrade test when `tests/artifacts/RELEASES` lists earlier 1.x
-   releases:
+4. Run the release-upgrade test when `tests/artifacts/RELEASES` lists published
+   predecessor releases:
 
    ```sh
    uv run pytest -n 0 -m scale integration/test_release_upgrade.py
    ```
 
-   For the first 1.x release, `RELEASES` is empty and the test collects no
-   cases. Validate the producer once against the locally built wheel instead:
-   run `uv build`, add the wheel's absolute path as one line in
-   `tests/artifacts/RELEASES`, run the command above, then empty `RELEASES`
-   again.
+   `RELEASES` records every published release starting with `0.1.0`. Validate
+   the producer once against the locally built wheel as well: run `uv build`,
+   add the wheel's absolute path as one line in `tests/artifacts/RELEASES`, and
+   run the command above. Keep all recorded releases in `RELEASES`.
 
 5. If a saved format changed, add a generation to the artifact corpus:
 

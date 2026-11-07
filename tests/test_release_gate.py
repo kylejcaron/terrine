@@ -98,6 +98,44 @@ def test_gate_uses_newest_completed_run_of_each_workflow():
     assert not gate(runs, jobs.__getitem__, "v0.1.0")
 
 
+def test_gate_uses_older_full_success_when_newer_run_is_deferred():
+    runs = [
+        _run("CI", 1),
+        _run("CI", 2, created_at="2026-01-02T00:00:00Z"),
+    ]
+    jobs = {
+        1: [{"name": "ci-ok", "conclusion": "success"}],
+        2: [
+            {
+                "name": "ci-ok (checked by the pull request run)",
+                "conclusion": "success",
+            }
+        ],
+    }
+
+    assert gate(runs, jobs.__getitem__, "v0.1.0")
+
+
+def test_gate_rejects_newer_full_failure_even_when_older_run_succeeded():
+    runs = [
+        _run("CI", 1),
+        _run("CI", 2, created_at="2026-01-02T00:00:00Z"),
+        _run("CI", 3, created_at="2026-01-03T00:00:00Z"),
+    ]
+    jobs = {
+        1: [{"name": "ci-ok", "conclusion": "success"}],
+        2: [
+            {
+                "name": "ci-ok (checked by the pull request run)",
+                "conclusion": "success",
+            }
+        ],
+        3: [{"name": "ci-ok", "conclusion": "failure"}],
+    }
+
+    assert not gate(runs, jobs.__getitem__, "v0.1.0")
+
+
 def test_rc_accepts_scheduled_postgres_and_scale_runs():
     runs = [
         _run("CI", 1),

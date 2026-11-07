@@ -11,6 +11,7 @@ from collections.abc import Callable
 from typing import Any
 
 CI_JOB = "ci-ok"
+DEFERRED_CI_JOB = "ci-ok (checked by the pull request run)"
 RELEASE_JOBS = {
     "CI": (CI_JOB,),
     "warehouse-backends": ("postgres",),
@@ -60,6 +61,8 @@ def gate(
         for run in candidates:
             jobs = jobs_by_run(int(run["id"]))
             by_name = {job.get("name"): job.get("conclusion") for job in jobs}
+            if workflow == "CI" and DEFERRED_CI_JOB in by_name:
+                continue
             if workflow == "warehouse-backends" and all(
                 by_name.get(job_name) in {None, "skipped"} for job_name in job_names
             ):

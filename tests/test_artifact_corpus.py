@@ -20,7 +20,20 @@ from terrine.spec import DatasetDefinition, from_json, from_yaml
 from terrine.spec.io import canonical_digest
 
 ARTIFACTS = Path(__file__).parent / "artifacts"
-GENERATIONS = sorted(path.name for path in ARTIFACTS.iterdir() if path.is_dir())
+
+
+def _generation_names(root: Path) -> list[str]:
+    return sorted(path.name for path in root.iterdir() if path.is_dir() and path.name.isdecimal())
+
+
+GENERATIONS = _generation_names(ARTIFACTS)
+
+
+def test_generation_discovery_ignores_surface_directory(tmp_path):
+    (tmp_path / "1").mkdir()
+    (tmp_path / "surface").mkdir()
+
+    assert _generation_names(tmp_path) == ["1"]
 
 RECIPE_DESIGNS = sorted(
     path

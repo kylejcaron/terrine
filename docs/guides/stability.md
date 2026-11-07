@@ -137,7 +137,7 @@ conformance known answers.
 
 ## Saved artifacts
 
-From 1.0.0rc1:
+From `0.1.0`:
 
 | Artifact | Promise |
 | --- | --- |
@@ -187,7 +187,7 @@ measure exact; manifest and saved-plan envelopes are version 1.
 ### How the promises are checked
 
 - `tests/artifacts/<generation>/` keeps one set of path-independent documents
-  for each format generation since 1.0.0rc1, written by
+  for each format generation since `0.1.0`, written by
   `scripts/write_artifact_corpus.py`: Design, definition and Catalog documents,
   a manifest, Arrow/Parquet metadata, a receipt and the expected output schema
   and roles of each stored Design. A [unit test](../../tests/test_artifact_corpus.py)
@@ -203,8 +203,8 @@ measure exact; manifest and saved-plan envelopes are version 1.
   latest passing release as `verified at vX.Y` in the [backend compatibility
   table](backend-compatibility.md#operation-regression-environment).
 - An [upgrade test](../../integration/test_release_upgrade.py) installs each
-  released 1.x wheel listed in `tests/artifacts/RELEASES` into an isolated
-  interpreter, stages a dataset with it and reopens that dataset in place with
-  the current code. It runs in the weekly scale tier.
+  published release listed in `tests/artifacts/RELEASES`, starting with
+  `0.1.0`, into an isolated interpreter, stages a dataset with it and reopens
+  that dataset in place with the current code. It runs in the weekly scale tier.
 - Adding a format generation, and adding a release to `RELEASES`, are release
   checklist steps.
