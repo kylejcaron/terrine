@@ -210,9 +210,15 @@ def release_tag(root: Path, current_version: str) -> str | None:
             (major, minor, patch) == (1, 0, 0)
             and (
                 (prerelease is None and devrelease is None)
-                or (prerelease == "rc" and int(prerelease_number) >= 1)
+                or (
+                    prerelease == "rc"
+                    and (
+                        int(prerelease_number) > 1
+                        or (int(prerelease_number) == 1 and devrelease is None)
+                    )
+                )
+                )
             )
-        )
     line = "v1.*" if stable_line else "v0.*"
     if _git(root, "rev-parse", "--is-shallow-repository").strip() == b"true":
         raise HistoryUnavailable("the clone is shallow; fetch full history and tags")
