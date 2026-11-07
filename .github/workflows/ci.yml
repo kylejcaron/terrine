@@ -210,9 +210,8 @@ jobs:
       - run: uv sync --locked --group dev --extra duckdb
       - run: /usr/bin/time -f "terrine-pytest-cpu %U %S" uv run pytest -q -n auto integration/conformance
 
-  # Signatures of the stable API against the newest v1.* release tag; passes
-  # until the first 1.x release is tagged. The comparison needs every tag and
-  # the history they point to.
+  # Validates stable exports and annotations, then compares signatures with the
+  # newest versioned snapshot; differences are informational during 0.x.
   api-compat:
     needs: scope
     if: needs.scope.outputs.defer != 'true'
@@ -230,7 +229,22 @@ jobs:
         with:
           python-version: "3.12"
       - run: uv sync --locked --group dev
-      - run: uv run python scripts/api_check.py
+      - name: Check stable API against release tags
+        run: uv run python scripts/api_check.py
+      - name: Compare stable API snapshot
+        run: |
+          set -euo pipefail
+          snapshot=$(uv run python -c '
+          from pathlib import Path
+          from packaging.version import Version
+          snapshots = list(Path("tests/artifacts/surface").glob("*.txt"))
+          print(max(snapshots, key=lambda path: Version(path.stem.removeprefix("v"))) if snapshots else "")
+          ')
+          if [ -z "$snapshot" ]; then
+            uv run python scripts/api_check.py --compare tests/artifacts/surface/.no-snapshot-yet.txt
+            exit $?
+          fi
+          uv run python scripts/api_check.py --compare "$snapshot"
 
   # Single check to require in branch protection. Matrix jobs report one check
   # per entry, so requiring them individually means editing the ruleset every

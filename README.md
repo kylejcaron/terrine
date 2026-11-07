@@ -1,7 +1,6 @@
 # terrine
 
-> [!WARNING]
-> Terrine is an experimental idea for simplifying dataset curation. It is pre-alpha: the API will change without notice, and it is not ready for production use.
+0.x: the API may change between minor releases; each change is listed in the changelog.
 
 **Build datasets directly from event logs.**
 

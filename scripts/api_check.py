@@ -13,18 +13,29 @@ Exit status: 0 when the stable API is compatible or no 1.x release is tagged,
 from __future__ import annotations
 
 import argparse
+import difflib
 import io
+import re
 import subprocess
 import tarfile
-from collections.abc import Iterator, Sequence
+import tomllib
+from collections.abc import Iterator, Mapping, Sequence
+from dataclasses import fields
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import griffe
 
+try:
+    from packaging.version import Version
+except ImportError:
+    Version = None
+
+
 STABLE_FACADES: tuple[str, ...] = (
     "terrine",
     "terrine.recipes",
+    "terrine.metrics",
     "terrine.spec",
     "terrine.windows",
     "terrine.errors",
@@ -32,19 +43,67 @@ STABLE_FACADES: tuple[str, ...] = (
     "terrine.model",
     "terrine.frame",
     "terrine.data",
+    "terrine.reasons",
 )
 PROVISIONAL_NAMES: frozenset[str] = frozenset(
     {
         "terrine.spec.approx_distinct",
         "terrine.spec.approx_quantile",
         "terrine.model.Model.from_increment",
+        "terrine.Dataset",
+        "terrine.frame.Frame.stage",
+        "terrine.frame.Frame.expr",
+        "terrine.spec.Sequential",
+        "terrine.spec.EventPanel",
+        "terrine.spec.CalendarPanel",
+        "terrine.spec.CalendarComparisonPanel",
+        "terrine.spec.matched_t0",
+        "terrine.spec.CalendarComparisonSpec",
+        "terrine.windows.duration",
+        "terrine.data.ApproximationMeta",
+        "terrine.data.CalendarComparisonMeta",
+        "terrine.data.CohortOperationMeta",
+        "terrine.data.ColumnMeta",
+        "terrine.data.DatasetViewMeta",
+        "terrine.data.ExpressionTiming",
+        "terrine.data.FeatureCutoff",
+        "terrine.data.Preview",
+        "terrine.data.Provenance",
+        "terrine.data.Roles",
+        "terrine.data.SamplingMeta",
+        "terrine.data.SequenceMeta",
+        "terrine.data.StatePanelMeta",
+        "terrine.data.TreatmentHistoryMeta",
+        "terrine.data.ExecutionSnapshot",
+        "terrine.data.CoverageSummary",
+        "terrine.data.EligibilitySummary",
+        "terrine.data.MaterializedFrame",
+        "terrine.execution.inputs.VerifiedInputBinding",
+        "terrine.runtime.changes.ChangeSet",
+        "terrine.runtime.planner.RefreshPlan",
+        "terrine.dataset.manifest.DatasetManifest",
+        "terrine.execution.inputs.PhysicalRelationId",
+        "terrine.execution.inputs.RelationHandle",
+        "terrine.data.DataFrameLike",
+        "terrine.data.Where",
+        "terrine.spec.expressions.JsonScalar",
+        "terrine.spec.expressions.MetricAgg",
+        "terrine.spec.expressions.AttributeAsOf",
+        "terrine.spec.expressions.RetentionMetric",
+        "terrine.spec.expressions.MetricQuantile",
+        "terrine.spec.expressions.Eq",
+        "terrine.spec.expressions.Gt",
+        "terrine.spec.expressions.IsNull",
+        "terrine.spec.expressions.And",
+        "terrine.spec.panels.CalendarComparisonSpec",
+        "terrine.spec.transforms.WinsorizationFit",
+        "terrine.semantic.models.Filter",
     }
 )
 
 _PACKAGE = "terrine"
-_RELEASE_TAGS = "v1.*"
-# Pre-releases sort before their final release (1.0.0rc1 < 1.0.0).
 _PRERELEASE_SUFFIXES = ("a", "b", "rc")
+_FIRST_STABLE_LINE_VERSION = "1.0.0rc1"
 
 
 class HistoryUnavailable(Exception):
@@ -180,17 +239,309 @@ def _within(paths: set[str], owners: set[str]) -> bool:
     return any(path == owner or path.startswith(f"{owner}.") for path in paths for owner in owners)
 
 
+def _stable_objects(package: griffe.Module) -> dict[str, griffe.Object]:
+    """Resolve stable facade exports to the definitions used for annotations."""
+    provisional = _provisional_paths(package)
+    surface = {}
+    for facade_path, facade in _facades(package):
+        for name in _exports(facade):
+            qualified = f"{facade_path}.{name}"
+            member = facade.members.get(name)
+            target = None if member is None else _resolved(member)
+            if target is None or target.is_alias:
+                continue
+            if qualified not in PROVISIONAL_NAMES and not _within({target.path}, provisional):
+                surface[qualified] = target
+    return surface
+
+
+def _annotation_names(annotation: griffe.Expr) -> Iterator[str]:
+    if isinstance(annotation, str):
+        return
+
+    def visit(expression: griffe.Expr) -> Iterator[str]:
+        if isinstance(expression, griffe.ExprAttribute | griffe.ExprName):
+            path = expression.canonical_path
+            if (
+                path is not None
+                and path.startswith(f"{_PACKAGE}.")
+                and all(part.isidentifier() for part in path.split("."))
+            ):
+                yield path
+            return
+        for field in fields(expression):
+            value = getattr(expression, field.name)
+            if isinstance(value, griffe.Expr):
+                yield from visit(value)
+            elif isinstance(value, Sequence) and not isinstance(value, str):
+                for item in value:
+                    if isinstance(item, griffe.Expr):
+                        yield from visit(item)
+
+    yield from visit(annotation)
+
+def _is_pydantic_model(owner: griffe.Class) -> bool:
+    """Return whether a class inherits from Pydantic's BaseModel without imports."""
+    pending = [owner]
+    visited = set()
+    while pending:
+        current = pending.pop()
+        if current.path in visited:
+            continue
+        visited.add(current.path)
+        for base in current.bases:
+            path = base.canonical_path
+            if path == "pydantic.BaseModel" or (
+                path is not None and path.startswith("pydantic.") and path.endswith(".BaseModel")
+            ):
+                return True
+            try:
+                resolved = base.resolved
+            except (AttributeError, KeyError):
+                continue
+            if isinstance(resolved, griffe.Class):
+                pending.append(resolved)
+    return False
+
+
+def _is_generated_pydantic_init(
+    owner: griffe.Class,
+    member_name: str,
+    member: griffe.Object | griffe.Alias,
+) -> bool:
+    """Identify inherited or synthetic Pydantic constructors, not authored ones."""
+    if member_name != "__init__" or not _is_pydantic_model(owner):
+        return False
+    constructor = _resolved(member)
+    return (
+        constructor.path == f"{owner.path}.__init__"
+        and getattr(constructor, "lineno", None) is None
+    ) or (
+        constructor.path.startswith("pydantic.")
+        and constructor.path.endswith(".BaseModel.__init__")
+    )
+
+
+def check_signature_types(surface: Mapping[str, griffe.Object]) -> list[str]:
+    """Find stable callables whose annotations name non-stable Terrine types."""
+    stable_paths = {name for name in surface}
+    stable_paths.update(_resolved(obj).path for obj in surface.values())
+    violations = []
+
+    def check_callable(qualified: str, obj: griffe.Object | griffe.Alias) -> None:
+        target = _resolved(obj)
+        if not isinstance(target, griffe.Function):
+            return
+        annotations = [
+            parameter.annotation
+            for parameter in target.parameters
+            if parameter.annotation is not None
+        ]
+        if target.returns is not None:
+            annotations.append(target.returns)
+        found = set()
+        for annotation in annotations:
+            for name in _annotation_names(annotation):
+                if name not in stable_paths and name not in PROVISIONAL_NAMES:
+                    found.add(name)
+        violations.extend(f"{qualified}: {name}" for name in sorted(found))
+
+    for qualified, obj in surface.items():
+        target = _resolved(obj)
+        if isinstance(target, griffe.Class):
+            for name, member in target.members.items():
+                member_name = f"{qualified}.{name}"
+                member_path = f"{target.path}.{name}"
+                if (
+                    (name in {"__init__", "__new__"} or not name.startswith("_"))
+                    and member_name not in PROVISIONAL_NAMES
+                    and member_path not in PROVISIONAL_NAMES
+                    and not _is_generated_pydantic_init(target, name, member)
+                ):
+                    check_callable(member_name, member)
+        check_callable(qualified, obj)
+    return violations
+
+
+def _signature_text(obj: griffe.Function | griffe.Class) -> str:
+    signature = str(obj.signature())
+    return signature.removeprefix(obj.name)
+
+
+def _attribute_text(obj: griffe.Attribute) -> str:
+    return str(obj.annotation) if obj.annotation is not None else "<attribute>"
+
+
+def snapshot_lines(surface: Mapping[str, griffe.Object]) -> list[str]:
+    """Return sorted stable API exports and callable signatures."""
+    lines = set()
+    for qualified, obj in surface.items():
+        target = _resolved(obj)
+        if isinstance(target, griffe.Function):
+            lines.add(f"{qualified}: {_signature_text(target)}")
+        elif isinstance(target, griffe.Class):
+            lines.add(f"{qualified}: {_signature_text(target)}")
+            for name, member in target.members.items():
+                if (
+                    (name.startswith("_") and name not in {"__init__", "__new__"})
+                    or f"{qualified}.{name}" in PROVISIONAL_NAMES
+                    or f"{target.path}.{name}" in PROVISIONAL_NAMES
+                ):
+                    continue
+                attribute = _resolved(member)
+                if isinstance(attribute, griffe.Function):
+                    lines.add(f"{qualified}.{name}: {_signature_text(attribute)}")
+                elif isinstance(attribute, griffe.Attribute):
+                    lines.add(f"{qualified}.{name}: {_attribute_text(attribute)}")
+        elif isinstance(target, griffe.Attribute):
+            lines.add(f"{qualified}: {_attribute_text(target)}")
+        elif isinstance(target, griffe.Module):
+            lines.add(f"{qualified}: <module>")
+        else:
+            lines.add(f"{qualified}: <non-callable>")
+    return sorted(lines)
+
+
+def write_snapshot(path: Path, lines: Sequence[str]) -> None:
+    """Write a deterministic, newline-terminated stable API snapshot."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("".join(f"{line}\n" for line in sorted(lines)))
+
+
+def compare_snapshots(expected: Sequence[str], current: Sequence[str]) -> str:
+    """Return a unified diff between two stable API snapshots."""
+    return "".join(
+        difflib.unified_diff(
+            [f"{line}\n" for line in expected],
+            [f"{line}\n" for line in current],
+            fromfile="snapshot",
+            tofile="current",
+        )
+    )
+
+
+def _enforce_snapshot(version: str, requested: bool) -> bool:
+    return requested or (
+        Version is not None and Version(version) >= Version(_FIRST_STABLE_LINE_VERSION)
+    )
+
+
+def _snapshot_command(root: Path, current_version: str, args: argparse.Namespace) -> int:
+    current = _load(root)
+    try:
+        stable_surface(current)
+    except LookupError as error:
+        print(f"stable API cannot be checked: {error}")
+        return 1
+    type_leaks = check_signature_types(_stable_objects(current))
+    if type_leaks:
+        print("stable API signature types are not stable or provisional:")
+        for line in type_leaks:
+            print(f"  {line}")
+        return 1
+    surface = snapshot_lines(_stable_objects(current))
+    if args.snapshot is not None:
+        write_snapshot(args.snapshot, surface)
+        print(f"wrote stable API snapshot: {args.snapshot}")
+        return 0
+    snapshot = args.compare
+    if not snapshot.exists():
+        print(f"no stable API snapshot found at {snapshot}; comparison skipped")
+        return 0
+    difference = compare_snapshots(snapshot.read_text().splitlines(), surface)
+    if difference:
+        print(difference, end="")
+        return int(_enforce_snapshot(current_version, args.enforce))
+    print(f"stable API snapshot matches {snapshot}")
+    return 0
+
+
 def _git(root: Path, *args: str) -> bytes:
     return subprocess.run(["git", *args], cwd=root, check=True, capture_output=True).stdout
 
 
-def _newest_release_tag(root: Path) -> str | None:
+def release_tag(root: Path, current_version: str) -> str | None:
+    """Return the newest release tag on the line containing current_version."""
+    if Version is not None:
+        stable_line = Version(current_version) >= Version(_FIRST_STABLE_LINE_VERSION)
+    else:
+        match = re.fullmatch(
+            r"(\d+)\.(\d+)\.(\d+)(?:(a|b|rc)(\d+))?(?:\.post(\d+))?"
+            r"(?:\.dev(\d+))?(?:\+[a-zA-Z0-9.-]+)?",
+            current_version,
+        )
+        if match is None:
+            raise ValueError(f"invalid package version: {current_version}")
+        major, minor, patch = (int(part) for part in match.group(1, 2, 3))
+        prerelease, prerelease_number = match.group(4), match.group(5)
+        postrelease, devrelease = match.group(6), match.group(7)
+        rc_reached = prerelease == "rc" and (
+            int(prerelease_number) > 1
+            or (int(prerelease_number) == 1 and (postrelease is not None or devrelease is None))
+        )
+        stable_line = (major, minor, patch) > (1, 0, 0) or (
+            (major, minor, patch) == (1, 0, 0)
+            and ((prerelease is None and devrelease is None) or rc_reached)
+        )
+    line = "v1.*" if stable_line else "v0.*"
     if _git(root, "rev-parse", "--is-shallow-repository").strip() == b"true":
         raise HistoryUnavailable("the clone is shallow; fetch full history and tags")
     ordering = [f"versionsort.suffix={suffix}" for suffix in _PRERELEASE_SUFFIXES]
     options = [part for setting in ordering for part in ("-c", setting)]
-    tags = _git(root, *options, "tag", "--list", _RELEASE_TAGS, "--sort=-v:refname").split()
+    tags = _git(root, *options, "tag", "--list", line, "--sort=-v:refname").split()
+    tags = [
+        tag
+        for tag in tags
+        if _is_eligible_release_tag(tag.decode(), allow_release_candidate=stable_line)
+    ]
     return tags[0].decode() if tags else None
+
+def _is_eligible_release_tag(tag: str, *, allow_release_candidate: bool) -> bool:
+    version = tag.removeprefix("v")
+    if Version is not None:
+        try:
+            parsed = Version(version)
+        except ValueError:
+            return False
+        if parsed.is_devrelease or parsed.is_postrelease:
+            return False
+        return not parsed.is_prerelease or (
+            allow_release_candidate and parsed.pre[0] == "rc"
+        )
+    match = re.fullmatch(
+        r"\d+\.\d+\.\d+(?:(a|b|rc)\d+)?(?:\.post\d+)?(?:\.dev\d+)?"
+        r"(?:\+[a-zA-Z0-9.-]+)?",
+        version,
+    )
+    if match is None or ".post" in version or ".dev" in version:
+        return False
+    prerelease = match.group(1)
+    return prerelease is None or (allow_release_candidate and prerelease == "rc")
+
+
+def _release_minor(version: str) -> tuple[int, int]:
+    if Version is not None:
+        parsed = Version(version)
+        return parsed.release[0], parsed.release[1] if len(parsed.release) > 1 else 0
+    match = re.match(r"(\d+)\.(\d+)", version)
+    if match is None:
+        raise ValueError(f"invalid package version: {version}")
+    return int(match.group(1)), int(match.group(2))
+
+
+def _newest_minor_release_tag(root: Path, version: str) -> str | None:
+    major, minor = _release_minor(version)
+    ordering = [f"versionsort.suffix={suffix}" for suffix in _PRERELEASE_SUFFIXES]
+    options = [part for setting in ordering for part in ("-c", setting)]
+    tags = _git(
+        root, *options, "tag", "--list", f"v{major}.{minor}.*", "--sort=-v:refname"
+    ).split()
+    final_tags = [
+        tag
+        for tag in tags
+        if _is_eligible_release_tag(tag.decode(), allow_release_candidate=False)
+    ]
+    return final_tags[0].decode() if final_tags else None
 
 
 def _load(search_path: Path) -> griffe.Module:
@@ -217,30 +568,67 @@ def _reason(error: Exception) -> str:
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Check terrine's stable API signatures.")
+    comparison = parser.add_mutually_exclusive_group()
+    comparison.add_argument(
+        "--snapshot", type=Path, metavar="PATH", help="write the stable API snapshot"
+    )
+    comparison.add_argument(
+        "--compare", type=Path, metavar="PATH", help="compare with a stable API snapshot"
+    )
     parser.add_argument(
-        "--against", metavar="TAG", help="release to compare with (default: newest v1.* tag)"
+        "--enforce", action="store_true", help="fail when the snapshot differs"
+    )
+    parser.add_argument(
+        "--against",
+        metavar="TAG",
+        help="release to compare with (default: newest tag on the current release line)",
     )
     args = parser.parse_args(argv)
     try:
         root = Path(_git(Path.cwd(), "rev-parse", "--show-toplevel").decode().strip())
-        tag = args.against or _newest_release_tag(root)
-    except (HistoryUnavailable, subprocess.CalledProcessError, OSError) as error:
+        current_version = tomllib.loads((root / "pyproject.toml").read_text())["project"]["version"]
+        if args.snapshot is not None or args.compare is not None:
+            return _snapshot_command(root, current_version, args)
+        current_major, current_minor = _release_minor(current_version)
+        tag = args.against or release_tag(root, current_version)
+        informational_tag = None
+        if current_major == 0 and args.against is None:
+            minor_tag = _newest_minor_release_tag(root, current_version)
+            if minor_tag is not None and minor_tag != tag:
+                informational_tag = tag
+            if minor_tag is not None:
+                tag = minor_tag
+    except (HistoryUnavailable, subprocess.CalledProcessError, OSError, ValueError) as error:
         print(f"comparison history unavailable: {_reason(error)}")
         return 2
     current = _load(root)
     try:
         stable_surface(current)
     except LookupError as error:
-        # A release made from this tree could never be compared with.
         print(f"stable API cannot be checked: {error}")
         return 1
+    type_leaks = check_signature_types(_stable_objects(current))
+    if type_leaks:
+        print("stable API signature types are not stable or provisional:")
+        for line in type_leaks:
+            print(f"  {line}")
+        return 1
     if tag is None:
-        print("no 1.x release tag: the stable API has no baseline yet")
+        print("no release tag on the current release line: the stable API has no baseline yet")
         return 0
+    informational_breakages = None
+    failed_tag = tag
     with TemporaryDirectory(prefix="terrine-api-") as directory:
         try:
             release = _load_release(root, tag, Path(directory))
             stable_surface(release)
+            breakages = stable_breakages(release, current)
+            if informational_tag is not None:
+                failed_tag = informational_tag
+                with TemporaryDirectory(prefix="terrine-api-info-") as info_directory:
+                    info_release = _load_release(root, informational_tag, Path(info_directory))
+                    stable_surface(info_release)
+                    informational_breakages = stable_breakages(info_release, current)
         except (
             subprocess.CalledProcessError,
             OSError,
@@ -248,16 +636,30 @@ def main(argv: Sequence[str] | None = None) -> int:
             tarfile.TarError,
             LookupError,
         ) as error:
-            print(f"comparison history unavailable: cannot load {tag}: {_reason(error)}")
+            print(f"comparison history unavailable: cannot load {failed_tag}: {_reason(error)}")
             return 2
-        breakages = stable_breakages(release, current)
-    if not breakages:
+    baseline_major, baseline_minor = _release_minor(tag.removeprefix("v"))
+    same_compatibility_line = (
+        baseline_major == current_major
+        and (current_major != 0 or baseline_minor == current_minor)
+    )
+    if informational_tag is not None:
+        print(f"informational comparison against {informational_tag}:")
+        if informational_breakages:
+            for line in informational_breakages:
+                print(f"  {line}")
+        else:
+            print(f"stable API signatures are compatible with {informational_tag}")
+    if breakages:
+        print(f"stable API breakages against {tag}:")
+        for line in breakages:
+            print(f"  {line}")
+    else:
         print(f"stable API signatures are compatible with {tag}")
+    if not same_compatibility_line:
+        print("breaking changes are permitted across 0.x minor releases")
         return 0
-    print(f"stable API breakages against {tag}:")
-    for line in breakages:
-        print(f"  {line}")
-    return 1
+    return 1 if breakages else 0
 
 
 if __name__ == "__main__":

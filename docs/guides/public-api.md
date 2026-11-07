@@ -45,17 +45,19 @@ omitted for `"first"` or `"each"`.
 
 An argument value a constructor cannot accept refuses at construction with a
 `TerrineError`, before a model or any row is read. Its context carries `field`,
-the parameter name, and `reason`, a stable token such as `empty_name`,
-`wrong_type`, `not_positive` or `unsupported_value` (then with `choices`). Design
-specifications, recipes and expressions use `terrine.design.invalid`; state sources
-and `StatePanel` use `terrine.state_panel.invalid_state_source`; `TimeSplit`,
-`GroupSplit` and `training_set(split=...)` use `terrine.dataset.invalid_split`;
-`Budget` uses `terrine.budget.invalid_limit`; and `Coverage`, `UnitSource`,
-`Events` and `History` use `terrine.model.invalid_binding`. Owner runtime,
-manifest, export, orchestration and agent-policy inputs refuse the same way
-under their own family's code (for example `terrine.dataset.invalid_destination`
-for a runtime namespace, `terrine.runtime.invalid_configuration` for
-orchestration and control settings). `TerrineError` subclasses `ValueError`.
+the parameter name, and `reason`, such as `empty_name`, `wrong_type`,
+`not_positive` or `unsupported_value` (then with `choices`). Context fields are
+not stable; refusal codes are contractual only when raised by a stable name.
+Design specifications, recipes and expressions use `terrine.design.invalid`;
+state sources and `StatePanel` use `terrine.state_panel.invalid_state_source`;
+`TimeSplit`, `GroupSplit` and `training_set(split=...)` use
+`terrine.dataset.invalid_split`; `Budget` uses `terrine.budget.invalid_limit`;
+and `Coverage`, `UnitSource`, `Events` and `History` use
+`terrine.model.invalid_binding`. Owner runtime, manifest, export, orchestration
+and agent-policy inputs refuse the same way under their own family's code (for
+example `terrine.dataset.invalid_destination` for a runtime namespace and
+`terrine.runtime.invalid_configuration` for orchestration and control settings).
+`TerrineError` subclasses `ValueError`.
 
 Where a constructor accepts `features` or `outcomes`, each named value may be an
 expression or a Boolean predicate, just as in `Design`. Eligibility remains a
@@ -82,7 +84,10 @@ shadowing Python's builtins in your own namespace.
 Import shape-specific inputs from `terrine.spec`, as with `Initiation`:
 `Treatment`, `EventTime`, `Trajectory`, `CohortSpec`, `CohortGrouping`,
 `TimeToEvent`, `LifeTable`, `StatePanel`, `StateObservations`,
-`BinnedMetricState`, `EventSequence`, `SessionSpec` and `FunnelSpec`.
+`BinnedMetricState`, `EventSequence`, `SessionSpec` and `FunnelSpec`. Stable
+shape values include `SequentialSpec` and `EventPanelSpec`.
+Use the `Expr` and `Predicate` aliases to type expression and eligibility
+inputs; expression functions remain the usual construction path.
 The specialized `retention` and `quantile` expressions, the provisional
 `approx_distinct` and `approx_quantile` expressions, and `DatasetDefinition`
 also live there. Import elapsed `Window`, `Duration` and calendar `Months`
@@ -170,15 +175,23 @@ Every package facade has an explicit export list. This table records its
 purpose, the workflow that warrants its exports, and its tier in
 [API stability](stability.md): stable names follow Semantic Versioning from 1.0,
 provisional ones may change in a minor release with a changelog entry, and
-internal modules may change in any release. The `terrine` root is stable.
+internal modules may change in any release. The `terrine` root is stable; its
+CLI is provisional.
 
 | Facade | Tier | Supported use |
 | --- | --- | --- |
 | `terrine.recipes` | Stable | The eight constructor-first dataset workflows above; returns plain Designs that compile through the existing low-level API. |
-| `terrine.spec` | Stable, except provisional `approx_distinct` and `approx_quantile` | The full-flexibility Design layer: public `Sequential` and `EventPanel` transforms, calendar panels, initiation/adoption declarations, matched-time sampling, trial weights, winsorization, definition storage and JSON/YAML serialization. See [sequential panels](sequential-panels.md) and [ML staging](ml-staging.md). Expression implementation records stay in their owning module. |
+| `terrine.metrics` | Stable | Metric constructors used in the everyday modeling workflow. |
+| `terrine.spec` | Stable, except provisional names listed below | The full-flexibility Design layer, stable declarations and JSON/YAML serialization. `Sequential`, `EventPanel`, `CalendarPanel`, `CalendarComparisonPanel`, `matched_t0`, `CalendarComparisonSpec`, `approx_distinct` and `approx_quantile` are provisional. See [sequential panels](sequential-panels.md) and [ML staging](ml-staging.md). |
 | `terrine.execution` | Provisional | `publish_native_inputs` and its `PublishedInputs` result for [retained input publication](materialization-runtime.md#owned-inputs-for-repeated-builds). Verified bindings/relation authority are derived, not facade inputs. |
 | `terrine.runtime` | Provisional | Owner-side planning, saved plans, execution/scan authorization protocols, snapshot retention, exact-generation reads and run status/events/cancellation. See [runtime](materialization-runtime.md). Persistent state rows and layer translation stay in their owning modules. |
-| `terrine.dataset` | Stable | `GroupSplit` and `TimeSplit` policies supplied to `Frame.training_set(split=...)`; split strategy is an everyday training workflow choice. |
+| `terrine.dataset` | Stable facade; `Dataset` provisional | `GroupSplit` and `TimeSplit` policies supplied to `Frame.training_set(split=...)`; split strategy is an everyday training workflow choice. |
+| `terrine.frame` | Stable facade; `Frame.stage` and `Frame.expr` provisional | Frame construction, conversion and training workflows. |
+| `terrine.model` | Stable | `Catalog` and `Readiness` types used with `Model.from_catalog`; `Model` remains the binding entry point. |
+| `terrine.data` | Stable input declarations and metric types; result metadata provisional | Bind inputs with `Coverage`, `UnitSource`, `Events`, `History` and `Budget`; `EventMetric` and `Ratio` describe stable metric declarations. Returned `*Meta` records, `CoverageSummary`, `EligibilitySummary` and `MaterializedFrame` remain inspectable results, not required inputs. Use the stable constructors from `terrine.metrics` to declare metrics. |
+| `terrine.reasons` | Stable vocabulary | Missing-value reason vocabulary used in output columns. |
+| `terrine.errors` | Stable names; refusal codes stable only when raised by a stable name | Coded errors and warnings. |
+| `terrine.windows` | Stable except provisional `duration` | `Window`, `Duration` and `Months` are elapsed-window values; `duration` is provisional. |
 | `terrine.export` | Provisional | Shared preflight and Arrow/lifelines/diff-diff hand-offs, with their typed conversion results. See [library hand-offs](library-handoffs.md). |
 | `terrine.agent` | Provisional | `AgentPolicy` and `DatasetTools` for the separately authorized [dataset tools](dataset-agent-tools.md). |
 | `terrine.simulate` | Provisional | Seeded raw-source worlds and bounded scale batches, with independent expected-row oracles. See [synthetic worlds](synthetic-worlds.md). |
@@ -192,14 +205,9 @@ Dataset split policies are available from `terrine.dataset`: import
 `Frame.training_set(split=...)`. These are ordinary workflow inputs; compiler,
 runtime-state, and orchestration records remain in their focused modules.
 
-The focused public modules `terrine.data`, `terrine.errors`, `terrine.windows`,
-`terrine.model` and `terrine.frame` are stable and retain their explicit typed
-contracts: budgets/coverage and returned metadata, coded refusals, elapsed
-windows and durations, Model, and Frame/cohort results respectively.
-`Model.from_increment` is provisional. Data metadata is inspectable without
-becoming user-authored compiler or runtime state. Optional dependency import
-isolation covers the root and all package facades, including resolution of
-their exported symbols.
+Metadata records are inspectable without becoming user-authored compiler or
+runtime state. Optional dependency import isolation covers the root and all
+package facades, including resolution of their exported symbols.
 
 ## Pre-release API review
 
