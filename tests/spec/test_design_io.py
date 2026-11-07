@@ -500,16 +500,42 @@ def test_since_round_trips_design_documents():
     )
 
 
-def test_legacy_minute_identity_preserves_literal_comparands():
-    from terrine.spec.io import _legacy_minute_digest, _legacy_minutes
+def test_legacy_minute_identity_converts_typed_durations_and_preserves_comparands():
+    from terrine.spec.io import _legacy_minute_digest, _legacy_minutes, canonical_digest
 
-    payload = {
-        "window": {"start": "1h30min", "end": "0s"},
+    event_time = {
+        "type": "EventTime",
+        "window": {"type": "Window", "start": "1h30min", "end": "0s"},
         "equals": "5min",
+    }
+    attribute_as_of = {
+        "type": "AttributeAsOf",
+        "attribute": "price",
+        "before": "-5min",
+        "relative_to": None,
+    }
+    retention = {"type": "RetentionMetric", "horizon": "90min"}
+    payload = {
+        "features": {
+            "selected": event_time,
+            "price": attribute_as_of,
+            "retention": retention,
+        }
     }
     old_spelling = _legacy_minutes(payload)
 
-    assert old_spelling == {"window": {"start": "90m", "end": "0s"}, "equals": "5min"}
-    assert _legacy_minute_digest(payload) != _legacy_minute_digest(
-        {**payload, "equals": "5m"}
-    )
+    assert old_spelling["features"]["selected"] == {
+        "type": "EventTime",
+        "window": {"type": "Window", "start": "90m", "end": "0s"},
+        "equals": "5min",
+    }
+    assert old_spelling["features"]["price"]["before"] == "-5m"
+    assert old_spelling["features"]["retention"]["horizon"] == "90m"
+    assert _legacy_minute_digest(payload) == canonical_digest(old_spelling)
+    changed_filter = {
+        "features": {
+            **payload["features"],
+            "selected": {**event_time, "equals": "5m"},
+        }
+    }
+    assert _legacy_minute_digest(payload) != _legacy_minute_digest(changed_filter)

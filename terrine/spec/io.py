@@ -138,8 +138,6 @@ def canonical_digest(payload: Mapping[str, Any]) -> str:
 
 
 _CANONICAL_MINUTE = re.compile(r"([+-]?)(?:(\d+)h)?(\d+)min")
-_DURATION_FIELDS = frozenset({"at", "every", "gap", "offset"})
-
 
 def _legacy_minute_text(value: str) -> str:
     match = _CANONICAL_MINUTE.fullmatch(value)
@@ -167,21 +165,27 @@ def _legacy_minute_text(value: str) -> str:
 
 
 def _legacy_minutes(value: Any) -> Any:
-    """Encode only typed duration fields as their former ``m`` spelling."""
+    """Encode tagged duration fields as their former ``m`` spelling."""
     if isinstance(value, Mapping):
+        kind = value.get("type")
+        design = "unit" in value and "anchor" in value
+        feature_hash = "unit_binding" in value
         result: dict[Any, Any] = {}
         for key, item in value.items():
-            if key in _DURATION_FIELDS and isinstance(item, str):
-                result[key] = _legacy_minute_text(item)
-            elif key == "window" and isinstance(item, Mapping):
-                result[key] = {
-                    name: _legacy_minute_text(part)
-                    if name in {"start", "end"} and isinstance(part, str)
-                    else _legacy_minutes(part)
-                    for name, part in item.items()
-                }
-            else:
-                result[key] = _legacy_minutes(item)
+            duration_field = (
+                (key == "gap" and (design or feature_hash or kind == "SessionSpec"))
+                or (key == "every" and kind == "Schedule")
+                or (key == "offset" and kind == "EventAnchor")
+                or (key == "at" and kind == "Treatment")
+                or (key == "before" and kind == "AttributeAsOf")
+                or (key == "horizon" and kind == "RetentionMetric")
+                or (kind == "Window" and key in {"start", "end"})
+            )
+            result[key] = (
+                _legacy_minute_text(item)
+                if duration_field and isinstance(item, str)
+                else _legacy_minutes(item)
+            )
         return result
     if isinstance(value, (list, tuple)):
         return [_legacy_minutes(item) for item in value]
