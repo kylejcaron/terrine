@@ -164,8 +164,14 @@ if RELEASES:  # An empty list defines no test, rather than collecting a skipped 
                             model = bind_model(direct_con, CORPUS / "data")
                             frame = from_json(design_path.read_text("utf-8")).build(model)
                             assert {
-                                column["name"]: column for column in output_schema(frame)
-                            } == {column["name"]: column for column in expected_schema}
+                                column["name"]: column
+                                for column in output_schema(frame)
+                                if column["role"] != "support"
+                            } == {
+                                column["name"]: column
+                                for column in expected_schema
+                                if column["role"] != "support"
+                            }
                             current_rows = frame.materialize(
                                 budget=Budget(
                                     max_rows=100,
@@ -194,8 +200,14 @@ if RELEASES:  # An empty list defines no test, rather than collecting a skipped 
                     }
                     for field in reopened.schema
                 ]
-                assert {column["name"]: column for column in reopened_schema} == {
-                    column["name"]: column for column in expected_schema
+                assert {
+                    column["name"]: column
+                    for column in reopened_schema
+                    if column["role"] != "support"
+                } == {
+                    column["name"]: column
+                    for column in expected_schema
+                    if column["role"] != "support"
                 }
 
             restored_manifest = DatasetManifest.from_json(

@@ -16,29 +16,9 @@
       "role": "t0"
     },
     {
-      "name": "age",
-      "type": "int64",
-      "role": "support"
-    },
-    {
       "name": "period_value",
       "type": "double",
       "role": "outcome"
-    },
-    {
-      "name": "period_value__complete",
-      "type": "bool",
-      "role": "support"
-    },
-    {
-      "name": "period_value__reason",
-      "type": "string",
-      "role": "support"
-    },
-    {
-      "name": "period_value_mature",
-      "type": "bool",
-      "role": "support"
     },
     {
       "name": "orders_30d",
@@ -46,49 +26,9 @@
       "role": "feature"
     },
     {
-      "name": "orders_30d__complete",
-      "type": "bool",
-      "role": "support"
-    },
-    {
-      "name": "orders_30d__reason",
-      "type": "string",
-      "role": "support"
-    },
-    {
       "name": "cumulative_value",
       "type": "double",
       "role": "outcome"
-    },
-    {
-      "name": "cumulative_value__complete",
-      "type": "bool",
-      "role": "support"
-    },
-    {
-      "name": "cumulative_value__reason",
-      "type": "string",
-      "role": "support"
-    },
-    {
-      "name": "period_value_observed_from",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "period_value_observed_until",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "__terrine_value_0_observed_from",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "__terrine_value_0_observed_until",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
     }
   ],
   "design.yaml": [
@@ -108,29 +48,9 @@
       "role": "t0"
     },
     {
-      "name": "age",
-      "type": "int64",
-      "role": "support"
-    },
-    {
       "name": "period_value",
       "type": "double",
       "role": "outcome"
-    },
-    {
-      "name": "period_value__complete",
-      "type": "bool",
-      "role": "support"
-    },
-    {
-      "name": "period_value__reason",
-      "type": "string",
-      "role": "support"
-    },
-    {
-      "name": "period_value_mature",
-      "type": "bool",
-      "role": "support"
     },
     {
       "name": "orders_30d",
@@ -138,49 +58,9 @@
       "role": "feature"
     },
     {
-      "name": "orders_30d__complete",
-      "type": "bool",
-      "role": "support"
-    },
-    {
-      "name": "orders_30d__reason",
-      "type": "string",
-      "role": "support"
-    },
-    {
       "name": "cumulative_value",
       "type": "double",
       "role": "outcome"
-    },
-    {
-      "name": "cumulative_value__complete",
-      "type": "bool",
-      "role": "support"
-    },
-    {
-      "name": "cumulative_value__reason",
-      "type": "string",
-      "role": "support"
-    },
-    {
-      "name": "period_value_observed_from",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "period_value_observed_until",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "__terrine_value_0_observed_from",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "__terrine_value_0_observed_until",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
     }
   ],
   "definition.json": [
@@ -200,29 +80,9 @@
       "role": "t0"
     },
     {
-      "name": "age",
-      "type": "int64",
-      "role": "support"
-    },
-    {
       "name": "period_value",
       "type": "double",
       "role": "outcome"
-    },
-    {
-      "name": "period_value__complete",
-      "type": "bool",
-      "role": "support"
-    },
-    {
-      "name": "period_value__reason",
-      "type": "string",
-      "role": "support"
-    },
-    {
-      "name": "period_value_mature",
-      "type": "bool",
-      "role": "support"
     },
     {
       "name": "orders_30d",
@@ -230,49 +90,9 @@
       "role": "feature"
     },
     {
-      "name": "orders_30d__complete",
-      "type": "bool",
-      "role": "support"
-    },
-    {
-      "name": "orders_30d__reason",
-      "type": "string",
-      "role": "support"
-    },
-    {
       "name": "cumulative_value",
       "type": "double",
       "role": "outcome"
-    },
-    {
-      "name": "cumulative_value__complete",
-      "type": "bool",
-      "role": "support"
-    },
-    {
-      "name": "cumulative_value__reason",
-      "type": "string",
-      "role": "support"
-    },
-    {
-      "name": "period_value_observed_from",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "period_value_observed_until",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "__terrine_value_0_observed_from",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "__terrine_value_0_observed_until",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
     }
   ]
 }

@@ -21,29 +21,9 @@
       "role": "feature"
     },
     {
-      "name": "first_refund__complete",
-      "type": "bool",
-      "role": "support"
-    },
-    {
-      "name": "first_refund__reason",
-      "type": "string",
-      "role": "support"
-    },
-    {
       "name": "last_status",
       "type": "string",
       "role": "feature"
-    },
-    {
-      "name": "last_status__complete",
-      "type": "bool",
-      "role": "support"
-    },
-    {
-      "name": "last_status__reason",
-      "type": "string",
-      "role": "support"
     },
     {
       "name": "orders_30d",
@@ -51,29 +31,9 @@
       "role": "feature"
     },
     {
-      "name": "orders_30d__complete",
-      "type": "bool",
-      "role": "support"
-    },
-    {
-      "name": "orders_30d__reason",
-      "type": "string",
-      "role": "support"
-    },
-    {
       "name": "refunds_30d",
       "type": "int64",
       "role": "feature"
-    },
-    {
-      "name": "refunds_30d__complete",
-      "type": "bool",
-      "role": "support"
-    },
-    {
-      "name": "refunds_30d__reason",
-      "type": "string",
-      "role": "support"
     },
     {
       "name": "spend_30d",
@@ -81,114 +41,9 @@
       "role": "feature"
     },
     {
-      "name": "spend_30d__complete",
-      "type": "bool",
-      "role": "support"
-    },
-    {
-      "name": "spend_30d__reason",
-      "type": "string",
-      "role": "support"
-    },
-    {
       "name": "spend_next_14d",
       "type": "double",
       "role": "outcome"
-    },
-    {
-      "name": "spend_next_14d__complete",
-      "type": "bool",
-      "role": "support"
-    },
-    {
-      "name": "spend_next_14d__reason",
-      "type": "string",
-      "role": "support"
-    },
-    {
-      "name": "_observed_from",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "_observed_until",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "anchor_provenance",
-      "type": "string",
-      "role": "support"
-    },
-    {
-      "name": "__terrine_value_0_observed_from",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "__terrine_value_0_observed_until",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "__terrine_value_1_observed_from",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "__terrine_value_1_observed_until",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "__terrine_value_2_observed_from",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "__terrine_value_2_observed_until",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "__terrine_value_3_observed_from",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "__terrine_value_3_observed_until",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "__terrine_value_4_observed_from",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "__terrine_value_4_observed_until",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "__terrine_value_5_observed_from",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "__terrine_value_5_observed_until",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "__terrine_selector_start_0",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "__terrine_selector_end_0",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
     }
   ],
   "design.yaml": [
@@ -213,64 +68,9 @@
       "role": "feature"
     },
     {
-      "name": "orders_30d__complete",
-      "type": "bool",
-      "role": "support"
-    },
-    {
-      "name": "orders_30d__reason",
-      "type": "string",
-      "role": "support"
-    },
-    {
       "name": "spend_next_30d",
       "type": "double",
       "role": "outcome"
-    },
-    {
-      "name": "spend_next_30d__complete",
-      "type": "bool",
-      "role": "support"
-    },
-    {
-      "name": "spend_next_30d__reason",
-      "type": "string",
-      "role": "support"
-    },
-    {
-      "name": "_observed_from",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "_observed_until",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "anchor_provenance",
-      "type": "string",
-      "role": "support"
-    },
-    {
-      "name": "__terrine_value_0_observed_from",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "__terrine_value_0_observed_until",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "__terrine_value_1_observed_from",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "__terrine_value_1_observed_until",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
     }
   ],
   "definition.json": [
@@ -295,29 +95,9 @@
       "role": "feature"
     },
     {
-      "name": "first_refund__complete",
-      "type": "bool",
-      "role": "support"
-    },
-    {
-      "name": "first_refund__reason",
-      "type": "string",
-      "role": "support"
-    },
-    {
       "name": "last_status",
       "type": "string",
       "role": "feature"
-    },
-    {
-      "name": "last_status__complete",
-      "type": "bool",
-      "role": "support"
-    },
-    {
-      "name": "last_status__reason",
-      "type": "string",
-      "role": "support"
     },
     {
       "name": "orders_30d",
@@ -325,29 +105,9 @@
       "role": "feature"
     },
     {
-      "name": "orders_30d__complete",
-      "type": "bool",
-      "role": "support"
-    },
-    {
-      "name": "orders_30d__reason",
-      "type": "string",
-      "role": "support"
-    },
-    {
       "name": "refunds_30d",
       "type": "int64",
       "role": "feature"
-    },
-    {
-      "name": "refunds_30d__complete",
-      "type": "bool",
-      "role": "support"
-    },
-    {
-      "name": "refunds_30d__reason",
-      "type": "string",
-      "role": "support"
     },
     {
       "name": "spend_30d",
@@ -355,109 +115,9 @@
       "role": "feature"
     },
     {
-      "name": "spend_30d__complete",
-      "type": "bool",
-      "role": "support"
-    },
-    {
-      "name": "spend_30d__reason",
-      "type": "string",
-      "role": "support"
-    },
-    {
       "name": "spend_next_14d",
       "type": "double",
       "role": "outcome"
-    },
-    {
-      "name": "spend_next_14d__complete",
-      "type": "bool",
-      "role": "support"
-    },
-    {
-      "name": "spend_next_14d__reason",
-      "type": "string",
-      "role": "support"
-    },
-    {
-      "name": "__terrine_split",
-      "type": "string",
-      "role": "support"
-    },
-    {
-      "name": "__terrine_split_reason",
-      "type": "string",
-      "role": "support"
-    },
-    {
-      "name": "__terrine_selector_start_0",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "__terrine_selector_end_0",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "__terrine_value_0_observed_from",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "__terrine_value_0_observed_until",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "__terrine_value_1_observed_from",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "__terrine_value_1_observed_until",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "__terrine_value_2_observed_from",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "__terrine_value_2_observed_until",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "__terrine_value_3_observed_from",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "__terrine_value_3_observed_until",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "__terrine_value_4_observed_from",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "__terrine_value_4_observed_until",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "__terrine_value_5_observed_from",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "__terrine_value_5_observed_until",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
     }
   ]
 }

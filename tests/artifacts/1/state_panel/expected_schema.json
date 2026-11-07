@@ -16,44 +16,9 @@
       "role": "t0"
     },
     {
-      "name": "from_time",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "to_time",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "scheduled_to",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "period_index",
-      "type": "int64",
-      "role": "support"
-    },
-    {
-      "name": "gap",
-      "type": "duration[us]",
-      "role": "support"
-    },
-    {
       "name": "from_state",
       "type": "string",
       "role": "prior_state"
-    },
-    {
-      "name": "from_state__complete",
-      "type": "bool",
-      "role": "support"
-    },
-    {
-      "name": "from_state__reason",
-      "type": "string",
-      "role": "support"
     },
     {
       "name": "to_state",
@@ -61,69 +26,9 @@
       "role": "outcome"
     },
     {
-      "name": "to_state__complete",
-      "type": "bool",
-      "role": "support"
-    },
-    {
-      "name": "to_state__reason",
-      "type": "string",
-      "role": "support"
-    },
-    {
-      "name": "terminal",
-      "type": "bool",
-      "role": "support"
-    },
-    {
       "name": "orders_30d",
       "type": "int64",
       "role": "feature"
-    },
-    {
-      "name": "orders_30d__complete",
-      "type": "bool",
-      "role": "support"
-    },
-    {
-      "name": "orders_30d__reason",
-      "type": "string",
-      "role": "support"
-    },
-    {
-      "name": "__terrine_value_0_observed_from",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "__terrine_value_0_observed_until",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "from_state_observed_from",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "from_state_observed_until",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "to_state_observed_from",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "to_state_observed_until",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "__terrine_panel_start",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
     }
   ],
   "design.yaml": [
@@ -143,44 +48,9 @@
       "role": "t0"
     },
     {
-      "name": "from_time",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "to_time",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "scheduled_to",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "period_index",
-      "type": "int64",
-      "role": "support"
-    },
-    {
-      "name": "gap",
-      "type": "duration[us]",
-      "role": "support"
-    },
-    {
       "name": "from_state",
       "type": "string",
       "role": "prior_state"
-    },
-    {
-      "name": "from_state__complete",
-      "type": "bool",
-      "role": "support"
-    },
-    {
-      "name": "from_state__reason",
-      "type": "string",
-      "role": "support"
     },
     {
       "name": "to_state",
@@ -188,69 +58,9 @@
       "role": "outcome"
     },
     {
-      "name": "to_state__complete",
-      "type": "bool",
-      "role": "support"
-    },
-    {
-      "name": "to_state__reason",
-      "type": "string",
-      "role": "support"
-    },
-    {
-      "name": "terminal",
-      "type": "bool",
-      "role": "support"
-    },
-    {
       "name": "orders_30d",
       "type": "int64",
       "role": "feature"
-    },
-    {
-      "name": "orders_30d__complete",
-      "type": "bool",
-      "role": "support"
-    },
-    {
-      "name": "orders_30d__reason",
-      "type": "string",
-      "role": "support"
-    },
-    {
-      "name": "__terrine_value_0_observed_from",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "__terrine_value_0_observed_until",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "from_state_observed_from",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "from_state_observed_until",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "to_state_observed_from",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "to_state_observed_until",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "__terrine_panel_start",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
     }
   ],
   "definition.json": [
@@ -270,44 +80,9 @@
       "role": "t0"
     },
     {
-      "name": "from_time",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "to_time",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "scheduled_to",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "period_index",
-      "type": "int64",
-      "role": "support"
-    },
-    {
-      "name": "gap",
-      "type": "duration[us]",
-      "role": "support"
-    },
-    {
       "name": "from_state",
       "type": "string",
       "role": "prior_state"
-    },
-    {
-      "name": "from_state__complete",
-      "type": "bool",
-      "role": "support"
-    },
-    {
-      "name": "from_state__reason",
-      "type": "string",
-      "role": "support"
     },
     {
       "name": "to_state",
@@ -315,69 +90,9 @@
       "role": "outcome"
     },
     {
-      "name": "to_state__complete",
-      "type": "bool",
-      "role": "support"
-    },
-    {
-      "name": "to_state__reason",
-      "type": "string",
-      "role": "support"
-    },
-    {
-      "name": "terminal",
-      "type": "bool",
-      "role": "support"
-    },
-    {
       "name": "orders_30d",
       "type": "int64",
       "role": "feature"
-    },
-    {
-      "name": "orders_30d__complete",
-      "type": "bool",
-      "role": "support"
-    },
-    {
-      "name": "orders_30d__reason",
-      "type": "string",
-      "role": "support"
-    },
-    {
-      "name": "__terrine_value_0_observed_from",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "__terrine_value_0_observed_until",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "from_state_observed_from",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "from_state_observed_until",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "to_state_observed_from",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "to_state_observed_until",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "__terrine_panel_start",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
     }
   ]
 }

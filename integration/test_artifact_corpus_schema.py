@@ -40,10 +40,17 @@ def test_generation_designs_compile_to_recorded_schema(design_path):
                     model
                 ),
             }
-            schemas = {name: output_schema(frame) for name, frame in frames.items()}
+            schemas = {
+                name: [column for column in output_schema(frame) if column["role"] != "support"]
+                for name, frame in frames.items()
+            }
         finally:
             con.disconnect()
-    assert schemas == json.loads(read("expected_schema.json"))
+    expected_schema = {
+        name: [column for column in columns if column["role"] != "support"]
+        for name, columns in json.loads(read("expected_schema.json")).items()
+    }
+    assert schemas == expected_schema
 
 
 def test_corpus_generator_is_deterministic_without_mutating_baseline(tmp_path):

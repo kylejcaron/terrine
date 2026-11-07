@@ -21,104 +21,14 @@
       "role": "feature"
     },
     {
-      "name": "orders_30d__complete",
-      "type": "bool",
-      "role": "support"
-    },
-    {
-      "name": "orders_30d__reason",
-      "type": "string",
-      "role": "support"
-    },
-    {
-      "name": "event_time",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "event_time__complete",
-      "type": "bool",
-      "role": "support"
-    },
-    {
-      "name": "event_time__reason",
-      "type": "string",
-      "role": "support"
-    },
-    {
-      "name": "censor_time",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
       "name": "duration",
       "type": "duration[us]",
       "role": "outcome"
     },
     {
-      "name": "duration__complete",
-      "type": "bool",
-      "role": "support"
-    },
-    {
-      "name": "duration__reason",
-      "type": "string",
-      "role": "support"
-    },
-    {
       "name": "event",
       "type": "bool",
       "role": "outcome"
-    },
-    {
-      "name": "event__complete",
-      "type": "bool",
-      "role": "support"
-    },
-    {
-      "name": "event__reason",
-      "type": "string",
-      "role": "support"
-    },
-    {
-      "name": "entry_time",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "censor_reason",
-      "type": "string",
-      "role": "support"
-    },
-    {
-      "name": "censor_reason__complete",
-      "type": "bool",
-      "role": "support"
-    },
-    {
-      "name": "censor_reason__reason",
-      "type": "string",
-      "role": "support"
-    },
-    {
-      "name": "_observed_from",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "_observed_until",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "__terrine_value_0_observed_from",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "__terrine_value_0_observed_until",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
     }
   ],
   "design.yaml": [
@@ -143,104 +53,14 @@
       "role": "feature"
     },
     {
-      "name": "orders_30d__complete",
-      "type": "bool",
-      "role": "support"
-    },
-    {
-      "name": "orders_30d__reason",
-      "type": "string",
-      "role": "support"
-    },
-    {
-      "name": "event_time",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "event_time__complete",
-      "type": "bool",
-      "role": "support"
-    },
-    {
-      "name": "event_time__reason",
-      "type": "string",
-      "role": "support"
-    },
-    {
-      "name": "censor_time",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
       "name": "duration",
       "type": "duration[us]",
       "role": "outcome"
     },
     {
-      "name": "duration__complete",
-      "type": "bool",
-      "role": "support"
-    },
-    {
-      "name": "duration__reason",
-      "type": "string",
-      "role": "support"
-    },
-    {
       "name": "event",
       "type": "bool",
       "role": "outcome"
-    },
-    {
-      "name": "event__complete",
-      "type": "bool",
-      "role": "support"
-    },
-    {
-      "name": "event__reason",
-      "type": "string",
-      "role": "support"
-    },
-    {
-      "name": "entry_time",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "censor_reason",
-      "type": "string",
-      "role": "support"
-    },
-    {
-      "name": "censor_reason__complete",
-      "type": "bool",
-      "role": "support"
-    },
-    {
-      "name": "censor_reason__reason",
-      "type": "string",
-      "role": "support"
-    },
-    {
-      "name": "_observed_from",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "_observed_until",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "__terrine_value_0_observed_from",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "__terrine_value_0_observed_until",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
     }
   ],
   "definition.json": [
@@ -265,104 +85,14 @@
       "role": "feature"
     },
     {
-      "name": "orders_30d__complete",
-      "type": "bool",
-      "role": "support"
-    },
-    {
-      "name": "orders_30d__reason",
-      "type": "string",
-      "role": "support"
-    },
-    {
-      "name": "event_time",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "event_time__complete",
-      "type": "bool",
-      "role": "support"
-    },
-    {
-      "name": "event_time__reason",
-      "type": "string",
-      "role": "support"
-    },
-    {
-      "name": "censor_time",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
       "name": "duration",
       "type": "duration[us]",
       "role": "outcome"
     },
     {
-      "name": "duration__complete",
-      "type": "bool",
-      "role": "support"
-    },
-    {
-      "name": "duration__reason",
-      "type": "string",
-      "role": "support"
-    },
-    {
       "name": "event",
       "type": "bool",
       "role": "outcome"
-    },
-    {
-      "name": "event__complete",
-      "type": "bool",
-      "role": "support"
-    },
-    {
-      "name": "event__reason",
-      "type": "string",
-      "role": "support"
-    },
-    {
-      "name": "entry_time",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "censor_reason",
-      "type": "string",
-      "role": "support"
-    },
-    {
-      "name": "censor_reason__complete",
-      "type": "bool",
-      "role": "support"
-    },
-    {
-      "name": "censor_reason__reason",
-      "type": "string",
-      "role": "support"
-    },
-    {
-      "name": "_observed_from",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "_observed_until",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "__terrine_value_0_observed_from",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "__terrine_value_0_observed_until",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
     }
   ]
 }

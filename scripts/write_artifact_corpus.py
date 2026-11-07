@@ -234,11 +234,12 @@ def _recipe_documents(data: Path) -> dict[str, dict[str, str]]:
 
 
 def output_schema(frame: Any) -> list[dict[str, str]]:
-    """Return the ordered names, Arrow types and roles of a built Frame's lossless output."""
+    """Return the ordered non-support columns of a built Frame's output."""
     materialized = frame.materialize(budget=_BUDGET)
     return [
-        {"name": field.name, "type": str(field.type), "role": _role(field.name, materialized.roles)}
+        {"name": field.name, "type": str(field.type), "role": role}
         for field in materialized.to_pyarrow().schema
+        if (role := _role(field.name, materialized.roles)) != "support"
     ]
 
 

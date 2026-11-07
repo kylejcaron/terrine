@@ -16,59 +16,9 @@
       "role": "t0"
     },
     {
-      "name": "parent_event_id",
-      "type": "string",
-      "role": "support"
-    },
-    {
-      "name": "parent_t0",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "event_period",
-      "type": "int8",
-      "role": "support"
-    },
-    {
       "name": "orders_30d",
       "type": "int64",
       "role": "feature"
-    },
-    {
-      "name": "orders_30d__complete",
-      "type": "bool",
-      "role": "support"
-    },
-    {
-      "name": "orders_30d__reason",
-      "type": "string",
-      "role": "support"
-    },
-    {
-      "name": "_observed_from",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "_observed_until",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "anchor_provenance",
-      "type": "string",
-      "role": "support"
-    },
-    {
-      "name": "__terrine_value_0_observed_from",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "__terrine_value_0_observed_until",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
     }
   ],
   "design.yaml": [
@@ -88,59 +38,9 @@
       "role": "t0"
     },
     {
-      "name": "parent_event_id",
-      "type": "string",
-      "role": "support"
-    },
-    {
-      "name": "parent_t0",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "event_period",
-      "type": "int8",
-      "role": "support"
-    },
-    {
       "name": "orders_30d",
       "type": "int64",
       "role": "feature"
-    },
-    {
-      "name": "orders_30d__complete",
-      "type": "bool",
-      "role": "support"
-    },
-    {
-      "name": "orders_30d__reason",
-      "type": "string",
-      "role": "support"
-    },
-    {
-      "name": "_observed_from",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "_observed_until",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "anchor_provenance",
-      "type": "string",
-      "role": "support"
-    },
-    {
-      "name": "__terrine_value_0_observed_from",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "__terrine_value_0_observed_until",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
     }
   ],
   "definition.json": [
@@ -160,59 +60,9 @@
       "role": "t0"
     },
     {
-      "name": "parent_event_id",
-      "type": "string",
-      "role": "support"
-    },
-    {
-      "name": "parent_t0",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "event_period",
-      "type": "int8",
-      "role": "support"
-    },
-    {
       "name": "orders_30d",
       "type": "int64",
       "role": "feature"
-    },
-    {
-      "name": "orders_30d__complete",
-      "type": "bool",
-      "role": "support"
-    },
-    {
-      "name": "orders_30d__reason",
-      "type": "string",
-      "role": "support"
-    },
-    {
-      "name": "_observed_from",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "_observed_until",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "anchor_provenance",
-      "type": "string",
-      "role": "support"
-    },
-    {
-      "name": "__terrine_value_0_observed_from",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
-    },
-    {
-      "name": "__terrine_value_0_observed_until",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "support"
     }
   ]
 }

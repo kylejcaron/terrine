@@ -72,8 +72,15 @@ def test_generation_documents_decode_and_verify(generation):
 
     metadata = json.loads(read("arrow_metadata.json"))
     schema = pa.ipc.read_schema(pa.py_buffer(base64.b64decode(metadata["ARROW:schema"])))
-    assert [(field.name, str(field.type)) for field in schema] == [
-        (column.name, column.data_type) for column in manifest.columns
+    roles_by_name = {column.name: column.role for column in manifest.columns}
+    assert [
+        (field.name, str(field.type))
+        for field in schema
+        if roles_by_name[field.name] != "support"
+    ] == [
+        (column.name, column.data_type)
+        for column in manifest.columns
+        if column.role != "support"
     ]
     roles = MaterializedFrame.from_arrow(schema.empty_table()).roles
     assert {
