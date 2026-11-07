@@ -147,7 +147,7 @@ def grid_frames():
                 outcomes={"y": tr.agg(metric, window=("0s", "28d"))},
             )
             frames[event, metric] = design.build(model).materialize(
-                tr.Budget(max_rows=10_000, max_output_bytes=10_000_000)
+                budget=tr.Budget(max_rows=10_000, max_output_bytes=10_000_000)
             )
         return MappingProxyType(frames)
     finally:

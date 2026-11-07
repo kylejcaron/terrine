@@ -92,7 +92,7 @@ def boolean_result():
     con, model, design = _inputs()
     try:
         frame = design.build(model)
-        result = frame.materialize(tr.Budget(max_rows=10, strict_scan=False))
+        result = frame.materialize(budget=tr.Budget(max_rows=10, strict_scan=False))
         return BooleanResult(
             result.table, frame._compiled.columns, frame._compiled.expression_timings
         )
@@ -160,7 +160,7 @@ def test_predicate_over_nonadditive_operand_gets_range_plan(boolean_result):
         )
         assert set(plan_ranges(design, model)) == {operand}
         frame = design.build(model)
-        result = frame.materialize(tr.Budget(max_rows=10, strict_scan=False))
+        result = frame.materialize(budget=tr.Budget(max_rows=10, strict_scan=False))
         predicate_only = BooleanResult(
             result.table, frame._compiled.columns, frame._compiled.expression_timings
         )
@@ -187,7 +187,7 @@ def test_time_split_assigns_boolean_label_by_its_window():
                 label=label,
                 incomplete_labels="keep",
                 split=TimeSplit(train_until="2025-01-05"),
-            ).materialize(tr.Budget(max_rows=10, strict_scan=False))
+            ).materialize(budget=tr.Budget(max_rows=10, strict_scan=False))
             splits.append(
                 {
                     row["unit"]: (row["__terrine_split"], row["__terrine_split_reason"])
@@ -259,7 +259,7 @@ def test_false_conjunction_retains_unresolved_operand_support_for_time_split():
             incomplete_labels="keep",
             split=TimeSplit(train_until="2025-01-10"),
         )
-        materialized = frame.materialize(tr.Budget(max_rows=10, strict_scan=False))
+        materialized = frame.materialize(budget=tr.Budget(max_rows=10, strict_scan=False))
         row = next(row for row in materialized.table.to_pylist() if row["unit"] == "b")
         meta = materialized.columns["label"]
         assert (row["label"], row[meta.complete_column], row[meta.reason_column]) == (

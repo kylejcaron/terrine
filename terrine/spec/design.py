@@ -214,8 +214,8 @@ class Design:
 
     def __init__(
         self,
-        unit: str | None,
-        anchor: FixedDate | EventAnchor | Schedule,
+        unit: str | None = None,
+        anchor: FixedDate | EventAnchor | Schedule | None = None,
         *,
         features: Mapping[str, Expr | Predicate] | None = None,
         outcomes: Mapping[str, Expr | Predicate] | None = None,
@@ -235,7 +235,9 @@ class Design:
         sample: MatchedT0Sample | None = None,
         administrative_cutoff: datetime | None = None,
     ) -> None:
-        if unit is not None and (not isinstance(unit, str) or not unit.strip()):
+        if unit is not None and not isinstance(unit, str):
+            raise _INVALID.error(reason="wrong_type", field="unit")
+        if unit is not None and not unit.strip():
             raise _INVALID.error(reason="empty_name", field="unit")
         if not isinstance(anchor, (FixedDate, EventAnchor, Schedule)):
             raise _INVALID.error(reason="wrong_type", field="anchor")

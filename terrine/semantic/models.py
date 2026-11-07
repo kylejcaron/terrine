@@ -6,12 +6,13 @@ import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Annotated, Any, Literal, Self
+from typing import TYPE_CHECKING, Annotated, Any, Literal, Self, get_args, get_origin
 
 from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    FieldSerializationInfo,
     SerializerFunctionWrapHandler,
     StrictBool,
     StrictInt,
@@ -70,11 +71,21 @@ def _seal(value: Any) -> Any:
     return value
 
 
-def _plain(value: Any) -> Any:
+def _plain(value: Any, annotation: Any = None) -> Any:
+    origin = get_origin(annotation)
+    args = get_args(annotation)
     if isinstance(value, Mapping):
-        return {key: _plain(item) for key, item in value.items()}
+        value_type = args[1] if len(args) > 1 else None
+        return {key: _plain(item, value_type) for key, item in value.items()}
     if isinstance(value, tuple):
-        return tuple(_plain(item) for item in value)
+        if origin is list:
+            item_type = args[0] if args else None
+            return [_plain(item, item_type) for item in value]
+        item_type = args[0] if args else None
+        return tuple(_plain(item, item_type) for item in value)
+    if isinstance(value, list):
+        item_type = args[0] if args else None
+        return [_plain(item, item_type) for item in value]
     return value
 
 
@@ -88,8 +99,14 @@ class _Record(BaseModel):
         return self
 
     @field_serializer("*", mode="wrap")
-    def _serialize_field(self, value: Any, handler: SerializerFunctionWrapHandler):
-        return handler(_plain(value))
+    def _serialize_field(
+        self,
+        value: Any,
+        handler: SerializerFunctionWrapHandler,
+        info: FieldSerializationInfo,
+    ):
+        field = type(self).model_fields[info.field_name]
+        return handler(_plain(value, field.annotation))
 
     def __deepcopy__(self, memo: dict[int, Any] | None = None) -> Self:
         copied = type(self).model_validate(self.model_dump(mode="python"))

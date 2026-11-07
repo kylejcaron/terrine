@@ -67,7 +67,7 @@ try:
     old = pa.Table.from_batches([first, *old_reader]).sort_by("unit")
     streamed = pa.Table.from_batches(list(refreshed.to_arrow_batches(batch_size=1)))
     actual = MaterializedFrame.from_arrow(streamed)
-    clean = training_view(model).materialize(budget)
+    clean = training_view(model).materialize(budget=budget)
     assert actual.table.sort_by("unit").equals(clean.table.sort_by("unit"))
     assert actual.roles == clean.roles and actual.columns == clean.columns
     assert actual.provenance.dataset_view == clean.provenance.dataset_view
@@ -627,7 +627,7 @@ def test_refresh_reconstructs_definition_without_mutating_pinned_reader(events_w
     new = pa.Table.from_batches(list(refreshed.to_arrow_batches()))
     assert sorted(old["sessions"].to_pylist()) == [1, 1]
     assert sorted(new["sessions"].to_pylist()) == [0, 1]
-    clean = refreshed.manifest.definition.build(model).materialize(budget)
+    clean = refreshed.manifest.definition.build(model).materialize(budget=budget)
     order = [("unit", "ascending"), ("anchor_id", "ascending")]
     assert (
         new.select(clean.table.column_names)

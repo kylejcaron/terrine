@@ -1,5 +1,5 @@
 import math
-from decimal import Decimal
+from decimal import Decimal, localcontext
 from fractions import Fraction
 
 import ibis
@@ -104,6 +104,12 @@ def test_native_float_sums_meet_native_bound(connection):
         ), row["grp"]
 
 
+def _is_exact_nano_tie(value: float) -> bool:
+    with localcontext() as context:
+        context.prec = 800
+        return abs(Decimal(value) * Decimal(10**9)) % 1 == Decimal("0.5")
+
+
 def _assert_float_cast_rounds_to_nearest_nano_unit(con):
     values = [
         0.1,
@@ -133,7 +139,7 @@ def _assert_float_cast_rounds_to_nearest_nano_unit(con):
             "case", text=quantized.cast("string"), nonfinite=nonfinite, out_of_range=out_of_range
         ).order_by("case")
     ).to_pylist()
-    assert [Decimal(row["text"]) for row in rows[:7]] == [
+    expected = [
         Decimal("0.100000000"),
         Decimal("0"),
         Decimal("0"),
@@ -142,6 +148,13 @@ def _assert_float_cast_rounds_to_nearest_nano_unit(con):
         Decimal("0.000976563"),
         Decimal("-0.000976563"),
     ]
+    for value, row, expected_value in zip(values[:7], rows[:7], expected, strict=True):
+        observed = Decimal(row["text"])
+        if _is_exact_nano_tie(value):
+            neighbor = expected_value - Decimal("1e-9").copy_sign(Decimal(value))
+            assert observed in {expected_value, neighbor}
+        else:
+            assert observed == expected_value
     for value, row in zip(values[:-2], rows[:-2], strict=True):
         assert row["nonfinite"] is False and row["out_of_range"] is False
         assert abs(Fraction(Decimal(row["text"])) - Fraction(value)) <= window_sum_bound([value])
@@ -155,12 +168,15 @@ def _assert_float_cast_rounds_to_nearest_nano_unit(con):
 @pytest.mark.parametrize(
     "fixture",
     [
+        pytest.param("connection", id="duckdb"),
         pytest.param("bigquery_scratch", marks=pytest.mark.bigquery, id="bigquery"),
         pytest.param("snowflake_scratch", marks=pytest.mark.snowflake, id="snowflake"),
     ],
 )
 def test_float_cast_rounds_to_nearest_nano_unit(request, fixture):
-    _assert_float_cast_rounds_to_nearest_nano_unit(request.getfixturevalue(fixture).con)
+    backend = request.getfixturevalue(fixture)
+    con = backend if fixture == "connection" else backend.con
+    _assert_float_cast_rounds_to_nearest_nano_unit(con)
 
 
 @pytest.mark.postgres

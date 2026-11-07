@@ -15,6 +15,7 @@ from terrine.spec import (
     Design,
     EventAnchor,
     EventPanel,
+    EventPanelSpec,
     EventSequence,
     FixedDate,
     Initiation,
@@ -54,7 +55,7 @@ _REQUIRED: dict[str, dict[str, Any]] = {
     "time_series": _SCHEDULE,
     "trial_panel": {**_SCHEDULE, "treatment": _INITIATION},
     "event_panel": {"event": "purchase", "periods": (-1, 0, 2), "period": "2d"},
-    "ltv": {"start_event": "purchase", "metric": "revenue", "period": "7d", "periods": 4},
+    "ltv": {"start_event": "purchase", "metric": "revenue", "period": "7d", "max_periods": 4},
     "survival": {"start_event": "signup", "end_event": "churn"},
     "life_table": {"start_event": "signup", "end_event": "churn", "bin": "7d"},
     "state_panel": {**_SCHEDULE, "state_source": StateObservations("health", ("well", "ill"))},
@@ -71,7 +72,46 @@ def _assert_equivalent(actual, expected):
     assert restored.spec_hash == expected.spec_hash
 
 
-def test_time_series_is_a_plain_scheduled_design_with_all_supported_roles():
+def test_event_panel_reference_index_is_int_and_trial_panel_reference_period_is_duration():
+    event_design = recipes.event_panel(
+        event="purchase",
+        periods=(-1, 0),
+        period="1d",
+        reference_index=0,
+    )
+    trial_design = recipes.trial_panel(
+        **_SCHEDULE,
+        treatment=_INITIATION,
+        reference_period="-1d",
+    )
+
+    assert isinstance(event_design.shape, EventPanelSpec)
+    assert event_design.shape.reference_period == 0
+    assert isinstance(event_design.shape.reference_period, int)
+    assert isinstance(trial_design.shape, SequentialSpec)
+    assert trial_design.shape.reference_period == Duration(seconds=-86_400)
+
+
+
+def test_recipe_refusals_use_public_parameter_names():
+    with pytest.raises(TerrineError) as event_error:
+        recipes.event_panel(event="purchase", periods=(-1, 0), period="1d", reference_index=1)
+    assert event_error.value.context["field"] == "reference_index"
+
+    with pytest.raises(TerrineError) as ltv_error:
+        recipes.ltv(start_event="purchase", metric="revenue", period="1d", max_periods=0)
+    assert ltv_error.value.context["field"] == "max_periods"
+
+    with pytest.raises(TerrineError) as state_error:
+        recipes.state_panel(
+            state_source=StateObservations("health", ("well", "ill")),
+            every="1d",
+            start="2025-01-01",
+            end="2025-01-02",
+            max_periods=0,
+        )
+    assert state_error.value.context["field"] == "max_periods"
+
     _assert_equivalent(
         recipes.time_series(
             "user", **_SCHEDULE, **_SHARED, outcomes=_OUTCOMES, treatment=_TREATMENT
@@ -149,7 +189,7 @@ def test_event_panel_matches_event_anchor_and_relative_period_design():
             **_SHARED,
             occurrence="nth",
             n=2,
-            reference_period=0,
+            reference_index=0,
             outcomes=_OUTCOMES,
         ),
         EventPanel(
@@ -252,7 +292,7 @@ def test_life_table_group_by_mapping_declares_its_features():
 )
 def test_state_panel_matches_bounded_scheduled_state_design(source):
     _assert_equivalent(
-        recipes.state_panel("user", **_SCHEDULE, state_source=source, periods=5, **_SHARED),
+        recipes.state_panel("user", **_SCHEDULE, state_source=source, max_periods=5, **_SHARED),
         Design("user", Schedule(**_SCHEDULE), shape=StatePanel(source, periods=5), **_SHARED),
     )
 
@@ -278,7 +318,7 @@ def test_state_panel_derives_periods_from_inclusive_end(source):
         "2025-01-06",
         "2025-03-28",
     )
-    capped = recipes.state_panel("user", **weekly, end="2025-03-30", periods=10, **_SHARED)
+    capped = recipes.state_panel("user", **weekly, end="2025-03-30", max_periods=10, **_SHARED)
     assert isinstance(capped.shape, StatePanel)
     assert capped.shape.periods == 10
 
@@ -290,14 +330,14 @@ def test_event_sequence_matches_bounded_session_design():
             **_REQUIRED["event_sequence"],
             **_SHARED,
             occurrence="each",
-            session_gap="30m",
+            session_gap="30min",
             outcomes=_OUTCOMES,
         ),
         Design(
             "user",
             EventAnchor("purchase", "each"),
             shape=EventSequence(
-                "purchase", Window(0, "7d"), max_events=9, sessions=SessionSpec("30m")
+                "purchase", Window(0, "7d"), max_events=9, sessions=SessionSpec("30min")
             ),
             **_SHARED,
             outcomes=_OUTCOMES,
@@ -482,7 +522,7 @@ def test_elapsed_count_is_arithmetic(monkeypatch):
             "period",
             "1mo",
             lambda: recipes.ltv(
-                "user", start_event="purchase", metric="spend", period="1mo", periods=3
+                "user", start_event="purchase", metric="spend", period="1mo", max_periods=3
             ),
         ),
         ("gap", "1mo", lambda: Design("user", FixedDate("2025-01-01"), gap="1mo")),
@@ -509,7 +549,8 @@ def test_elapsed_count_is_arithmetic(monkeypatch):
             "period",
             86400,
             lambda: recipes.ltv(
-                "user", start_event="purchase", metric="spend", period=cast(Any, 86400), periods=3
+                "user", start_event="purchase", metric="spend", period=cast(Any, 86400),
+                max_periods=3,
             ),
         ),
         ("gap", 3600, lambda: Design("user", FixedDate("2025-01-01"), gap=cast(Any, 3600))),
@@ -548,8 +589,8 @@ def test_elapsed_fields_refuse_calendar_units_with_a_route(field, value, build):
         assert error.value.context["reason"] == "bare_integer"
 
 
-@pytest.mark.parametrize("periods", [None, 3])
-def test_state_panel_refuses_month_schedules_with_an_elapsed_route(periods):
+@pytest.mark.parametrize("max_periods", [None, 3])
+def test_state_panel_refuses_month_schedules_with_an_elapsed_route(max_periods):
     with pytest.raises(TerrineError) as error:
         recipes.state_panel(
             "user",
@@ -557,7 +598,7 @@ def test_state_panel_refuses_month_schedules_with_an_elapsed_route(periods):
             every="1mo",
             start="2025-01-01",
             end="2025-03-01",
-            periods=periods,
+            max_periods=max_periods,
             **_SHARED,
         )
     assert error.value.code == "terrine.state_panel.invalid_schedule"

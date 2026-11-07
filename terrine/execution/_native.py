@@ -8,15 +8,19 @@ import re
 import threading
 import weakref
 from collections import OrderedDict
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from decimal import Decimal
 from types import MappingProxyType
-from typing import Any
+from typing import Any, cast
 
 import ibis
+import ibis.expr.datatypes as dt
+import ibis.expr.operations as ops
+import ibis.expr.types as ir
 from sqlglot import exp
 
-from terrine.backends.capabilities import _SNAPSHOT_UNAVAILABLE
+from terrine.backends.capabilities import _CAPABILITY_UNAVAILABLE, _SNAPSHOT_UNAVAILABLE
 from terrine.backends.registry import ENGINES
 from terrine.errors import TerrineError
 from terrine.execution._metadata import invalidate_metadata, metadata_fact
@@ -38,6 +42,80 @@ _FUNCTION_NAME = re.compile(
     r'"(?i:function_name|function|operator_name)"\s*:\s*("(?:[^"\\]|\\.)*")'
 )
 
+def _exact_arithmetic_answer(con: Any) -> tuple[str, tuple[Any, ...]]:
+    """Compile answers through the same dialect operations used by exact measures."""
+    policy = ENGINES["duckdb"].dialect("duckdb")
+    exact_type = policy.exact_type()
+    coefficients = ibis.literal(0).as_table().select(
+        coefficient=ibis.literal("9999999999999999999999999999999999999").cast(exact_type)
+    ).union(
+        ibis.literal(0).as_table().select(coefficient=ibis.literal("1").cast(exact_type))
+    )
+    aggregate = coefficients.aggregate(
+        coefficient_sum=policy.exact_sum(coefficients.coefficient.cast(policy.exact_type()))
+    )
+    query = aggregate.select(
+        quantized=policy.quantize_float(
+            cast(ir.FloatingValue, ibis.literal(0.1).cast(dt.float64))
+        ),
+        coefficient_sum=aggregate.coefficient_sum,
+        quotient=policy.truncating_quotient(
+            cast(ir.IntegerValue, ibis.literal(7, type=dt.int64)), 2
+        ),
+    )
+    return con.compile(query), (
+        Decimal("0.100000000"),
+        "10000000000000000000000000000000000000",
+        3,
+    )
+
+
+def verify_exact_arithmetic(con: Any) -> None:
+    """Refuse exact aggregation if DuckDB fails its arithmetic known answers."""
+    raw = raw_connection(con)
+    sql, expected = _exact_arithmetic_answer(con)
+    check_native_functions(raw, sql, None)
+    try:
+        row = raw.execute(sql).fetchone()
+    except Exception as exc:
+        raise _CAPABILITY_UNAVAILABLE.error(
+            backend="duckdb",
+            operation="exact_arithmetic",
+            status="witness_failed",
+            route="Use a DuckDB version with correct exact arithmetic.",
+        ) from exc
+    if row is None or tuple(row) != expected:
+        raise _CAPABILITY_UNAVAILABLE.error(
+            backend="duckdb",
+            operation="exact_arithmetic",
+            status="witness_failed",
+            route="Use a DuckDB version with correct exact arithmetic.",
+        )
+
+
+def _needs_exact_arithmetic(queries: tuple[Any, ...]) -> bool:
+    exact_type = ENGINES["duckdb"].dialect("duckdb").exact_type()
+    for query in queries:
+        if any(
+            value.dtype.is_decimal() or value.dtype == exact_type
+            for value in query.op().find(ops.Value)
+        ):
+            return True
+    return False
+
+
+def exact_arithmetic_admission(raw: Any) -> Callable[..., None]:
+    """Return an admission callback that witnesses exact arithmetic once."""
+    verified = False
+
+    def admit(*queries: Any) -> None:
+        nonlocal verified
+        if not verified and _needs_exact_arithmetic(queries):
+            verify_exact_arithmetic(raw)
+            verified = True
+
+    return admit
+
 _CONNECTION_LOCKS: weakref.WeakKeyDictionary[Any, threading.RLock] = weakref.WeakKeyDictionary()
 _CONNECTION_LOCKS_GUARD = threading.Lock()
 
@@ -52,12 +130,15 @@ def connection_lock(raw: Any) -> threading.RLock:
         return lock
 
 
-def _snapshot_error(reason: str):
-    return _SNAPSHOT_UNAVAILABLE.error(reason=reason)
+def _snapshot_error(reason: str, *, hint: str | None = None):
+    context = {"reason": reason}
+    if hint is not None:
+        context["hint"] = hint
+    return _SNAPSHOT_UNAVAILABLE.error(**context)
 
 
-def _binding_error(reason: str):
-    return _snapshot_error(reason)
+def _binding_error(reason: str, *, hint: str | None = None):
+    return _snapshot_error(reason, hint=hint)
 
 
 @dataclass(frozen=True, slots=True)
@@ -184,7 +265,13 @@ def _match(
         raise _binding_error(f"ambiguous relation {ref.name!r}; use qualified SQL or publication")
     obj = matches[0]
     if (obj.temporary and not allow_temporary) or obj.internal:
-        raise _binding_error(f"relation {ref.name!r} resolves to a temporary/internal object")
+        raise _binding_error(
+            f"relation {ref.name!r} resolves to a temporary/internal object",
+            hint=(
+                "create a table with CREATE TABLE name AS SELECT * FROM df, or omit con to query "
+                "the DataFrame directly"
+            ),
+        )
     if obj.kind not in {"table", "view"}:
         raise _binding_error(f"unsupported relation kind for {ref.name!r}")
     return obj

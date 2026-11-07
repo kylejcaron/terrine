@@ -2,7 +2,7 @@
 
 Start with `terrine.recipes` for scheduled trial panels or event-relative panels.
 Both return plain Designs, built through `design.build(model)` and
-`frame.materialize(budget)`. Run `uv run python examples/sequential_trials.py`
+`frame.materialize(budget=budget)`. Run `uv run python examples/sequential_trials.py`
 for both constructors with calendar-date and relative-period assertions.
 
 ## Scheduled trial panels
@@ -64,7 +64,7 @@ A source maximum timestamp does not establish history completeness.
 `periods`, and elapsed `period` width. A row is one selected parent event at one
 declared relative period. `occurrence` defaults to `"first"` and accepts
 `"each"` or `"nth"`; only `"nth"` takes a positive one-based `n`. Supported
-options are `reference_period=-1`, `features`, `outcomes`, `eligibility`,
+options are `reference_index=-1`, `features`, `outcomes`, `eligibility`,
 `anchor_range`, and `gap="0d"`. It accepts no treatment or administrative cutoff.
 
 ```python

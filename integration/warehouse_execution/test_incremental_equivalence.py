@@ -348,7 +348,7 @@ def test_saved_runtime_correction_matches_clean_rebuild_of_new_generation(
             )
             published = open_published_frame(receipt, con=con.con, namespace=namespace)
             frames[name] = published
-            clean = design.build(model).materialize(budget)
+            clean = design.build(model).materialize(budget=budget)
             rows = ordered_rows(published)
             assert rows == ordered_rows(clean)
             assert published.columns == clean.columns

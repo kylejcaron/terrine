@@ -66,7 +66,7 @@ def main() -> None:
             definition = DatasetDefinition.from_json(
                 scored_dataset.manifest.definition.canonical_json()
             )
-            result = definition.build(model).materialize(budget)
+            result = definition.build(model).materialize(budget=budget)
             assert result.table["past_amount"].to_pylist() == [Decimal(15)]
             print(
                 {

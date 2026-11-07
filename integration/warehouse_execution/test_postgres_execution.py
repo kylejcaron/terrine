@@ -73,7 +73,7 @@ def test_first_dataset_counts_match_the_duckdb_tutorial(postgres_scratch, tmp_pa
         outcomes={"sessions_after": tr.agg("sessions", window=("0s", "1d"))},
     )
     result = design.build(model).materialize(
-        tr.Budget(max_rows=10, max_output_bytes=1_000_000, strict_scan=False)
+        budget=tr.Budget(max_rows=10, max_output_bytes=1_000_000, strict_scan=False)
     )
     rows = sorted(
         result.table.select(["unit", "sessions_before", "sessions_after"]).to_pylist(),

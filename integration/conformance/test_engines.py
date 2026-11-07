@@ -129,7 +129,7 @@ _MODES = pytest.mark.parametrize("exact", [False, True], ids=["native", "exact"]
 
 
 def _rows(model, design):
-    return design.build(model).materialize(_BUDGET).table.to_pylist()
+    return design.build(model).materialize(budget=_BUDGET).table.to_pylist()
 
 
 def _events(times, ids):
@@ -264,7 +264,7 @@ def test_bounded_accumulation_refuses_exact_overflow(engine, exact):
         return
     materialized = []
     with pytest.raises(TerrineError) as caught:
-        materialized.append(design.build(model).materialize(_BUDGET))
+        materialized.append(design.build(model).materialize(budget=_BUDGET))
     assert caught.value.code == "terrine.temporal.exact_overflow"
     assert materialized == []
 

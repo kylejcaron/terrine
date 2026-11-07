@@ -63,8 +63,11 @@ def test_baseline_is_computed_for_delayed_entry_at_panel_start(native_inputs):
             periods=2,
         ),
     )
-    materialized = design.build(model).materialize(Budget(max_rows=10, max_output_bytes=100_000))
+    materialized = design.build(model).materialize(
+        budget=Budget(max_rows=10, max_output_bytes=100_000)
+    )
     restored = type(materialized).from_arrow(materialized.to_pyarrow())
+    assert len(restored.to_pandas()) == materialized.table.num_rows
     rows = materialized.table.to_pylist()
     entrant = next(row for row in rows if row["unit"] == "b" and row["period_index"] == 1)
     assert entrant["baseline"] == 1
@@ -122,7 +125,7 @@ def test_float_metric_bin_compares_the_rounded_value_at_a_near_boundary_cut(nati
     )
     rows = (
         design.build(model)
-        .materialize(Budget(max_rows=10, max_output_bytes=100_000))
+        .materialize(budget=Budget(max_rows=10, max_output_bytes=100_000))
         .table.to_pylist()
     )
     row = next(row for row in rows if row["unit"] == "a")
@@ -146,7 +149,7 @@ def test_binned_panel_retains_named_eligibility_column(panel_model):
     compiled = compile_design(design, panel_model)
     assert "has_history" in compiled.audit_table.columns
     materialized = design.build(panel_model).materialize(
-        Budget(max_rows=10, max_output_bytes=100_000)
+        budget=Budget(max_rows=10, max_output_bytes=100_000)
     )
     assert materialized.table["has_history"].to_pylist() == [True, True]
 
@@ -172,7 +175,9 @@ def test_observed_panel_retains_named_eligibility_column(observed_model_factory)
     )
     compiled = compile_design(design, model)
     assert "has_history" in compiled.audit_table.columns
-    materialized = design.build(model).materialize(Budget(max_rows=10, max_output_bytes=100_000))
+    materialized = design.build(model).materialize(
+        budget=Budget(max_rows=10, max_output_bytes=100_000)
+    )
     assert materialized.table["has_history"].to_pylist() == [True, True]
 
 
@@ -190,7 +195,7 @@ def test_state_panel_enforces_output_row_and_byte_budgets(panel_model, budget, c
         ),
     )
     with pytest.raises(TerrineError) as error:
-        design.build(panel_model).materialize(budget)
+        design.build(panel_model).materialize(budget=budget)
     assert error.value.code == code
 
 
@@ -206,7 +211,7 @@ def test_adjacent_binned_state_relation_pairs_response_with_successor_prior(pane
     )
     rows = (
         design.build(panel_model)
-        .materialize(Budget(max_rows=10, max_output_bytes=100_000))
+        .materialize(budget=Budget(max_rows=10, max_output_bytes=100_000))
         .table.to_pylist()
     )
     a_rows = sorted(
@@ -254,7 +259,7 @@ def test_binned_response_remains_complete_at_membership_exit(native_inputs):
     )
     rows = (
         design.build(model)
-        .materialize(Budget(max_rows=10, max_output_bytes=100_000))
+        .materialize(budget=Budget(max_rows=10, max_output_bytes=100_000))
         .table.to_pylist()
     )
     row = next(row for row in rows if row["unit"] == "a")
@@ -303,7 +308,7 @@ def test_binned_missing_period_sides_and_unit_end_exclusivity(native_inputs):
     )
     rows = (
         design.build(model)
-        .materialize(Budget(max_rows=10, max_output_bytes=100_000))
+        .materialize(budget=Budget(max_rows=10, max_output_bytes=100_000))
         .table.to_pylist()
     )
     by_unit = {row["unit"]: row for row in rows}
@@ -327,7 +332,7 @@ def test_state_panel_enforces_output_byte_budget(panel_model, budget, code):
         ),
     )
     with pytest.raises(TerrineError) as error:
-        design.build(panel_model).materialize(budget)
+        design.build(panel_model).materialize(budget=budget)
     assert error.value.code == code
 
 
@@ -351,7 +356,7 @@ def test_terminal_detection_precedes_output_eligibility_filter(observed_model_fa
     )
     rows = (
         design.build(model)
-        .materialize(Budget(max_rows=10, max_output_bytes=100_000))
+        .materialize(budget=Budget(max_rows=10, max_output_bytes=100_000))
         .table.to_pylist()
     )
     assert not [row for row in rows if row["unit"] == "a"]
@@ -364,7 +369,7 @@ def test_terminal_at_origin_suppresses_and_source_correction_rebuilds_suffix(
     rows = (
         _observed_design()
         .build(model)
-        .materialize(Budget(max_rows=10, max_output_bytes=100_000))
+        .materialize(budget=Budget(max_rows=10, max_output_bytes=100_000))
         .table.to_pylist()
     )
     assert not any(row["unit"] == "a" for row in rows)
@@ -378,7 +383,7 @@ def test_terminal_at_origin_suppresses_and_source_correction_rebuilds_suffix(
     closed_rows = (
         _observed_design()
         .build(model)
-        .materialize(Budget(max_rows=10, max_output_bytes=100_000))
+        .materialize(budget=Budget(max_rows=10, max_output_bytes=100_000))
         .table.to_pylist()
     )
     assert len([row for row in closed_rows if row["unit"] == "a"]) == 1
@@ -392,7 +397,7 @@ def test_terminal_at_origin_suppresses_and_source_correction_rebuilds_suffix(
     corrected_rows = (
         _observed_design(absorbing=())
         .build(model)
-        .materialize(Budget(max_rows=10, max_output_bytes=100_000))
+        .materialize(budget=Budget(max_rows=10, max_output_bytes=100_000))
         .table.to_pylist()
     )
     assert len([row for row in corrected_rows if row["unit"] == "a"]) == 2

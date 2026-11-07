@@ -293,7 +293,6 @@ def _feature_definition_hash(design: Design, features: tuple[str, ...], model: M
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
 
-
 def _apply_training_view(compiled: CompiledStudy, view: _TrainingView) -> CompiledStudy:
     table = compiled.table
     roles = compiled.roles
@@ -644,7 +643,7 @@ class Frame:
         )
         definition = import_module("terrine.dataset.reference")._definition_for(self)
         return transforms.fit_winsorization(
-            self.materialize(budget),
+            self.materialize(budget=budget),
             column=column,
             lower=probabilities[0],
             upper=probabilities[1],
@@ -669,22 +668,19 @@ class Frame:
         if bound.fit is not None:
             fit = bound.fit
             if self._training_view is not None:
-                definition_hash = (
-                    import_module("terrine.dataset.reference")
-                    ._definition_for(self, include_transforms=False)
-                    .digest
+                definition = import_module("terrine.dataset.reference")._definition_for(
+                    self, include_transforms=False
                 )
-                compatible = definition_hash == fit.definition_hash
+                compatible = definition.digest == fit.definition_hash
             else:
                 compatible = (
                     self._scoring_view is not None
                     and self._scoring_view.parent_design_hash == fit.design_hash
                 )
-            if (
-                not compatible
-                or _feature_definition_hash(self._design, (transform.column,), self._model)
-                != fit.feature_definition_hash
-            ):
+            feature_hash = _feature_definition_hash(
+                self._design, (transform.column,), self._model
+            )
+            if not compatible or feature_hash != fit.feature_definition_hash:
                 raise transforms.identity_error(transform.column)
         result = Frame(self._design, self._model)
         object.__setattr__(result, "_training_view", self._training_view)
@@ -710,7 +706,7 @@ class Frame:
         stage_frame = import_module("terrine.dataset.reference").stage_frame
         return stage_frame(self, table, budget=budget)
 
-    def materialize(self, budget: Budget | None = None) -> MaterializedFrame:
+    def materialize(self, *, budget: Budget | None = None) -> MaterializedFrame:
         """Read dataset rows with integrity checks and retain their metadata and completeness.
 
 
@@ -1106,7 +1102,7 @@ class Frame:
 
         Example: frame.to_pyarrow()
         """
-        return self.materialize(budget).to_pyarrow()
+        return self.materialize(budget=budget).to_pyarrow()
 
     def to_pandas(
         self,
@@ -1137,7 +1133,7 @@ class Frame:
             values_only=values_only,
             library="pandas",
         )
-        return self.materialize(budget).to_pandas(
+        return self.materialize(budget=budget).to_pandas(
             include_observation_metadata=include_observation_metadata,
             values_only=values_only,
         )
@@ -1171,7 +1167,7 @@ class Frame:
             values_only=values_only,
             library="polars",
         )
-        return self.materialize(budget).to_polars(
+        return self.materialize(budget=budget).to_polars(
             include_observation_metadata=include_observation_metadata,
             values_only=values_only,
         )
@@ -1190,7 +1186,7 @@ class Frame:
         Example:
             from datetime import datetime, UTC
 
-            tr.recipes.ltv(start_event="orders", metric="spend", period="7d", periods=2).build(
+            tr.recipes.ltv(start_event="orders", metric="spend", period="7d", max_periods=2).build(
                 model
             ).cohorts(
                 grouping=spec.CohortGrouping("30d", datetime(2025, 1, 1, tzinfo=UTC)),

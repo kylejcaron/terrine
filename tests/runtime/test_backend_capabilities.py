@@ -23,10 +23,13 @@ def test_unknown_scan_estimate_refuses_strict_budget_but_not_non_strict(native_i
     frame = Design("user", EventAnchor("session")).build(model)
     assert backend_provider(con).capabilities.scan_estimate is None
     with pytest.raises(TerrineError) as error:
-        frame.materialize(Budget(max_scan_bytes=1))
+        frame.materialize(budget=Budget(max_scan_bytes=1))
     assert error.value.code == "terrine.budget.scan_unknown"
     with pytest.warns(RuntimeWarning):
-        assert frame.materialize(Budget(max_scan_bytes=1, strict_scan=False)).table.num_rows == 2
+        rows = frame.materialize(
+            budget=Budget(max_scan_bytes=1, strict_scan=False)
+        ).table.num_rows
+        assert rows == 2
 
 
 @pytest.mark.parametrize("capability", ["dialect_admission", "arrow_batches"])

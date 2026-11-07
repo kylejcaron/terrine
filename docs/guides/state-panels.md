@@ -14,7 +14,7 @@ origins; `end` is the last scheduled calendar day, included, and the span from
 refuses otherwise). `every` is an elapsed duration: a transition's period is a
 fixed width, so a calendar step such as `"1mo"` refuses with
 `terrine.state_panel.invalid_schedule` (`reason="calendar_months_unsupported"`,
-`route="4w"`). `periods` defaults to that count; an explicit value is an
+`route="4w"`). `max_periods` defaults to that count; an explicit value is an
 upper bound, and a longer schedule refuses rather than truncating. Dates are
 calendar dates or ISO date strings, never timestamps. Supported options are
 `features`, `eligibility`, `anchor_range`, and `gap="0d"`; other optional inputs
@@ -48,7 +48,7 @@ design = recipes.state_panel(
     features=features,
 )
 materialized = design.build(model).materialize(
-    tr.Budget(max_rows=100_000, max_output_bytes=128_000_000)
+    budget=tr.Budget(max_rows=100_000, max_output_bytes=128_000_000)
 )
 ```
 

@@ -1,7 +1,9 @@
 # API stability
 
-From 1.0, Terrine follows [Semantic Versioning](https://semver.org/) for its
-stable API. Every module and name is stable, provisional or internal; which
+From `0.1.0`, minor releases may break the API with a changelog entry; patch
+releases do not. From `1.0`, the stable API follows
+[Semantic Versioning](https://semver.org/): breaking changes happen only in a
+major release. Every module and name is stable, provisional or internal; which
 backends verify an operation is a separate question, answered by the capability
 matrix.
 
@@ -9,28 +11,28 @@ matrix.
 
 ### Stable
 
-Breaking changes happen only in a major release.
+From 1.0, breaking changes happen only in a major release.
 
 - The `terrine` root facade and `terrine.recipes`.
-- `terrine.spec`, except the approximate expressions `approx_distinct` and
-  `approx_quantile`.
+- `terrine.metrics` and the constructors exported from it.
+- `terrine.spec`, except provisional transforms and members listed below.
 - `terrine.windows`, including `Window`, `Duration` and `Months`.
-- `terrine.errors` and the [refusal codes](../reference/refusals.md).
-- `terrine.dataset`, `terrine.model` (except `Model.from_increment`) and
-  `terrine.frame`.
-- The names `terrine.data` exports: binding inputs such as `Coverage` and
-  `Events`, and the metadata types Terrine returns.
+- `terrine.errors` and refusal codes raised by stable names.
+- `terrine.dataset`, `terrine.model` (including `Catalog` and `Readiness`, except
+  `Model.from_increment`) and `terrine.frame`, except provisional members listed
+  below.
+- The input declarations and metric types exported by `terrine.data`, including
+  `EventMetric` and `Ratio`; returned metadata records are provisional.
+- `terrine.reasons`: the missing-value reason vocabulary.
 - The Design, dataset definition, Catalog, manifest and Arrow/Parquet metadata
   formats (see [saved artifacts](#saved-artifacts)).
 - Frame output column names, types and roles for each shape.
 
-`Dataset` behavior and the artifacts it writes stay stable even though its
-implementation uses provisional runtime code.
-
 Stability follows exports, not module names: a stable name is one listed in a
-stable facade's `__all__`, together with its members (methods, attributes and
-parameters). Import it from that facade. The defining module behind a facade,
-such as `terrine.spec.expressions`, is internal.
+stable facade's `__all__`, together with its stable members (methods, attributes
+and parameters). Import it from that facade. The defining module behind a facade,
+such as `terrine.spec.expressions`, is internal. Provisional members of stable
+classes are excluded from the stable surface.
 
 ### Provisional
 
@@ -38,10 +40,20 @@ A provisional name may change in a minor release, and every such change has a
 changelog entry:
 
 - `terrine.runtime`, `terrine.execution`, `terrine.agent`,
-  `terrine.orchestration`, `terrine.adapters`, `terrine.export` and
-  `terrine.simulate`, with their modules;
-- `terrine.spec.approx_distinct`, `terrine.spec.approx_quantile` and
-  `Model.from_increment`.
+  `terrine.orchestration`, `terrine.adapters`, `terrine.export`,
+  `terrine.simulate` and the `terrine` CLI;
+- `Dataset`, `Frame.stage`, `Frame.expr`, and the result-metadata records
+  exported by `terrine.data`;
+- `Sequential`, `EventPanel`, `CalendarPanel`, `CalendarComparisonPanel`,
+  `matched_t0` and `CalendarComparisonSpec`;
+- `windows.duration`, `approx_distinct`, `approx_quantile` and
+  `Model.from_increment`;
+- `VerifiedInputBinding`, `ChangeSet`, `RefreshPlan`, `DatasetManifest`, lower-level
+  data, filter and JSON aliases, and concrete expression result records when
+  they appear in stable signatures. These types describe variants and returned
+  values, not additional stable construction inputs.
+- refusal context fields such as `reason` and `field`. Refusal codes are frozen
+  only when raised by a stable name.
 
 Their docstrings say they are provisional, and the
 [focused facades](public-api.md#focused-facades) table lists each facade's tier.
@@ -69,13 +81,28 @@ least one minor release in which using it emits `DeprecationWarning`.
 
 ## Signature check
 
-`scripts/api_check.py` compares the stable signatures of the working tree with
-the newest `v1.*` release tag, or with the tag given to `--against`:
-
+Before `1.0.0rc1`, the newest final `v0.*` tag is the cross-minor informational
+baseline; development, pre-release and post-release tags are excluded. When a
+final tag exists in the current 0.x minor, that tag is the enforced baseline,
+and the newest cross-minor tag is also reported informationally. Without a
+same-minor tag, cross-minor breakages are reported but permitted. From
+`1.0.0rc1`, the newest `v1.*` tag, including release candidates, is enforced.
+Pass `--against` to compare with a specific tag:
 ```bash
 uv run python scripts/api_check.py
 uv run python scripts/api_check.py --against v1.2.0
 ```
+
+Stable-surface snapshots live at `tests/artifacts/surface/<version>.txt`. Create
+one for every `v0.Y.0`, release-candidate and final release tag with
+`uv run python scripts/api_check.py --snapshot <path>`. Each sorted line records
+a stable callable's qualified name and signature. CI compares the working
+surface with the newest snapshot by version order; an absent snapshot is
+reported and skipped until the first release snapshot is added. During 0.x,
+differences are printed for review and recorded as changelog additions or
+breaking changes. From `1.0.0rc1`, differences fail CI unless the snapshot is
+updated in the same change. `--enforce` enables this failure manually before
+that version.
 
 It resolves the stable surface from exports: every name in a stable facade's
 `__all__`, followed through re-exports to its definition, with that definition's
@@ -84,10 +111,19 @@ provisional method of a stable class such as `Model.from_increment`. It reports
 stable names that leave a facade's `__all__` and signature changes such as a
 removed, reordered or newly required parameter.
 
+Each stable callable's parameter and return annotations are checked as well: any
+Terrine type must be exported from a stable facade or classified as a
+provisional variant. An unclassified type fails the check.
+
+Catalog's nested records are governed by the Catalog document version, not by
+the Python signature check. The check therefore exempts only generated
+`__init__` methods of Pydantic `BaseModel` subclasses; handwritten constructors
+remain subject to the annotation rule above.
+
 | Exit status | Meaning |
 | --- | --- |
-| 0 | Compatible, or no 1.x release is tagged yet ("no 1.x release tag") |
-| 1 | A stable name disappeared or its signature broke, or a current stable export does not resolve to a definition the check can read |
+| 0 | Compatible, no eligible baseline exists, or breakages are permitted across 0.x minor releases |
+| 1 | A stable name disappeared or its signature broke within the same compatibility line, a current stable export does not resolve to a definition the check can read, or a stable signature names an unclassified Terrine type |
 | 2 | Comparison history unavailable: the tag cannot be loaded, or a shallow clone cannot show which tags exist |
 
 The check reads source without importing it, so a name a facade provides only
@@ -159,9 +195,16 @@ measure exact; manifest and saved-plan envelopes are version 1.
   [integration test](../../integration/test_artifact_corpus_schema.py) compiles
   each stored Design with the current code and requires the recorded schema and
   roles.
+- Release tags in the 0.x series require a successful CI run. Release candidates
+  and final tags require successful CI, PostgreSQL, and scale jobs; the scale
+  tier includes the release-upgrade test. BigQuery and Snowflake are advisory
+  in the automated gate, but each needs a green run within seven days of the
+  tag or a waiver recorded in the release notes. Record each cloud backend's
+  latest passing release as `verified at vX.Y` in the [backend compatibility
+  table](backend-compatibility.md#operation-regression-environment).
 - An [upgrade test](../../integration/test_release_upgrade.py) installs each
   released 1.x wheel listed in `tests/artifacts/RELEASES` into an isolated
   interpreter, stages a dataset with it and reopens that dataset in place with
-  the current code. It runs in the weekly scale tier and before each release.
+  the current code. It runs in the weekly scale tier.
 - Adding a format generation, and adding a release to `RELEASES`, are release
   checklist steps.

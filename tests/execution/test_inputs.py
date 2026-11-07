@@ -94,6 +94,70 @@ def test_execution_and_batches_preserve_decimal_nanosecond_and_null_values():
         con.disconnect()
 
 
+def test_closing_early_arrow_batches_closes_duckdb_reader():
+    import pyarrow as pa
+
+    from terrine.execution.inputs import _DuckDBSession
+
+    schema = pa.schema([("value", pa.int64())])
+
+    class TrackingReader:
+        def __init__(self):
+            self._reader = pa.RecordBatchReader.from_batches(
+                schema,
+                [
+                    pa.record_batch([[1]], schema=schema),
+                    pa.record_batch([[2]], schema=schema),
+                ],
+            )
+            self.closed = False
+
+        def __iter__(self):
+            return self
+
+        def __next__(self):
+            return next(self._reader)
+
+        def close(self):
+            self.closed = True
+            self._reader.close()
+
+    underlying = TrackingReader()
+
+    class Relation:
+        def to_arrow_reader(self, *, batch_size):
+            assert batch_size == 1
+            return underlying
+
+    class Raw:
+        def sql(self, sql):
+            return Relation()
+
+    class Connection:
+        def _run_pre_execute_hooks(self, query):
+            pass
+
+    class TableSchema:
+        def to_pyarrow(self):
+            return schema
+
+    class Table:
+        def schema(self):
+            return TableSchema()
+
+    class Query:
+        def as_table(self):
+            return Table()
+
+    reader = _DuckDBSession(Raw()).batches(Connection(), Query(), "SELECT 1", chunk_size=1)
+    assert next(reader).column(0)[0].as_py() == 1
+    assert not underlying.closed
+
+    reader.close()
+
+    assert underlying.closed
+
+
 def test_restoring_session_settings_invalidates_namespace_metadata():
     from terrine.execution import _native
     from terrine.execution._metadata import metadata_operation
@@ -230,6 +294,36 @@ def test_identical_opaque_roots_share_one_publication_capture(tmp_path):
             assert len(published.relations) == 1
             assert len(required_relations(catalog, published.con)) == 1
             assert len(published.con.to_pyarrow(published.con.table("input_0")).to_pylist()) == 1
+    finally:
+        con.close()
+
+def test_registered_view_refusal_names_fix():
+    import copy
+    import pickle
+
+    import pyarrow as pa
+
+    from terrine.execution._native import _match, native_objects
+    from terrine.semantic.models import TableRef
+
+    con = duckdb.connect()
+    try:
+        con.register("registered_view", pa.table({"value": [1]}))
+        with pytest.raises(TerrineError) as error:
+            _match(TableRef(kind="table", name="registered_view"), native_objects(con))
+        assert error.value.code == "terrine.execution.snapshot_unavailable"
+        assert error.value.context["hint"] == (
+            "create a table with CREATE TABLE name AS SELECT * FROM df, or omit con to query "
+            "the DataFrame directly"
+        )
+
+        for restored in (
+            copy.deepcopy(error.value),
+            pickle.loads(pickle.dumps(error.value)),
+        ):
+            assert restored.context == error.value.context
+            with pytest.raises(TypeError):
+                restored.context["hint"] = "change"  # ty: ignore[invalid-assignment]
     finally:
         con.close()
 

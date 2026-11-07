@@ -101,7 +101,7 @@ def shapes_model():
 
 _DESIGNS = {
     "survival": lambda: recipes.survival(start_event="signup", end_event="churn"),
-    "ltv": lambda: recipes.ltv(start_event="signup", metric="spend", period="7d", periods=3),
+    "ltv": lambda: recipes.ltv(start_event="signup", metric="spend", period="7d", max_periods=3),
     "state_panel": lambda: recipes.state_panel(
         state_source=StateObservations("health", ("well", "ill")),
         every="1w",

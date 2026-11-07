@@ -9,6 +9,8 @@ from terrine.spec.dataset import (
 from terrine.spec.design import Design, Treatment
 from terrine.spec.expressions import (
     EventTime,
+    Expr,
+    Predicate,
     agg,
     all_of,
     approx_distinct,
@@ -43,6 +45,8 @@ from terrine.spec.trajectory import CohortGrouping, CohortSpec, LifeTable, TimeT
 from terrine.spec.transforms import Winsorization
 
 __all__ = [
+    "Expr",
+    "Predicate",
     "DatasetDefinition",
     "DatasetDefinitionReference",
     "DatasetDefinitionStore",

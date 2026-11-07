@@ -3,6 +3,19 @@ from pathlib import Path
 import pytest
 
 
+def test_refusal_reference_classifies_code_families():
+    from tests.documentation import RefusalDeclaration, render_refusals
+
+    declarations = (
+        RefusalDeclaration("terrine.model.invalid_binding", "Invalid.", (), "terrine/model.py"),
+        RefusalDeclaration("terrine.agent.invalid_request", "Invalid.", (), "terrine/agent.py"),
+    )
+    rendered = render_refusals(declarations)
+    assert "| Code | Tier | Message template |" in rendered
+    assert "| `terrine.model.invalid_binding` | Stable |" in rendered
+    assert "| `terrine.agent.invalid_request` | Provisional |" in rendered
+
+
 def test_refusal_reference_covers_all_module_declarations():
     from tests.documentation import refusal_declarations, render_refusals
 

@@ -336,7 +336,7 @@ CASES = [
     (
         "terrine.dataset.invalid_split",
         lambda: TimeSplit(train_until="2025-01-01", embargo="-1d"),
-        {"reason": "invalid_duration", "field": "embargo"},
+        {"reason": "negative", "field": "embargo"},
     ),
     (
         "terrine.dataset.invalid_split",
@@ -444,7 +444,7 @@ CASES = [
     ),
     (
         "terrine.design.invalid",
-        lambda: recipes.ltv(start_event="", metric="spend", period="7d", periods=2),
+        lambda: recipes.ltv(start_event="", metric="spend", period="7d", max_periods=2),
         {"reason": "empty_name", "field": "start_event"},
     ),
     (

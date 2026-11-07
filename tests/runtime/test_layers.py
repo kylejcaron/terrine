@@ -148,6 +148,37 @@ def test_exact_prefix_layers_roundtrip_through_arrow_storage(column_model, persi
     )
 
 
+
+def test_streamed_exact_prefix_layer_keeps_metadata_for_arrow_storage(column_model, tmp_path):
+    from terrine.compile.layers import build_layer
+    from terrine.execution.inputs import _ClosingArrowReader
+    from terrine.runtime.api import _persistable_layer
+    from terrine.runtime.arrow import ArrowOutput
+
+    design = _design()
+    prefix_key = next(
+        key for key in plan_layers(design, column_model).keys if key.layer == "prefix"
+    )
+    relation = build_layer(design, column_model, prefix_key)
+
+    def execute(query):
+        table = column_model.con.to_pyarrow(query)
+        source = (batch for batch in table.to_batches())
+        reader = pa.RecordBatchReader.from_batches(table.schema, source)
+        return _ClosingArrowReader(reader, source)
+
+    persisted = ArrowOutput.write(
+        _persistable_layer(relation, execute),
+        root=tmp_path,
+    )
+
+    with persisted.path.open("rb") as stream:
+        schema = pa.ipc.open_stream(stream).schema
+
+    exact_columns = json.loads(schema.metadata[b"terrine.runtime.exact_layer_columns"])
+    assert "sum_value" in exact_columns
+    assert schema.field("sum_value").type == pa.string()
+
 def test_build_anchor_layer_accepts_snapshot_relation_resolver(column_model):
     from terrine.compile.layers import build_layer
 

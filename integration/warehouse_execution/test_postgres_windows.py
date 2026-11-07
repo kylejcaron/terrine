@@ -126,7 +126,7 @@ _BUDGET = tr.Budget(max_rows=100, max_output_bytes=1_000_000, strict_scan=False)
 
 
 def _rows(model, design=_DESIGN):
-    table = design.build(model).materialize(_BUDGET).table
+    table = design.build(model).materialize(budget=_BUDGET).table
     kept = [name for name in table.column_names if name not in {"t0", "anchor_id"}]
     rows = table.select(kept).to_pylist()
     return sorted(rows, key=lambda row: row["unit"])

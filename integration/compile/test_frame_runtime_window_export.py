@@ -319,7 +319,7 @@ def test_row_check_refusal_precedes_budget_refusal(con):
     )
     frame = Design("user", FixedDate("2025-01-02"), features=_SPEND).build(model)
     with pytest.raises(TerrineError) as error:
-        frame.materialize(Budget(max_rows=1, max_output_bytes=10**6))
+        frame.materialize(budget=Budget(max_rows=1, max_output_bytes=10**6))
     assert error.value.code == "terrine.temporal.float64_precision"
     assert error.value.context["failed_count"] == 1
 
@@ -342,12 +342,12 @@ def test_budgets_count_only_output_rows_and_bytes(con):
         candidate=7, excluded_false=5, unknown=0, retained=2
     )
     bounded = design.build(model).materialize(
-        Budget(max_rows=2, max_output_bytes=reference.table.nbytes)
+        budget=Budget(max_rows=2, max_output_bytes=reference.table.nbytes)
     )
     assert bounded.table.sort_by("unit").equals(reference.table.sort_by("unit"))
     with pytest.raises(TerrineError) as bytes_error:
-        design.build(model).materialize(Budget(max_output_bytes=reference.table.nbytes - 1))
+        design.build(model).materialize(budget=Budget(max_output_bytes=reference.table.nbytes - 1))
     assert bytes_error.value.code == "terrine.budget.output_bytes_exceeded"
     with pytest.raises(TerrineError) as error:
-        design.build(model).materialize(Budget(max_rows=1, max_output_bytes=10**6))
+        design.build(model).materialize(budget=Budget(max_rows=1, max_output_bytes=10**6))
     assert error.value.code == "terrine.budget.rows_exceeded"

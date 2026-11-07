@@ -120,7 +120,7 @@ def readme_bound_model():
 
 def _materialize(design, model):
     return design.build(model).materialize(
-        tr.Budget(max_rows=100, max_output_bytes=1_000_000, strict_scan=False)
+        budget=tr.Budget(max_rows=100, max_output_bytes=1_000_000, strict_scan=False)
     )
 
 
@@ -223,7 +223,7 @@ def test_description_trajectory_uses_the_selected_origin_and_period_reasons(desc
         start_event="signup",
         metric="total",
         period="2d",
-        periods=3,
+        max_periods=3,
         administrative_cutoff=datetime(2025, 1, 7, tzinfo=UTC),
     )
     design = replace(design, anchor=tr.EventAnchor("signup", offset="2d"))
@@ -343,7 +343,7 @@ def test_description_event_panel_uses_selected_anchor_times(description_model):
             id="survival",
         ),
         pytest.param(
-            tr.recipes.ltv(start_event="signup", metric="total", period="2d", periods=3),
+            tr.recipes.ltv(start_event="signup", metric="total", period="2d", max_periods=3),
             id="ltv",
         ),
         pytest.param(

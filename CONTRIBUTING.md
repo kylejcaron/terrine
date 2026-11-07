@@ -49,18 +49,37 @@ uv run python -m tests.documentation --build
 
 Before tagging a release:
 
-1. Confirm CI is green for the release commit. The release workflow enforces
-   this with `scripts/require_green_ci.py`: only a full push or dispatch run
-   whose `ci-ok` job succeeded counts. When the release commit's push run was
-   deferred to a pull-request run or never ran in full, run
-   `gh workflow run CI --ref <ref>` and wait for it to succeed before tagging.
+1. Confirm CI is green for the release commit. The release workflow requires the
+   `ci-ok` job for every release tag. Release candidates and final 1.x tags also
+   require successful PostgreSQL and scale jobs on that commit. Dispatch both
+   workflows against a ref containing the release commit, then wait for those
+   jobs to succeed before tagging:
+
+   ```sh
+   gh workflow run warehouse-backends --ref <ref> -f backend_mode=postgres
+   gh workflow run scale --ref <ref>
+   ```
+
+   BigQuery and Snowflake runs are advisory. If the CI push run was deferred or
+   never ran in full, run `gh workflow run CI --ref <ref>` and wait for `ci-ok`.
 2. Run the stable-API compatibility check:
 
    ```sh
    uv run python scripts/api_check.py
    ```
+3. Write the stable-surface snapshot for each release tag (`v0.Y.0`, a
+   release candidate, or a final 1.x release), and include it in the tagged
+   commit:
 
-3. Run the release-upgrade test when `tests/artifacts/RELEASES` lists earlier 1.x
+   ```sh
+   uv run python scripts/api_check.py --snapshot tests/artifacts/surface/<version>.txt
+   ```
+
+   Keep earlier snapshots; CI compares against the newest version. Snapshot
+   differences are informational during 0.x and enforced from `1.0.0rc1`.
+   Confirm CI is green for the release commit after adding the snapshot, before
+   tagging.
+4. Run the release-upgrade test when `tests/artifacts/RELEASES` lists earlier 1.x
    releases:
 
    ```sh
@@ -73,20 +92,16 @@ Before tagging a release:
    `tests/artifacts/RELEASES`, run the command above, then empty `RELEASES`
    again.
 
-4. If a saved format changed, add a generation to the artifact corpus:
+5. If a saved format changed, add a generation to the artifact corpus:
 
    ```sh
    uv run python scripts/write_artifact_corpus.py --generation <name>
    ```
 
-5. After publishing, add the released version to `tests/artifacts/RELEASES` so
-   later upgrade checks include it.
-6. For the 1.0.0 release candidate, replace the README's pre-alpha warning with:
-
-   > [!NOTE]
-   > Terrine 1.0.0rc1 is a release candidate for the 1.0 series. Stable APIs follow the documented stability policy; provisional and internal APIs may change. This is not the final 1.0.0 release.
-
-7. Tag the release.
+6. Tag the release as `v0.Y.0` for a 0.x release, or with its 1.x version after
+   the 1.0 stability policy takes effect.
+7. After publishing, append the released version to `tests/artifacts/RELEASES`
+   so later upgrade checks include it.
 
 ## License and the CLA
 

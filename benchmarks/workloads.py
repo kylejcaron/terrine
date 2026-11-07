@@ -143,7 +143,7 @@ def designs(config: ScaleConfig) -> dict[str, Design]:
     panel = EventPanel(
         Design("user", EventAnchor("event", "first"), features=features),
         periods=(0, 1, 2),
-        period_seconds=86400,
+        period="1d",
         reference_period=0,
     )
     sketch = Design(
@@ -163,7 +163,7 @@ def designs(config: ScaleConfig) -> dict[str, Design]:
         "frame": fixed,
         "schedule": schedule,
         "sequential": Sequential(
-            schedule, treatment=Initiation("events", "adopted", config.coverage_start)
+            schedule, treatment=Initiation("adopted", history_start=config.coverage_start)
         ),
         "event_panel": panel,
         "sketch": sketch,
@@ -246,6 +246,8 @@ def check_rows(
                     if value is not None:
                         raise AssertionError("sketch populated an unavailable value")
                     continue
+                if not isinstance(truth, int | float | Decimal):
+                    raise AssertionError("sketch oracle returned a nonnumeric value")
                 if value is None or not math.isfinite(float(value)):
                     raise AssertionError("sketch lost a finite available value")
                 error = abs(float(value) - float(truth))

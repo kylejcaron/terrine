@@ -219,7 +219,7 @@ design = recipes.time_series(
     every="7d", start="2025-01-01", end="2025-01-07", outcomes=outcomes,
 )
 result = design.build(model).materialize(
-    Budget(max_rows=1_000, max_output_bytes=1_000_000)
+    budget=Budget(max_rows=1_000, max_output_bytes=1_000_000)
 )
 ```
 
