@@ -1,6 +1,6 @@
 # Reproducible ML dataset staging
 
-Terrine builds immutable datasets from a `Design` and a bound `Model`; it does not fit estimators. Training and scoring are lazy dataset views over the same feature specifications, and Parquet exports are pinned to one published dataset generation.
+Terrine builds immutable datasets from a `Design` and a bound `Model`; it does not fit estimators. Training and scoring are lazy dataset views over the same feature specifications, and Parquet exports are pinned to one published dataset generation. Dataset staging is currently DuckDB-only. `Dataset` and `Frame.stage` are provisional and may change in a minor release.
 
 ## Training data
 

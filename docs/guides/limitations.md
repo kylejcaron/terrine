@@ -25,6 +25,10 @@ recorded-at axis. Point-in-time feature windows and split purging prevent the
 specified temporal leakage; they cannot reconstruct missing historical
 knowledge. Timestamp precision discarded before ingestion cannot be recovered.
 
+## Day boundaries are fixed offsets
+
+`day_boundary` accepts `UTC` or a fixed UTC offset, not an IANA daylight-saving timezone. Daily and monthly snapshots in a daylight-saving zone therefore shift by an hour relative to local midnight at each transition. Choose the standard-time or daylight-time offset for the reporting period that matters most, or use UTC when one fixed boundary across the year is required.
+
 ## A watermark is not a revision log
 
 Readiness describes completeness, not whether old records changed. Hashes of

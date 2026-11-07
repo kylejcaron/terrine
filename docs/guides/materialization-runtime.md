@@ -1,6 +1,6 @@
 # Durable materialization runtime
 
-The materialization runtime persists plan/run state and publishes immutable output generations in the customer's own execution environment. It does not infer whether source rows changed: source revisions, change feeds, checksums, or explicit operator restatements must provide that evidence. A readiness watermark says which period is declared complete; it is not a change detector.
+The materialization runtime persists plan/run state and publishes immutable output generations in the customer's own execution environment. It does not infer whether source rows changed: source revisions, change feeds, checksums, or explicit operator restatements must provide that evidence. A readiness watermark says which period is declared complete; it is not a change detector. This durable materialization runtime is currently DuckDB-only and provisional; its API may change in a minor release.
 
 The runtime accepts an immutable `RefreshPlan` and delegates physical source
 reads, execution and publication to an owner-configured `Executor`. Request

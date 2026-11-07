@@ -174,6 +174,7 @@ More feature recipes are in [common feature patterns](https://github.com/kylejca
 ## Where it runs
 
 Queries run where your data lives; nothing is uploaded. DataFrames and Arrow tables, as above, are queried in a private in-process DuckDB. For a warehouse, pass its Ibis connection first and name the tables: `tr.Model.from_tables(con, units={"customer": tr.UnitSource("customers", "customer_id")}, events={"orders": tr.Events("orders", ...)})`. Results come back as pandas, Polars or Arrow.
+Dataset staging and durable materialization are currently DuckDB-only. `Dataset`, `Frame.stage`, and the materialization runtime are provisional and may change in a minor release.
 
 | Backend | Status |
 | --- | --- |
