@@ -685,6 +685,10 @@ class Dialect:
 
         return _checked_narrow_exact(coefficient, scale, target)
 
+    def typed_null(self, dtype: dt.DataType) -> ir.Value:
+        """A NULL of ``dtype``, such as a placeholder in one branch of a union."""
+        return _typed_null(dtype)
+
     def null_safe_equal(self, left: ir.Value, right: ir.Value) -> ir.BooleanValue:
         """Compare nullable keys without changing their equality domain."""
         return left.identical_to(right)

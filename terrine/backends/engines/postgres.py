@@ -254,6 +254,14 @@ class PostgresDialect(Dialect):
     ) -> ir.Value:
         return _checked_narrow_exact(coefficient, scale, target)
 
+    def typed_null(self, dtype: dt.DataType) -> ir.Value:
+        if isinstance(dtype, dt.Struct):
+            # PostgreSQL builds a struct as an anonymous record and has no struct
+            # type to cast NULL to; a branch never taken gives NULL a record's type.
+            fields = {name: ibis.null(field) for name, field in dtype.items()}
+            return ibis.ifelse(ibis.literal(False), ibis.struct(fields), ibis.null())
+        return super().typed_null(dtype)
+
     def null_safe_equal(self, left: ir.Value, right: ir.Value) -> ir.BooleanValue:
         if left.type().is_numeric() or left.type().is_string():
             # Null tags prevent a substituted zero or empty string from
@@ -262,6 +270,10 @@ class PostgresDialect(Dialect):
             return (left.isnull() == right.isnull()) & (
                 left.fill_null(empty) == right.fill_null(empty)
             )
+        if left.type().is_struct():
+            # Wrapping casts a field to its own type, which PostgreSQL cannot name
+            # for a struct; the anonymous record type it already has can be named.
+            left, right = left.cast(_RECORD), right.cast(_RECORD)
         # Typed records compare NULL fields as equal without flattening array
         # keys, which must distinguish NULL arrays from empty arrays.
         return ibis.struct({"key": left}).cast(_RECORD) == ibis.struct({"key": right}).cast(_RECORD)

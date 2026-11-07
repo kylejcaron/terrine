@@ -93,7 +93,9 @@ hand-written query. `uv run python -m benchmarks.run_cost` prints both times and
 their ratio per recipe; add `--postgres-url postgres://...` to measure a
 PostgreSQL database too, in a schema it creates and drops. Each time is the
 fastest of seven evaluations of the statement into a temporary table on the
-server; Python-side compilation and validation are measured separately by the
+server; struct columns (the `event_panel` anchor identifier) are stored as text,
+since a PostgreSQL table cannot store an anonymous record. Python-side
+compilation and validation are measured separately by the
 [overhead benchmark](../../benchmarks/README.md#fixed-compiler-overhead).
 
 Measured on 2026-11-07 (Apple M3 Pro; DuckDB 1.5.6; PostgreSQL 16.15):
@@ -102,7 +104,7 @@ Measured on 2026-11-07 (Apple M3 Pro; DuckDB 1.5.6; PostgreSQL 16.15):
 | --- | ---: | ---: | ---: | ---: |
 | `time_series` | 3 | 21,555 | 2.6 | 5.8 |
 | `trial_panel` | 3 | 17,922 | 4.0 | 4.6 |
-| `event_panel` | 2 | 14,589 | 6.4 | does not run |
+| `event_panel` | 2 | 14,589 | 6.0–7.0 | 11.4–13.3 |
 | `ltv` | 1 | 79,098 | 6.9 | 7.2 |
 | `survival` | 3 | 65,663 | 6.3 | 21.6 |
 | `life_table` | 1 | 49,345 | 3.7–4.7 | 16.3 |
@@ -111,5 +113,4 @@ Measured on 2026-11-07 (Apple M3 Pro; DuckDB 1.5.6; PostgreSQL 16.15):
 
 The README design measures 19,663 characters. The 5-metric by 10-window design
 measures 1,050,208 formatted characters in the BigQuery dialect, about 22,600
-per metric window. On PostgreSQL the `event_panel` statement fails to
-compile: the portable lookup casts a NULL struct anchor identifier.
+per metric window.

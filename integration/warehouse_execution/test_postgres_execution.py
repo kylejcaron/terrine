@@ -87,3 +87,26 @@ def test_first_dataset_counts_match_the_duckdb_tutorial(postgres_scratch, tmp_pa
     assert result.provenance.engine_name == "postgres"
     assert result.provenance.dialect == "postgres"
     assert result.provenance.engine_status == "verified"
+
+
+def test_keys_without_a_binary_loader_publish_as_text(postgres_scratch, tmp_path):  # noqa: F811
+    """Only results holding records are read in binary; psycopg reads macaddr only as text."""
+    import terrine as tr
+
+    con = postgres_scratch.con
+    con.raw_sql("CREATE TABLE users(user_id macaddr)").close()
+    con.raw_sql("INSERT INTO users VALUES ('80:00:00:00:00:01')").close()
+    con.raw_sql("CREATE TABLE events(user_id macaddr, occurred_at timestamptz)").close()
+    catalog = tmp_path / "catalog.yaml"
+    catalog.write_text(_CATALOG, encoding="utf-8")
+    model = tr.Model.from_catalog(
+        catalog,
+        con=con,
+        units={"user": tr.UnitSource("users", "user_id")},
+        readiness={"sessions": tr.Coverage("2025-01-01", "2025-01-03")},
+    )
+    design = tr.Design("user", tr.FixedDate("2025-01-02"))
+    result = design.build(model).materialize(
+        budget=tr.Budget(max_rows=10, max_output_bytes=1_000_000, strict_scan=False)
+    )
+    assert result.table.column("unit").to_pylist() == ["80:00:00:00:00:01"]
