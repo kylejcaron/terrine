@@ -5,6 +5,7 @@ from decimal import Decimal
 import ibis
 import pytest
 
+from terrine.backends.registry import ENGINES
 from terrine.errors import TerrineError
 from terrine.execution import _native
 
@@ -23,6 +24,22 @@ def test_exact_witness_runs_once_per_execution_context(monkeypatch, native_input
         exact_query = ibis.literal(Decimal("1.0")).as_table()
         context.admit(exact_query)
         context.admit(exact_query)
+
+    assert calls == [None]
+
+
+def test_bignum_without_decimal_operands_triggers_witness(monkeypatch, native_inputs):
+    from terrine.execution.inputs import open_execution
+
+    catalog, con = native_inputs
+    calls = []
+    monkeypatch.setattr(_native, "verify_exact_arithmetic", lambda _: calls.append(None))
+    coefficient_type = ENGINES["duckdb"].dialect("duckdb").exact_type()
+    coefficient = ibis.literal(1).cast(coefficient_type)
+    assert not coefficient.type().is_decimal()
+
+    with open_execution(catalog, con) as context:
+        context.admit(coefficient.as_table())
 
     assert calls == [None]
 

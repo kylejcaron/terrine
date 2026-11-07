@@ -506,12 +506,14 @@ and native unload `False`; read primitives, scan bounds and cancellation
 
 ## Python and dependency support
 
-The package supports CPython 3.12 to 3.14. Native dataset execution requires
+The package requires Python 3.12 or later, with no upper version bound; CI
+exercises CPython 3.12 and 3.14. Native dataset execution requires
 `terrine[duckdb]`; base Terrine has no mandatory backend, dataframe, orchestration
-or modeling library. The local engine is pinned to DuckDB **1.5.6**, matching
-the exact arithmetic capability check, rather than advertising unverified engine
-versions. Ibis starts at 11 and SQLGlot at 29: Ibis 10 constrains SQLGlot below
-the version needed for native `BIGNUM` types.
+or modeling library. The local engine supports DuckDB `>=1.5,<2`. Before the
+first source read that uses exact arithmetic, execution checks three arithmetic
+known answers once per execution context; count-only paths need no witness.
+Ibis starts at 11 and SQLGlot at 29: Ibis 10 constrains SQLGlot below the version
+needed for native `BIGNUM` types.
 
 The [distribution acceptance command][distribution] builds a wheel from the
 sdist, compares package contents, installs it into a fresh environment outside

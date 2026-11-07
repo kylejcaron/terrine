@@ -55,6 +55,8 @@ _KNOWN_ANSWERS = (
 def verify_exact_arithmetic(con: Any) -> None:
     """Refuse exact aggregation if DuckDB fails its arithmetic known answers."""
     raw = raw_connection(con)
+    for sql, _ in _KNOWN_ANSWERS:
+        check_native_functions(raw, sql, None)
     try:
         answers = tuple(raw.execute(sql).fetchone()[0] for sql, _ in _KNOWN_ANSWERS)
     except Exception as exc:
@@ -74,9 +76,10 @@ def verify_exact_arithmetic(con: Any) -> None:
 
 
 def _needs_exact_arithmetic(queries: tuple[Any, ...]) -> bool:
+    exact_type = ENGINES["duckdb"].dialect("duckdb").exact_type()
     for query in queries:
         if any(
-            value.dtype.is_decimal() or str(value.dtype).upper() == "BIGNUM"
+            value.dtype.is_decimal() or value.dtype == exact_type
             for value in query.op().find(ops.Value)
         ):
             return True
