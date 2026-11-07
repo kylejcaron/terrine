@@ -336,7 +336,7 @@ CASES = [
     (
         "terrine.dataset.invalid_split",
         lambda: TimeSplit(train_until="2025-01-01", embargo="-1d"),
-        {"reason": "invalid_duration", "field": "embargo"},
+        {"reason": "negative", "field": "embargo"},
     ),
     (
         "terrine.dataset.invalid_split",
