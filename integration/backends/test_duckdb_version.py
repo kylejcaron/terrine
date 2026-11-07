@@ -41,7 +41,13 @@ def test_count_only_design_runs_on_duckdb_above_minimum(monkeypatch, readme_back
 def test_exact_measure_runs_arithmetic_witness(readme_backend, monkeypatch):
     _, model = readme_backend
     witnesses = []
-    monkeypatch.setattr(_native, "verify_exact_arithmetic", lambda raw: witnesses.append(raw))
+    verify = _native.verify_exact_arithmetic
+
+    def record_and_verify(con):
+        witnesses.append(con)
+        verify(con)
+
+    monkeypatch.setattr(_native, "verify_exact_arithmetic", record_and_verify)
     design = tr.recipes.time_series(
         every="1mo",
         start="2025-02-01",
