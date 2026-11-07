@@ -57,7 +57,7 @@ def test_exact_witness_accepts_known_answers():
 def test_exact_witness_refuses_on_wrong_known_answer(monkeypatch):
     con = ibis.duckdb.connect()
     try:
-        monkeypatch.setattr(_native, "_KNOWN_ANSWERS", (("SELECT 1", 2),))
+        monkeypatch.setattr(_native, "_exact_arithmetic_answer", lambda _: ("SELECT 1", (2,)))
 
         with pytest.raises(TerrineError) as caught:
             _native.verify_exact_arithmetic(con)

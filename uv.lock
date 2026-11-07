@@ -6051,7 +6051,7 @@ docs = [
 [package.metadata]
 requires-dist = [
     { name = "apache-airflow", marker = "extra == 'airflow'", specifier = ">=3.3,<4" },
-    { name = "apache-airflow-providers-standard", marker = "extra == 'airflow'", specifier = "==1.20.1" },
+    { name = "apache-airflow-providers-standard", marker = "extra == 'airflow'", specifier = ">=1.20,<2" },
     { name = "dagster", marker = "extra == 'dagster'", specifier = ">=1.13,<2" },
     { name = "datasketches", marker = "extra == 'sketches'", specifier = ">=5.2,<6" },
     { name = "dbt-core", marker = "extra == 'dbt'", specifier = ">=1.10,<2" },

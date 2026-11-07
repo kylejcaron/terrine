@@ -12,10 +12,12 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from decimal import Decimal
 from types import MappingProxyType
-from typing import Any
+from typing import Any, cast
 
 import ibis
+import ibis.expr.datatypes as dt
 import ibis.expr.operations as ops
+import ibis.expr.types as ir
 from sqlglot import exp
 
 from terrine.backends.capabilities import _CAPABILITY_UNAVAILABLE, _SNAPSHOT_UNAVAILABLE
@@ -40,25 +42,41 @@ _FUNCTION_NAME = re.compile(
     r'"(?i:function_name|function|operator_name)"\s*:\s*("(?:[^"\\]|\\.)*")'
 )
 
-_KNOWN_ANSWERS = (
-    ("SELECT CAST(CAST(0.1 AS DOUBLE) AS DECIMAL(38, 9))", Decimal("0.100000000")),
-    (
-        "SELECT SUM(value) FROM (VALUES "
-        "(CAST('9999999999999999999999999999999999999' AS BIGNUM)), "
-        "(CAST(1 AS BIGNUM))) AS witness(value)",
+def _exact_arithmetic_answer(con: Any) -> tuple[str, tuple[Any, ...]]:
+    """Compile answers through the same dialect operations used by exact measures."""
+    policy = ENGINES["duckdb"].dialect("duckdb")
+    exact_type = policy.exact_type()
+    coefficients = ibis.literal(0).as_table().select(
+        coefficient=ibis.literal("9999999999999999999999999999999999999").cast(exact_type)
+    ).union(
+        ibis.literal(0).as_table().select(coefficient=ibis.literal("1").cast(exact_type))
+    )
+    aggregate = coefficients.aggregate(
+        coefficient_sum=policy.exact_sum(coefficients.coefficient.cast(policy.exact_type()))
+    )
+    query = aggregate.select(
+        quantized=policy.quantize_float(
+            cast(ir.FloatingValue, ibis.literal(0.1).cast(dt.float64))
+        ),
+        coefficient_sum=aggregate.coefficient_sum,
+        quotient=policy.truncating_quotient(
+            cast(ir.IntegerValue, ibis.literal(7, type=dt.int64)), 2
+        ),
+    )
+    return con.compile(query), (
+        Decimal("0.100000000"),
         "10000000000000000000000000000000000000",
-    ),
-    ("SELECT divide(CAST(7 AS BIGINT), CAST(2 AS BIGINT))", 3),
-)
+        3,
+    )
 
 
 def verify_exact_arithmetic(con: Any) -> None:
     """Refuse exact aggregation if DuckDB fails its arithmetic known answers."""
     raw = raw_connection(con)
-    for sql, _ in _KNOWN_ANSWERS:
-        check_native_functions(raw, sql, None)
+    sql, expected = _exact_arithmetic_answer(con)
+    check_native_functions(raw, sql, None)
     try:
-        answers = tuple(raw.execute(sql).fetchone()[0] for sql, _ in _KNOWN_ANSWERS)
+        row = raw.execute(sql).fetchone()
     except Exception as exc:
         raise _CAPABILITY_UNAVAILABLE.error(
             backend="duckdb",
@@ -66,7 +84,7 @@ def verify_exact_arithmetic(con: Any) -> None:
             status="witness_failed",
             route="Use a DuckDB version with correct exact arithmetic.",
         ) from exc
-    if answers != tuple(answer for _, answer in _KNOWN_ANSWERS):
+    if row is None or tuple(row) != expected:
         raise _CAPABILITY_UNAVAILABLE.error(
             backend="duckdb",
             operation="exact_arithmetic",
