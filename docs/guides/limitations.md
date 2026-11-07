@@ -64,9 +64,11 @@ results outside the binary64 range refuse. On PostgreSQL and the portable
 policy, whose float arithmetic raises instead of rounding to an infinity or
 zero, `bound_overflow` also refuses finite results the guards cannot admit:
 a unit whose summed history magnitudes reach about half the range
-($8.99\cdot10^{307}$, even where values cancel), quotients outside
-$2^{\pm1020}$, and cohort reductions whose scaled quotients or products
-leave that range; DuckDB publishes those finite results.
+($8.99\cdot10^{307}$, even where values cancel), quotients that could round
+to zero (below $2^{-1020}$ with a divisor of magnitude at least one) or
+overflow (above $2^{1020}$ with a divisor below one), and cohort reductions
+whose scaled quotients or products leave that range; DuckDB publishes those
+finite results.
 
 An exact float measure quantizes once to `DECIMAL(38, 9)`-scale values by the
 engine's float-to-decimal conversion (nearest, ties away from zero, with about

@@ -225,13 +225,17 @@ refuses finite results whose admission bound leaves the safe range:
 - a unit's history whose summed magnitudes reach about half the binary64
   range ($\sum|x_i| \gtrsim 8.99\cdot10^{307}$), even where the values cancel;
   a window ending at or after such a state refuses, an empty one is still zero;
-- a mean or ratio whose quotient lies outside $2^{\pm1020}$ (about
-  $8.9\cdot10^{-308}$ to $1.1\cdot10^{307}$), including a subnormal sum over a
-  count; a zero numerator divides to zero;
+- a mean or ratio whose quotient could round to zero or overflow: with a
+  divisor of magnitude at least one, a quotient below $2^{-1020}$ (about
+  $8.9\cdot10^{-308}$; a subnormal sum over a count, for example); with a
+  divisor below one, a quotient above $2^{1020}$ (about $1.1\cdot10^{307}$).
+  A quotient a large divisor keeps at or below its numerator cannot overflow
+  and publishes; a zero numerator divides to zero;
 - a cohort total or cumulative trajectory whose summed magnitudes reach half
   the range, and a cohort mean whose normalizing quotient (a unit value over
-  the cohort's largest magnitude) leaves $2^{\pm1020}$ or whose rescaling
-  product falls below $2^{-1020}$ or above half the range.
+  the cohort's largest magnitude, itself at most one) falls below $2^{-1020}$
+  of that magnitude, or whose rescaling product falls below $2^{-1020}$ or
+  above half the range.
 
 These are the price of never evaluating an operation the engine would raise
 on; DuckDB publishes the same finite results.

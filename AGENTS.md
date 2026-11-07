@@ -294,11 +294,13 @@ Reached schedules and deadlines use notify.* for the current owner, or the autho
     the engine evaluates them, so `bound_overflow` there also refuses finite
     results whose admission bound leaves the safe range: a history whose
     magnitude sum reaches about `MAX / 2` even where values cancel, quotients
-    outside `2**±1020`, cohort means whose scaled quotient or product leaves
-    that range (products also above `MAX / 2`), cohort totals and cumulative
-    values past half the range. DuckDB (IEEE 754) publishes those finite
-    results. Never wrap an aggregate in a CASE to avoid an engine error: the
-    aggregate is still evaluated; withhold its inputs.
+    that could round to zero (below `2**-1020` with a divisor of magnitude at
+    least one) or overflow (above `2**1020` with a divisor below one), cohort
+    means whose scaled quotient or product leaves that range (products also
+    above `MAX / 2`), cohort totals and cumulative values past half the range.
+    DuckDB (IEEE 754) publishes those finite results. Never wrap an aggregate
+    in a CASE to avoid an engine error: the aggregate is still evaluated;
+    withhold its inputs.
 - When a result can be unavailable, preserve a numeric null and its exact
   reason through schemas, conversions, serialization, and saved fixtures.
 - Portable or hashed formats define collection order, tuple encoding, alias
