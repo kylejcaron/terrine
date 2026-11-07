@@ -498,3 +498,9 @@ def test_since_round_trips_design_documents():
             },
         ).spec_hash
     )
+def test_design_unit_wrong_type_reason():
+    with pytest.raises(TerrineError) as error:
+        Design(cast(str, 1), FixedDate("2025-01-01"))
+    assert error.value.code == "terrine.design.invalid"
+    assert error.value.context["reason"] == "wrong_type"
+    assert error.value.context["field"] == "unit"

@@ -627,3 +627,16 @@ def test_state_panel_roles_and_metadata_survive_arrow_json_roundtrip():
     assert recovered.roles == frame.roles
     assert recovered.provenance.state_panel == meta
     assert recovered.provenance.state_panel.levels == ("new", "active", "closed")
+def test_materialized_frame_from_json_malformed_is_coded():
+    with pytest.raises(TerrineError) as error:
+        MaterializedFrame.from_json("{")
+    assert error.value.code == "terrine.metadata.invalid"
+    assert error.value.context["reason"] == "malformed_json"
+def test_materialized_frame_from_arrow_malformed_is_coded():
+    table = pa.table({"value": [1]}).replace_schema_metadata(
+        {b"terrine.materialized_frame.v2": b"{"}
+    )
+    with pytest.raises(TerrineError) as error:
+        MaterializedFrame.from_arrow(table)
+    assert error.value.code == "terrine.metadata.invalid"
+    assert error.value.context["reason"] == "invalid_arrow_metadata"
