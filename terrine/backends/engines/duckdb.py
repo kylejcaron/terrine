@@ -301,6 +301,17 @@ class DuckDBDialect(Dialect):
         # the cast only aligns the declared scale of equal native types.
         return point, state.cast(point.type())
 
+    def comparison_keys(
+        self, left: ir.TimestampValue, right: ir.TimestampValue
+    ) -> tuple[ir.Value, ir.Value] | None:
+        """Microsecond instants, infinities included, compare natively as lookups do."""
+        if all(
+            isinstance(dtype, dt.Timestamp) and dtype.scale in (None, 6)
+            for dtype in (left.type(), right.type())
+        ):
+            return self.lookup_keys(left, right)
+        return None
+
     def reverse_time_key(self, value: ir.TimestampValue) -> ir.Value:
         key = self.timestamp_order_key(value)
         return ibis.struct(

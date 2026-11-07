@@ -654,6 +654,15 @@ class Dialect:
             return point_key.cast(target), state_key.cast(target)
         return point_key, state_key
 
+    def comparison_keys(
+        self, left: ir.TimestampValue, right: ir.TimestampValue
+    ) -> tuple[ir.Value, ir.Value] | None:
+        """Keys whose native comparison orders two instants exactly, or None.
+
+        Without native keys, comparisons order (rank, seconds, nanos) parts.
+        """
+        return None
+
     def reverse_time_key(self, value: ir.TimestampValue) -> ir.Value:
         # One exact scalar: finite instants' nanoseconds stay far below 10**38.
         rank, seconds, nanos = self.timestamp_parts(value)

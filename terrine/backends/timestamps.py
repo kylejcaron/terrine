@@ -154,6 +154,8 @@ def native_day_start(
     local wall clock's date, back to UTC, as the engines have always compiled
     endpoint alignment."""
     utc = dialect.utc_wall_clock(timestamp)
+    if not offset_minutes:
+        return dialect.utc_instant(cast(ir.TimestampValue, utc.date().cast("timestamp")))
     local = utc + ibis.interval(minutes=offset_minutes)
     midnight = cast(ir.TimestampValue, local.date().cast("timestamp")) - ibis.interval(
         minutes=offset_minutes
@@ -207,8 +209,22 @@ def compare_timestamps(
     *,
     right_offset_seconds: int = 0,
 ) -> ir.BooleanValue:
-    """Compare instants with an optional exact whole-second shift of the right operand."""
-    backend = current_dialect(left, right).name
+    """Compare instants with an optional exact whole-second shift of the right operand.
+
+    Unshifted instants compare natively where the dialect orders them exactly.
+    """
+    dialect = current_dialect(left, right)
+    keys = None if right_offset_seconds else dialect.comparison_keys(left, right)
+    if keys is not None:
+        native_left, native_right = keys
+        return {
+            "eq": native_left == native_right,
+            "gt": native_left > native_right,
+            "ge": native_left >= native_right,
+            "lt": native_left < native_right,
+            "le": native_left <= native_right,
+        }[op]
+    backend = dialect.name
     left_rank, left_seconds, left_nanos = timestamp_parts(left, backend=backend)
     right_rank, right_seconds, right_nanos = timestamp_parts(right, backend=backend)
     if right_offset_seconds:
