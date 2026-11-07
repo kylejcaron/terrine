@@ -33,7 +33,7 @@ def sequence_model():
     )
     catalog = Catalog.model_validate(
         {
-            "schema_version": 2,
+            "schema_version": 3,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": {
@@ -264,7 +264,7 @@ def test_sequence_excludes_rows_without_selected_fact_before_event_cap():
     )
     catalog = Catalog.model_validate(
         {
-            "schema_version": 2,
+            "schema_version": 3,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": {

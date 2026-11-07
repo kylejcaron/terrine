@@ -62,7 +62,7 @@ def test_increment_and_native_catalogs_preserve_dataset_meaning():
             },
         ]
     )
-    assert catalog.schema_version == 2
+    assert catalog.schema_version == 3
     assert catalog.sources["events"].units == {
         "user_id": "user_id",
         "account_id": "account_id",

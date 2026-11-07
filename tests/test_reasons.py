@@ -9,6 +9,7 @@ def test_reason_registry_defines_stable_tokens_and_meanings():
     expected = {
         "administrative_cutoff",
         "all_values_null",
+        "below_resolution",
         "completeness_evidence_missing",
         "deadline_elapsed",
         "embargo",

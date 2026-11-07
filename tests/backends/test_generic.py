@@ -199,9 +199,16 @@ def test_portable_policy_compiles_every_operation_without_native_bindings():
 
 
 _UNIT_ROUNDOFF = Fraction(1, 2**53)
+# The exact limits the guard is asked to protect: two fixed-precision domains and
+# half the binary64 range in the guard's 2**-64 magnitude scale.
+_LIMITS = {
+    "decimal_scale_9": Fraction(10**38 - 1, 10**9),
+    "decimal_scale_0": Fraction(10**38 - 1),
+    "binary64_half_range": Fraction(sys.float_info.max) / 2**65,
+}
 
 
-def _admission_threshold(scale: int, count: int) -> Fraction:
+def _admission_threshold(limit: Fraction, count: int) -> Fraction:
     """Independent oracle: the largest admissible magnitude sum for ``count`` rows.
 
     With each magnitude converted within ``u`` and summed through ``count - 1``
@@ -209,7 +216,6 @@ def _admission_threshold(scale: int, count: int) -> Fraction:
     ``e = (1 + u)(1 + gamma) - 1`` and ``gamma = (n - 1)u / (1 - (n - 1)u)``, so
     the true sum is below the limit whenever ``B < limit * (1 - e)``.
     """
-    limit = Fraction(10**38 - 1, 10**scale)
     additions = (count - 1) * _UNIT_ROUNDOFF
     gamma = additions / (1 - additions)
     error = (1 + _UNIT_ROUNDOFF) * (1 + gamma) - 1
@@ -226,22 +232,29 @@ def _double_at_most(value: Fraction) -> float:
     return rounded if Fraction(rounded) <= value else math.nextafter(rounded, 0.0)
 
 
-@pytest.mark.parametrize("scale", [9, 0])
-def test_accumulation_admission_is_sound_and_tight_at_the_threshold(scale):
+def _policy_limit(policy, name: str) -> float:
+    if name == "binary64_half_range":
+        return policy.float_magnitude_limit()
+    return policy.magnitude_limit(dt.Decimal(38, 9 if name.endswith("9") else 0))
+
+
+@pytest.mark.parametrize("name", list(_LIMITS))
+def test_accumulation_admission_is_sound_and_tight_at_the_threshold(name):
     """Admission never trusts a bound that could hide an overflow, and gives up at most
     the derived slack plus a few units of the guard's own rounding."""
     from terrine.backends.dialect import dialect_for_name
 
     policy = dialect_for_name("generic")
+    limit = _LIMITS[name]
+    assert Fraction(_policy_limit(policy, name)) <= limit
     counts = [0, 1, 2, 3, 1000, 2**40]
     cases = {}
     for count in counts:
-        threshold = _admission_threshold(scale, max(count, 1))
+        threshold = _admission_threshold(limit, max(count, 1))
         cases[f"at_{count}"] = (_double_at_least(threshold), count, False)
         # The closed-form guard spends at most (n + 16)u beyond the derived threshold.
         margin = threshold * (1 - (count + 16) * _UNIT_ROUNDOFF)
         cases[f"below_{count}"] = (_double_at_most(margin), count, True)
-    limit = Fraction(10**38 - 1, 10**scale)
     cases["limit_single"] = (_double_at_most(limit), 1, False)
     cases["empty"] = (0.0, 0, True)
     cases["null_bound"] = (None, 0, True)
@@ -259,11 +272,150 @@ def test_accumulation_admission_is_sound_and_tight_at_the_threshold(scale):
                 }
             ),
         )
-        admitted = policy.admits_accumulation(table.bound, table.rows, dt.Decimal(38, scale))
+        admitted = policy.admits_accumulation(table.bound, table.rows, _policy_limit(policy, name))
         rows = con.to_pyarrow(table.select("case", admitted=admitted)).to_pylist()
     finally:
         con.disconnect()
     assert {row["case"]: row["admitted"] for row in rows} == {
+        name: expected for name, (_, _, expected) in cases.items()
+    }
+
+
+def test_float_magnitude_scales_exactly_and_admits_values_below_half_the_range():
+    """The scaled magnitude is exact above 2**-900 and zero below it, so no product
+    underflows; a single value is admitted up to just below half the range."""
+    from terrine.backends.dialect import dialect_for_name
+
+    policy = dialect_for_name("generic")
+    half = Fraction(sys.float_info.max) / 2
+    # One term: the bound carries one conversion rounding and no additions.
+    threshold = _admission_threshold(half, 1)
+    values = {
+        "at_threshold": (_double_at_least(threshold), None, False),
+        "below_threshold": (_double_at_most(threshold * (1 - 17 * _UNIT_ROUNDOFF)), None, True),
+        "max": (sys.float_info.max, math.ldexp(sys.float_info.max, -64), False),
+        "unit": (-1.0, 2.0**-64, True),
+        "clamp": (2.0**-900, 2.0**-964, True),
+        "below_clamp": (math.nextafter(2.0**-900, 0.0), 0.0, True),
+        "subnormal": (5e-324, 0.0, True),
+        "zero": (0.0, 0.0, True),
+        "null": (None, 0.0, True),
+    }
+    con = ibis.duckdb.connect()
+    try:
+        table = con.create_table(
+            "values",
+            pa.table(
+                {
+                    "case": list(values),
+                    "value": pa.array([value for value, _, _ in values.values()], pa.float64()),
+                }
+            ),
+        )
+        magnitude = policy.float_magnitude(table.value)
+        rows = con.to_pyarrow(
+            table.select(
+                "case",
+                magnitude=magnitude,
+                admitted=policy.admits_accumulation(
+                    magnitude, ibis.literal(1), policy.float_magnitude_limit()
+                ),
+            )
+        ).to_pylist()
+    finally:
+        con.disconnect()
+    by_case = {row["case"]: row for row in rows}
+    for name, (_, scaled, admitted) in values.items():
+        if scaled is not None:
+            assert by_case[name]["magnitude"] == scaled, name
+        assert by_case[name]["admitted"] is admitted, name
+
+
+def test_float_quotient_divides_only_within_the_range():
+    """Quotients within 2**±1020 divide; those that could overflow or round to zero,
+    and zero or NULL divisors, are NULL; a zero numerator divides to zero."""
+    from terrine.backends.dialect import dialect_for_name
+
+    policy = dialect_for_name("generic")
+    cases = {
+        "plain": (1.0, 2.0, 0.5),
+        "negative": (-3.0, -1.5, 2.0),
+        "largest_small": (2.0**-1020, 1.0, 2.0**-1020),
+        "below_small": (math.nextafter(2.0**-1020, 0.0), 1.0, None),
+        "subnormal_over_count": (5e-324, 2.0, None),
+        "largest_big": (1.0, 2.0**-1020, 2.0**1020),
+        "above_big": (1.0, math.nextafter(2.0**-1020, 0.0), None),
+        "overflow": (1e300, 1e-10, None),
+        "zero_numerator": (0.0, 1e-300, 0.0),
+        "zero_divisor": (1.0, 0.0, None),
+        "null_divisor": (1.0, None, None),
+        "null_numerator": (None, 1.0, None),
+    }
+    con = ibis.duckdb.connect()
+    try:
+        table = con.create_table(
+            "quotients",
+            pa.table(
+                {
+                    "case": list(cases),
+                    "n": pa.array([n for n, _, _ in cases.values()], pa.float64()),
+                    "d": pa.array([d for _, d, _ in cases.values()], pa.float64()),
+                }
+            ),
+        )
+        quotient = policy.float_quotient(table.n, table.d)
+        rows = con.to_pyarrow(table.select("case", quotient=quotient)).to_pylist()
+    finally:
+        con.disconnect()
+    assert {row["case"]: row["quotient"] for row in rows} == {
+        name: expected for name, (_, _, expected) in cases.items()
+    }
+
+
+def test_float_product_multiplies_only_within_the_range():
+    """Products from 2**-1020 to half the range multiply; those that could overflow
+    or round to zero are NULL; a zero operand multiplies to zero; NULL operands
+    stay NULL."""
+    from terrine.backends.dialect import dialect_for_name
+
+    policy = dialect_for_name("generic")
+    cases = {
+        "plain": (0.75, 4.0, 3.0),
+        "negative": (-0.5, 3.0, -1.5),
+        # A pivot below one cannot overflow; the product must stay at least 2**-1020.
+        "largest_small_pivot": (1.0, 2.0**-1020, 2.0**-1020),
+        "below_small_pivot": (math.nextafter(1.0, 0.0), 2.0**-1020, None),
+        "mean_times_tiny_scale": (1e-24, 1e-300, None),
+        "subnormal_pivot": (1.0, 5e-324, None),
+        # A pivot of at least one cannot round to zero; the product must stay
+        # within half the range, where every guarded binary64 value lives.
+        "largest_big_pivot": (0.5, sys.float_info.max, sys.float_info.max / 2),
+        "above_big_pivot": (math.nextafter(0.5, 1.0), sys.float_info.max, None),
+        "mean_above_half_range": (1.0, 1e308, None),
+        "overflow": (1e200, 1e200, None),
+        "tiny_times_huge": (2.0**-1000, sys.float_info.max, 2.0**-1000 * sys.float_info.max),
+        "zero_left": (0.0, 1e-300, 0.0),
+        "zero_right": (1e300, 0.0, 0.0),
+        "null_left": (None, 1.0, None),
+        "null_right": (1.0, None, None),
+    }
+    con = ibis.duckdb.connect()
+    try:
+        table = con.create_table(
+            "products",
+            pa.table(
+                {
+                    "case": list(cases),
+                    "a": pa.array([a for a, _, _ in cases.values()], pa.float64()),
+                    "b": pa.array([b for _, b, _ in cases.values()], pa.float64()),
+                }
+            ),
+        )
+        product = policy.float_product(table.a, table.b)
+        rows = con.to_pyarrow(table.select("case", product=product)).to_pylist()
+    finally:
+        con.disconnect()
+    assert {row["case"]: row["product"] for row in rows} == {
         name: expected for name, (_, _, expected) in cases.items()
     }
 

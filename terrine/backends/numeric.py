@@ -1,8 +1,8 @@
 """Exact coefficient arithmetic and one-time float quantization.
 
-Float inputs round once to DECIMAL(38, 9), then share declared-decimal
-coefficients: DuckDB BIGNUM, PostgreSQL NUMERIC, BigQuery BIGNUMERIC and
-Snowflake NUMBER(38, 0). Counts retain their native exact domains.
+Float inputs of exact measures round once to DECIMAL(38, 9), then share
+declared-decimal coefficients: DuckDB BIGNUM, PostgreSQL NUMERIC, BigQuery
+BIGNUMERIC and Snowflake NUMBER(38, 0). Counts retain their native exact domains.
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ from terrine.errors import RefusalSpec
 
 __all__ = [
     "EXACT_OVERFLOW",
+    "below_resolution",
     "coefficient_bounds",
     "count_literal",
     "decimal_coefficient",
@@ -176,6 +177,19 @@ def quantized_float(
     )
 
 
+def below_resolution(value: ir.FloatingValue, coefficient: ir.Value) -> ir.BooleanValue:
+    """Whether a nonzero finite input quantized to zero, so an exact sum drops it.
+
+    ``coefficient`` is the exact scale-9 coefficient of ``value`` (its
+    ``quantized_float`` result through ``decimal_coefficient``), compared in its
+    own exact domain. A zero input, a NULL, or an input the quantization refused
+    (NULL coefficient, counted by its own flag) is not a discarded contribution.
+    """
+    zero = ibis.literal(0.0, type=dt.float64)
+    discarded = (value.cast(dt.float64) != zero) & (coefficient == exact_literal(0, coefficient))
+    return discarded.fill_null(ibis.literal(False))
+
+
 def float_ratio(
     numerator: ir.Value,
     numerator_scale: int | ir.IntegerValue,
@@ -185,7 +199,10 @@ def float_ratio(
     """Convert each exact operand at its scale once, then divide once in float64.
 
     A nested float64 quotient passes through. Zero is tested in the exact
-    denominator domain, before conversion.
+    denominator domain, before conversion. A policy that bounds float
+    arithmetic divides only where the quotient stays within the range
+    (``Dialect.float_quotient``), so the NULL it yields elsewhere refuses
+    instead of the backend raising.
     """
     zero_value = (
         ibis.literal(0.0) if denominator.type().is_floating() else exact_literal(0, denominator)
@@ -194,6 +211,9 @@ def float_ratio(
     divisor = zero.ifelse(ibis.null(denominator.type()), denominator)
     n = exact_to_float(numerator, numerator_scale)[0]
     d = exact_to_float(divisor, denominator_scale)[0]
+    policy = current_dialect(numerator, denominator)
+    if policy.bounds_float_arithmetic:
+        return policy.float_quotient(n, d)
     return cast(ir.FloatingValue, n / d)
 
 
@@ -214,29 +234,36 @@ def exact_sum(value: ir.Value, *, admitted: bool = False) -> ir.Value:
 
 def guard_accumulation(
     table: ibis.Table,
-    coefficient: ir.Value,
+    value: ir.Value,
     *,
     partition: Sequence[str],
     order: str | None = None,
 ) -> tuple[ibis.Table, ir.Value, ir.BooleanValue | None]:
-    """Withhold coefficients whose partition's accumulated magnitudes may not fit.
+    """Withhold values whose partition's accumulated magnitudes may not fit.
 
-    A policy that bounds accumulations projects ``coefficient`` onto ``table``
-    and, over each partition (running along ``order`` when given), the
-    admission of its backend magnitude bound and contributing count by
-    ``Dialect.admits_accumulation``. Returns the projected table, the
-    coefficient withheld (NULL) where not admitted, and the admission flag,
-    both columns of that table: the withheld coefficient keeps every sum the
-    backend evaluates inside the type's domain, and the flag lets a running
-    consumer refuse rather than publish a partial sum. Other policies return
-    the inputs unchanged and no flag.
+    A policy that bounds accumulations of ``value``'s kind, fixed-precision
+    exact coefficients or binary64 values whose float arithmetic raises outside
+    the range, projects ``value`` onto ``table`` and, over each partition
+    (running along ``order`` when given), the admission of its backend
+    magnitude bound and contributing count by ``Dialect.admits_accumulation``
+    against the kind's limit. Returns the projected table, the value withheld
+    (NULL) where not admitted, and the admission flag, both columns of that
+    table: the withheld value keeps every sum the backend evaluates inside the
+    domain, and the flag lets a running consumer refuse rather than publish a
+    partial sum. Other policies return the inputs unchanged and no flag.
     """
-    policy = current_dialect(coefficient)
-    if not policy.bounds_accumulations:
-        return table, coefficient, None
-    dtype = coefficient.type()
-    if not isinstance(dtype, dt.Decimal):
-        raise TypeError(f"{dtype} is not a fixed-precision coefficient type")
+    policy = current_dialect(value)
+    dtype = value.type()
+    if dtype.is_floating():
+        if not policy.bounds_float_arithmetic:
+            return table, value, None
+        magnitude, limit = policy.float_magnitude, policy.float_magnitude_limit()
+    else:
+        if not policy.bounds_accumulations:
+            return table, value, None
+        if not isinstance(dtype, dt.Decimal):
+            raise TypeError(f"{dtype} is not a fixed-precision coefficient type")
+        magnitude, limit = policy.magnitude, policy.magnitude_limit(dtype)
     used = {name.casefold() for name in table.columns}
     names = []
     for stem in ("coefficient", "admitted"):
@@ -246,15 +273,15 @@ def guard_accumulation(
         used.add(name.casefold())
         names.append(name)
     value_name, flag_name = names
-    staged = table.mutate(**{value_name: coefficient})
+    staged = table.mutate(**{value_name: value})
     frame = ibis.window(
         group_by=[staged[name] for name in partition],
         order_by=[staged[order]] if order is not None else (),
         rows=(None, 0) if order is not None else None,
     )
-    bound = policy.magnitude(staged[value_name]).sum().over(frame)
+    bound = magnitude(staged[value_name]).sum().over(frame)
     count = staged[value_name].count().over(frame)
-    flagged = staged.mutate(**{flag_name: policy.admits_accumulation(bound, count, dtype)})
+    flagged = staged.mutate(**{flag_name: policy.admits_accumulation(bound, count, limit)})
     admitted = cast(ir.BooleanValue, flagged[flag_name])
     return flagged, admitted.ifelse(flagged[value_name], ibis.null().cast(dtype)), admitted
 

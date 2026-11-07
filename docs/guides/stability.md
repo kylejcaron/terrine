@@ -72,7 +72,7 @@ each operation is recorded in the per-operation
 summarized in [dataset capabilities](capabilities.md); an engine that does not
 verify an operation refuses it with a coded refusal. Numerical results follow
 the [shared numerical contract](backend-compatibility.md#shared-numerical-contract):
-float inputs quantize once and results meet stated bounds, not exact bits.
+native and exact float results meet their stated bounds, not exact bits.
 
 ## Deprecation
 
@@ -148,7 +148,8 @@ From 1.0.0rc1:
 
 Design and dataset-definition documents are version 4, with fields equal to
 their defaults omitted ([design specifications](design-specs.md)); Catalog
-documents are version 2; manifest and saved-plan envelopes are version 1.
+documents are version 3 and version 2 Catalog documents still load with every
+measure exact; manifest and saved-plan envelopes are version 1.
 
 ### Identity rules
 
@@ -178,7 +179,10 @@ documents are version 2; manifest and saved-plan envelopes are version 1.
 - The Catalog has one canonical payload, with defaults omitted, used for Catalog
   documents and for every runtime identity derived from a Catalog: the model
   hash and `ModelReference`. A Catalog that gains a defaulted field therefore
-  keeps its model hash, saved plans and agent references.
+  keeps its model hash, saved plans and agent references. Measures omit `exact`
+  when exact, and the identity payload declares version 2 unless a measure is
+  native, so a version 2 Catalog keeps its identities; documents are written as
+  version 3.
 
 ### How the promises are checked
 

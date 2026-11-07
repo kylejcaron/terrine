@@ -34,7 +34,7 @@ from tests.compile.test_persisted_layers import _persisted_prefixes
 def _catalog() -> Catalog:
     return Catalog.model_validate(
         {
-            "schema_version": 2,
+            "schema_version": 3,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": {
@@ -308,12 +308,12 @@ import json, sys
 import ibis
 from terrine.runtime.owner import RuntimeOwner
 from terrine.runtime.snapshot import ReopenableSnapshot, SnapshotAuthority
-from terrine.semantic.models import Catalog
+from terrine.semantic.io import validate_catalog
 
 state_path, snapshot_root, receipt_path = sys.argv[1:]
 owner = RuntimeOwner(state_path=state_path, snapshot_root=snapshot_root)
 receipt = ReopenableSnapshot.from_json(open(receipt_path).read())
-catalog = Catalog.model_validate(json.loads(receipt.catalog_json))
+catalog = validate_catalog(json.loads(receipt.catalog_json))
 connection = ibis.duckdb.connect(state_path)
 execution = SnapshotAuthority(owner).reopen(receipt, con=connection, namespace='runtime')
 relation = execution.resolve(catalog.sources['events'].relation)

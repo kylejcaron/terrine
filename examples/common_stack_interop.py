@@ -41,7 +41,7 @@ def main() -> None:
                     CAST(9007199254740993.01 AS DECIMAL(20, 2)) AS amount
             """)
             catalog = {
-                    "schema_version": 2,
+                    "schema_version": 3,
                     "day_boundary": "UTC",
                     "dialect": "duckdb",
                     "sources": {

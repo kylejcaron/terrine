@@ -88,7 +88,7 @@ every account-event row and produce identical treatments.
 Save this as `semantic.yaml`:
 
 ```yaml
-schema_version: 2
+schema_version: 3
 day_boundary: UTC
 dialect: duckdb
 sources:

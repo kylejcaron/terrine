@@ -12,6 +12,7 @@ import ibis.expr.types as ir
 
 from terrine.backends.dialect import current_dialect
 from terrine.backends.numeric import (
+    below_resolution,
     count_literal,
     decimal_coefficient,
     exact_subtract,
@@ -30,7 +31,7 @@ from terrine.semantic.rules import (
 )
 from terrine.semantic.time import boundary_timezone
 from terrine.temporal.attributes import _enriched_property_columns
-from terrine.temporal.prefix import _UNKNOWN_FIELDS, _require_backend
+from terrine.temporal.prefix import _UNKNOWN_FIELDS, _require_backend, native_arithmetic
 
 __all__ = ["sparse_daily"]
 
@@ -59,10 +60,24 @@ def resolve_measure(
         if column not in events.columns:
             raise _SCHEMA.error(field=f"event {measure.event}", column=column)
         dtype = events[column].type()
-        if measure.aggregation != "count" and not (
-            dtype.is_integer() or dtype.is_decimal() or dtype.is_floating()
-        ):
-            raise _SCHEMA.error(field=f"numeric event {measure.event}", column=column)
+        if measure.aggregation == "count_distinct":
+            supported = (
+                dtype.is_integer()
+                or dtype.is_decimal()
+                or dtype.is_floating()
+                or dtype.is_string()
+                or dtype.is_date()
+                or dtype.is_boolean()
+            )
+        else:
+            supported = dtype.is_integer() or dtype.is_decimal() or dtype.is_floating()
+        if measure.aggregation != "count" and not supported:
+            field = (
+                f"distinct-count event column {column}"
+                if measure.aggregation == "count_distinct"
+                else f"numeric event {measure.event}"
+            )
+            raise _SCHEMA.error(field=field, column=column)
         if dtype.is_floating() and not (dtype.is_float32() or dtype.is_float64()):
             raise _SCHEMA.error(field=f"binary64 event {measure.event}", column=column)
     value_type = str(dtype)
@@ -153,6 +168,8 @@ def _sparse_group(
     Event-resolution callers pass {"_timestamp": events._timestamp}. This groups
     duplicates before prefix accumulation, without mixing another entity key
     into the selected analysis unit. No exposure is inferred from Property.as_of.
+    A native measure sums its finite float values in binary64 and counts the
+    non-finite ones; other measures accumulate exact coefficients.
     """
     measure = resolve_measure(events, measure, source=source)
     if unit_column not in source.units.values() and unit_column != "_unit":
@@ -161,9 +178,11 @@ def _sparse_group(
         raise _SCHEMA.error(field="selected unit", column=unit_column)
     assert measure.value_type is not None  # resolve_measure always binds it
     dtype = dt.dtype(measure.value_type)
-    # Floats quantize once at scale 9, then share declared-decimal coefficients.
-    exact_floats = dtype.is_floating() and measure.aggregation != "count"
-    _require_backend(events)
+    native = native_arithmetic(measure)
+    # Exact floats quantize once at scale 9, then share declared-decimal coefficients.
+    exact_floats = dtype.is_floating() and measure.aggregation != "count" and not native
+    if not native:
+        _require_backend(events)
     predicate, observed_null, missing, literal_null, nonfinite = _predicate(events, measure, source)
     selected = predicate.fill_null(False)
     unknown = predicate.isnull()
@@ -200,20 +219,41 @@ def _sparse_group(
     aggregates = {name: exact_sum(leaf[name]) for name in fields}
     if measure.aggregation == "count":
         aggregates["sum_value"] = exact_sum(leaf.event_count)
+    elif native:
+        floating = leaf.__terrine_value.cast(dt.float64)
+        finite = float_is_finite(floating)
+        selected_value = leaf.__terrine_selected & floating.notnull()
+        aggregates["float64_nonfinite_count"] = exact_sum(
+            (selected_value & ~finite).ifelse(one, zero)
+        )
+        value = (selected_value & finite).ifelse(floating, ibis.null(dt.float64))
+        # A policy whose float arithmetic raises outside the range withholds a
+        # group's values before the backend adds them when their magnitudes may
+        # leave half of it, and reports the withheld rows so later prefixes
+        # refuse instead of reading an incomplete state.
+        leaf, value, admitted = guard_accumulation(leaf, value, partition=["_unit", *keys])
+        aggregates["sum_value"] = cast(ir.FloatingColumn, value).sum()
+        if admitted is not None:
+            aggregates["sum_bound"] = current_dialect(value).float_magnitude(value).sum()
+            aggregates["sum_withheld"] = exact_sum((~admitted).ifelse(one, zero))
     else:
         source_value = leaf.__terrine_value
         if exact_floats:
-            quantized, nonfinite_value, unrepresentable = quantized_float(
-                cast(ir.FloatingValue, source_value)
-            )
+            floating = cast(ir.FloatingValue, source_value)
+            quantized, nonfinite_value, unrepresentable = quantized_float(floating)
             exact = decimal_coefficient(quantized, 9)
             selected_value = leaf.__terrine_selected & source_value.notnull()
+            # A nonzero value the quantization rounds to zero leaves the sum
+            # silently; its count lets the window say so.
             aggregates.update(
                 float64_nonfinite_count=exact_sum(
                     (selected_value & nonfinite_value).ifelse(one, zero)
                 ),
                 float64_unrepresentable_count=exact_sum(
                     (selected_value & unrepresentable).ifelse(one, zero)
+                ),
+                float64_below_resolution_count=exact_sum(
+                    (selected_value & below_resolution(floating, exact)).ifelse(one, zero)
                 ),
             )
         else:
@@ -243,7 +283,7 @@ def _sparse_group(
                 else 0
             )
         ),
-        numeric_policy=ibis.literal("exact"),
+        numeric_policy=ibis.literal("native" if native else "exact"),
         observed_null_count=exact_subtract(grouped.event_count, grouped.nonnull_count),
     )
 

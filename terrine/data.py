@@ -432,13 +432,18 @@ def _complete(value: tuple[date | str, date | str] | None) -> tuple[date, date] 
 
 @dataclass(frozen=True, slots=True)
 class EventMetric:
-    """One aggregation over an event table, optionally restricted by label filters."""
+    """One aggregation over an event table, optionally restricted by label filters.
+
+    ``exact=False`` allows native float arithmetic; counts, distinct counts and integer or
+    decimal values always aggregate exactly.
+    """
 
     aggregation: Literal[
         "count", "sum", "avg_event", "avg_calendar_day", "min", "max", "count_distinct"
     ]
     column: str | None
     filters: tuple[Filter, ...]
+    exact: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -742,6 +747,8 @@ class ColumnMeta:
     approximation: ApproximationMeta | None = None
     transformation: Mapping[str, Any] | None = None
     measure: Literal["time", "elapsed"] | None = None
+    # The arithmetic a metric column's measures declare; None for other columns.
+    arithmetic: Literal["native", "exact"] | None = None
 
     def __post_init__(self) -> None:
         if self.window is not None and not isinstance(self.window, Window):
@@ -758,6 +765,8 @@ class ColumnMeta:
                 _nonempty(value, name)
         if self.numeric_policy not in (None, "exact"):
             raise ValueError("unsupported numeric policy")
+        if self.arithmetic not in (None, "native", "exact"):
+            raise ValueError("unsupported arithmetic")
         if self.measure not in (None, "time", "elapsed"):
             raise ValueError("unsupported event measure")
         if self.transformation is not None:

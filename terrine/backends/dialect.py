@@ -10,6 +10,7 @@ native exact types.
 from __future__ import annotations
 
 import math
+import sys
 from collections.abc import Generator
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -57,6 +58,21 @@ _DIRECT_DIVISOR = 2**12
 # its integer rounding never exceeds the true quotient.
 _UNIT_ROUNDOFF = 2.0**-53
 _SEED_BIAS = 1 - 16 * _UNIT_ROUNDOFF
+# Binary64 magnitudes are bounded after scaling by 2**-64, so the bound of up to
+# 2**53 terms at the largest magnitude stays finite. A magnitude below 2**-900
+# counts as zero, so the scaling never underflows (the smallest scaled term is
+# the normal 2**-964) and the bound understates the magnitude sum of n terms by
+# less than n·2**-900.
+_FLOAT_SCALE = 2.0**-64
+_FLOAT_TINY = 2.0**-900
+# Admitted binary64 sums stay within half the range, so a difference of two fits.
+_FLOAT_HALF_RANGE = math.ldexp(sys.float_info.max, -1)
+_FLOAT_LIMIT = math.ldexp(_FLOAT_HALF_RANGE, -64)
+# A binary64 quotient is evaluated only where it cannot round to zero (below
+# 2**-1020, checked when the divisor's magnitude is at least one) or overflow
+# (above 2**1020, checked when it is below one); a product likewise against
+# 2**-1020 for a factor below one and half the range for a factor of at least one.
+_QUOTIENT_RANGE = 2.0**1020
 
 
 def _decimal_limit(dtype: dt.Decimal) -> ir.DecimalValue:
@@ -135,6 +151,11 @@ class Dialect:
     # Fixed-precision state carries an accumulated binary64 magnitude bound so
     # that an accumulation leaving the domain refuses; native exact types do not.
     bounds_accumulations: ClassVar[bool] = True
+    # Binary64 sums, quotients and products are withheld before leaving the
+    # range where float arithmetic raises on overflow or underflow instead of
+    # yielding an infinity or zero; an IEEE 754 engine publishes the non-finite
+    # result for the finite check to refuse.
+    bounds_float_arithmetic: ClassVar[bool] = True
 
     def exact_type(self) -> dt.DataType:
         """The exact coefficient domain shared by decimals and quantized floats."""
@@ -174,7 +195,7 @@ class Dialect:
         return cast(ir.FloatingValue, text.cast(dt.float64))
 
     def quantize_float(self, value: ir.FloatingValue) -> ir.DecimalValue:
-        """Round once at scale 9 without overflowing a float-scaled cast.
+        """Round an exact measure's float once at scale 9 without overflowing a float-scaled cast.
 
         Cast the integral part separately so a binary64 multiplication by
         10**9 cannot push an admitted boundary value out of the decimal type.
@@ -242,7 +263,7 @@ class Dialect:
         if admitted or not isinstance(dtype, dt.Decimal) or dtype.precision is None:
             return total.cast(dtype)
         bound = cast(ir.FloatingValue, self.magnitude(value).sum())
-        fits = self.admits_accumulation(bound, column.count(), dtype)
+        fits = self.admits_accumulation(bound, column.count(), self.magnitude_limit(dtype))
         return fits.ifelse(total, _typed_null(dtype)).cast(dtype)
 
     def magnitude(self, value: ir.Value) -> ir.FloatingColumn:
@@ -255,6 +276,20 @@ class Dialect:
         floating = cast(ir.FloatingColumn, self.binary64(value.cast("string")))
         return cast(ir.FloatingColumn, floating.abs().fill_null(ibis.literal(0.0)))
 
+    def float_magnitude(self, value: ir.Value) -> ir.FloatingColumn:
+        """A NULL-free scaled magnitude whose sum bounds any binary64 sum of ``value``.
+
+        ``m = |x|·2**-64`` is exact for ``|x| >= 2**-900``, a power-of-two
+        scaling with a normal result, and smaller magnitudes count as zero, so
+        on an engine that raises on underflow the product is never evaluated
+        where it would round to zero. The sum of ``n`` scaled magnitudes is
+        below ``n·2**-64·MAX`` and cannot overflow; against the true magnitude
+        sum it understates by less than ``n·2**-900``.
+        """
+        floating = cast(ir.FloatingColumn, value).abs()
+        scaled = (floating < _FLOAT_TINY).ifelse(ibis.literal(0.0), floating * _FLOAT_SCALE)
+        return cast(ir.FloatingColumn, scaled.fill_null(ibis.literal(0.0)))
+
     @staticmethod
     def magnitude_limit(dtype: dt.Decimal) -> float:
         """The largest binary64 not above the type's largest magnitude."""
@@ -263,13 +298,23 @@ class Dialect:
         rounded = float(exact)
         return rounded if Fraction(rounded) <= exact else math.nextafter(rounded, 0.0)
 
+    @staticmethod
+    def float_magnitude_limit() -> float:
+        """Half the binary64 range in ``float_magnitude`` scale, ``(MAX / 2)·2**-64``, exactly.
+
+        A sum whose scaled magnitude bound ``admits_accumulation`` admits at
+        this limit has every computed binary64 partial sum within ``MAX / 2``,
+        so the difference of two such sums stays within the range.
+        """
+        return _FLOAT_LIMIT
+
     def admits_accumulation(
-        self, magnitude_sum: ir.Value, count: ir.Value, dtype: dt.Decimal
+        self, magnitude_sum: ir.Value, count: ir.Value, limit: float
     ) -> ir.BooleanValue:
-        """Whether a sum whose backend magnitude bound is ``magnitude_sum`` fits ``dtype``.
+        """Whether a sum whose backend magnitude bound is ``magnitude_sum`` stays below ``limit``.
 
         Let ``S = Σ|x_i|`` over the ``n = count`` contributing values and ``L``
-        the type's largest magnitude; every partial sum lies within ``S``, so
+        the domain's largest magnitude; every partial sum lies within ``S``, so
         ``S < L`` admits the exact sum. The backend computes ``B`` from the
         magnitudes ``m_i = |x_i|(1 + δ_i)``, ``|δ_i| <= u = 2**-53``, through at
         most ``n - 1`` binary64 additions in any order, so each term carries a
@@ -280,21 +325,83 @@ class Dialect:
         ``1 - e = (1 - (2n - 1)u) / (1 - (n - 1)u) >= 1 - 2n·u``.
 
         The guard compares against ``t = fl(fl(1 - (n + 2)·2u) · L̂)`` with
-        ``L̂`` the largest binary64 not above ``L``: ``(n + 2)·2u`` is exact (an
-        integer below ``2**53`` scaled by a power of two), the two remaining
-        roundings contribute at most ``(1 + u)**2``, and
+        ``L̂ = limit`` the largest binary64 not above ``L``: ``(n + 2)·2u`` is
+        exact (an integer below ``2**53`` scaled by a power of two), the two
+        remaining roundings contribute at most ``(1 + u)**2``, and
         ``(1 - (2n + 4)u)(1 + u)**2 < 1 - (2n + 2)u < 1 - 2n·u``, so
         ``t <= L·(1 - e)`` and ``B < t`` implies ``S < L``. From
         ``n >= 2**52 - 2`` the threshold is not positive and nothing is
         admitted; the model needs ``(n - 1)u < 1`` in any case. A NULL bound
         (no contributing rows) is admitted.
+
+        For a binary64 sum (``float_magnitude`` bounds, ``float_magnitude_limit``)
+        the admitted values' own sum rounds too: a computed partial sum ``V``
+        of ``n`` terms satisfies ``|V| <= S·(1 + γ_{n-1}) = S / (1 - (n - 1)u)``.
+        The scaled magnitudes are exact, so ``|B - S| <= γ_{n-1}·S`` and
+        ``S <= B·(1 - (n - 1)u) / (1 - 2(n - 1)u)``; together
+        ``|V| <= B / (1 - (2n - 2)u) < L̂·(1 - (2n + 2)u) / (1 - (2n - 2)u) < L̂``
+        (in scale), so every partial sum of admitted terms, in any order, stays
+        within the limit. The magnitudes below ``2**-900`` the bound omits add
+        less than ``n·2**-899`` to ``|V|`` after their own rounding, far inside
+        the ``4u·L`` the strict inequality leaves.
         """
-        limit = cast(ir.FloatingScalar, ibis.literal(self.magnitude_limit(dtype), type=dt.float64))
+        limit_literal = cast(ir.FloatingScalar, ibis.literal(limit, type=dt.float64))
         additions = cast(ir.FloatingValue, count.cast(dt.float64)) + 2.0
         slack = cast(ir.FloatingValue, additions * (2 * _UNIT_ROUNDOFF))
-        threshold = cast(ir.FloatingValue, (1.0 - slack) * limit)
+        threshold = cast(ir.FloatingValue, (1.0 - slack) * limit_literal)
         bound = cast(ir.FloatingValue, magnitude_sum).fill_null(ibis.literal(0.0))
         return bound < threshold
+
+    def float_quotient(
+        self, numerator: ir.FloatingValue, denominator: ir.FloatingValue
+    ) -> ir.FloatingValue:
+        """``numerator / denominator`` in binary64; NULL where the quotient may leave the range.
+
+        The division is evaluated only when the quotient is known to lie
+        within ``2**±1020``, decided without any product leaving the range.
+        For ``|d| >= 1``, ``|n| >= |d|·2**-1020`` suffices: the product is
+        normal and at most ``MAX·2**-1020``, so it is within ``u`` of exact and
+        ``|n / d| >= 2**-1020·(1 - u)`` cannot round to zero, while
+        ``|n / d| <= |n|`` cannot overflow. For ``0 < |d| < 1``,
+        ``|n| <= |d|·2**1020`` suffices: the product lies in
+        ``[2**-54, 2**1020)``, so ``|n / d| <= 2**1020·(1 + u)`` cannot
+        overflow, while ``|n / d| > |n|`` cannot round to zero. A zero
+        numerator divides to zero; a zero or NULL divisor yields NULL.
+        """
+        n, d = numerator.abs(), denominator.abs()
+        one = ibis.literal(1.0, type=dt.float64)
+        zero = ibis.literal(0.0, type=dt.float64)
+        within = cast(
+            ir.BooleanValue,
+            (d >= one).ifelse(n >= d * (1.0 / _QUOTIENT_RANGE), n <= d * _QUOTIENT_RANGE),
+        )
+        safe = (d != zero) & ((numerator == zero) | within)
+        return cast(ir.FloatingValue, safe.ifelse(numerator / denominator, ibis.null(dt.float64)))
+
+    def float_product(self, left: ir.FloatingValue, right: ir.FloatingValue) -> ir.FloatingValue:
+        """``left * right`` in binary64; NULL where the product may leave the range.
+
+        The product is evaluated only when it is known to lie between
+        ``2**-1020`` and half the range, decided without any intermediate
+        leaving the range. For ``|right| >= 1`` the product cannot round to zero
+        (``|left * right| >= |left|``) and ``|left| <= (MAX / 2) / |right|``
+        suffices against overflow: the quotient is normal, within ``u`` of
+        exact, so ``|left * right| <= (MAX / 2)(1 + u) < MAX``. For
+        ``0 < |right| < 1`` the product cannot overflow (``|left * right| <
+        |left|``) and ``|left| >= 2**-1020 / |right|`` suffices against zero:
+        that quotient lies in ``(2**-1020, 2**54]``, so
+        ``|left * right| >= 2**-1020 (1 - u)``. A zero operand multiplies to
+        zero; a NULL operand yields NULL.
+        """
+        a, b = left.abs(), right.abs()
+        one = ibis.literal(1.0, type=dt.float64)
+        zero = ibis.literal(0.0, type=dt.float64)
+        within = cast(
+            ir.BooleanValue,
+            (b >= one).ifelse(a <= _FLOAT_HALF_RANGE / b, a >= (1.0 / _QUOTIENT_RANGE) / b),
+        )
+        safe = (left == zero) | (right == zero) | within
+        return cast(ir.FloatingValue, safe.ifelse(left * right, ibis.null(dt.float64)))
 
     def exact_subtract(self, left: ir.Value, right: ir.Value) -> ir.Value:
         """Subtract exactly; a difference leaving the fixed domain is NULL.
@@ -528,8 +635,24 @@ class Dialect:
     def lookup_keys(
         self, point: ir.TimestampValue, state: ir.TimestampValue
     ) -> tuple[ir.Value, ir.Value]:
-        """Keys comparing a point cutoff with a state instant: the order keys."""
-        return self.timestamp_order_key(point), self.timestamp_order_key(state)
+        """Keys comparing a point cutoff with a state instant: the order keys.
+
+        The portable lookup unions both keys into one timeline, which needs
+        one type: an instant whose scale is unstated (a fixed anchor's
+        literal) is the engine's default microsecond precision, so it takes
+        the other side's stated microsecond scale.
+        """
+        point_key, state_key = self.timestamp_order_key(point), self.timestamp_order_key(state)
+        point_type, state_type = point_key.type(), state_key.type()
+        if (
+            isinstance(point_type, dt.Timestamp)
+            and isinstance(state_type, dt.Timestamp)
+            and point_type.timezone == state_type.timezone
+            and {point_type.scale, state_type.scale} == {None, 6}
+        ):
+            target = dt.Timestamp(timezone=point_type.timezone, scale=6)
+            return point_key.cast(target), state_key.cast(target)
+        return point_key, state_key
 
     def reverse_time_key(self, value: ir.TimestampValue) -> ir.Value:
         # One exact scalar: finite instants' nanoseconds stay far below 10**38.

@@ -83,7 +83,7 @@ def _model(
         con.create_table("users", anchors.filter(anchors.user_id == unit).select(id="user_id"))
     catalog = Catalog.model_validate(
         {
-            "schema_version": 2,
+            "schema_version": 3,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": {

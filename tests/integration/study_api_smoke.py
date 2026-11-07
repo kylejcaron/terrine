@@ -33,7 +33,7 @@ from terrine.spec import Treatment  # noqa: E402
 
 def _definitions():
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "day_boundary": "UTC",
         "dialect": "duckdb",
         "sources": {

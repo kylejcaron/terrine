@@ -32,7 +32,7 @@ def _model():
         ) AS p(user_id, ts, region)
     """)
     catalog = {
-        "schema_version": 2,
+        "schema_version": 3,
         "day_boundary": "UTC",
         "dialect": "duckdb",
         "sources": {

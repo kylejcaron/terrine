@@ -14,6 +14,7 @@ import ibis.expr.types as ir
 
 from terrine.backends.registry import Engine, expression_dialect, resolve_engine
 from terrine.errors import RefusalSpec, freeze
+from terrine.semantic.io import invalid_definition
 from terrine.semantic.models import (
     BoundDimension,
     BoundFilter,
@@ -225,6 +226,15 @@ def normalize_source(
             _require_exact_type(
                 provider, execution_dialect, columns[event.column], event.column, engine
             )
+    native_values = tuple(
+        (("measures", measure_name, "exact"), "exact_value_type")
+        for measure_name, measure in catalog.measures.items()
+        if not measure.exact
+        and measure.event in events
+        and (events[measure.event] is None or not columns[events[measure.event]].is_floating())
+    )
+    if native_values:
+        raise invalid_definition(native_values)
     properties = {}
     for name in source.properties:
         prop = _reference(catalog.properties, name, "property")
@@ -358,6 +368,7 @@ def bind_metric(catalog: Catalog, metric_name: str) -> BoundMetric:
                 tuple(filters),
                 measure.window_days,
                 None,
+                measure.exact,
             )
         )
     transform = (freeze(metric.winsorization),) if metric.winsorization is not None else ()

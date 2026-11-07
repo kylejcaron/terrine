@@ -361,7 +361,7 @@ def test_filtered_source_decimal_keeps_wide_coefficient_domain(connection):
 # --- window results through the public API -----------------------------------------
 
 _CATALOG = {
-    "schema_version": 2,
+    "schema_version": 3,
     "day_boundary": "UTC",
     "sources": {
         "orders": {

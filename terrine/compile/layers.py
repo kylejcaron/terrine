@@ -13,6 +13,10 @@ from terrine.windows import Duration
 
 LayerResolution = Literal["day", "event", "point", "period"]
 LayerName = Literal["daily", "prefix", "anchor", "state_point", "state_period"]
+# The persisted prefix state's schema, part of every layer identity: a layer
+# written under another format is rebuilt, never read. 2 added the exact float
+# state's ``float64_below_resolution_count``.
+PREFIX_STATE_FORMAT = 2
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,7 +43,11 @@ class LayerPlan:
 
 
 def measure_identity(measure) -> str:
-    """Stable identity for one bound measure, excluding schema-derived value type."""
+    """Stable identity for one bound measure, excluding schema-derived value type.
+
+    Only a native measure adds its mode, so version 2 Catalog measures keep their identities
+    and native and exact measures on one column never share a persisted layer.
+    """
     fields = (
         measure.source_name,
         measure.event,
@@ -47,6 +55,8 @@ def measure_identity(measure) -> str:
         tuple((item.property_name, item.op, item.values) for item in measure.filters),
         measure.window_days,
     )
+    if not measure.exact:
+        fields = (*fields, ("exact", False))
     return hashlib.sha256(repr(fields).encode()).hexdigest()
 
 
@@ -233,7 +243,7 @@ def plan_layers(design: Design, model) -> LayerPlan:
     }
     definition_hash = hashlib.sha256(
         json.dumps(
-            [design.spec_hash, model.model_hash, source_schema],
+            [design.spec_hash, model.model_hash, source_schema, PREFIX_STATE_FORMAT],
             sort_keys=True,
             separators=(",", ":"),
         ).encode()

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import random
+import sys
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -28,7 +29,7 @@ from terrine.temporal.daily import _sparse_group, resolve_measure, sparse_daily
 from terrine.temporal.prefix import sparse_prefix
 from terrine.temporal.readiness import Readiness
 from terrine.windows import Window
-from tests._float_bound import ratio_bound, window_sum_bound
+from tests._float_bound import native_window_bound, ratio_bound, window_sum_bound
 
 _DEFAULT_WINDOW = Window(0, "1d")
 _REFUSAL = RefusalSpec("terrine.test.failed_rows", "{failed_count} rows failed")
@@ -55,6 +56,7 @@ def _state(
     resolution="event",
     boundary="UTC",
     active=None,
+    exact=True,
 ):
     n = len(values)
     fields = {"user_id": "string", "occurred_at": "timestamp('UTC')", "amount": dtype}
@@ -85,7 +87,9 @@ def _state(
     )
     events = normalize_events(raw, source, "user_id")
     measure = resolve_measure(
-        events, BoundMeasure("revenue", name, aggregation, filters, None, None), source=source
+        events,
+        BoundMeasure("revenue", name, aggregation, filters, None, None, exact=exact),
+        source=source,
     )
     grouped = (
         sparse_daily(events, measure, boundary, "user_id", source=source)
@@ -210,17 +214,120 @@ def test_tiny_value_does_not_change_other_units(con):
         assert abs(Fraction(row["requested"]) - _exact_sum(values)) <= window_sum_bound(values)
 
 
-def test_nonfinite_history_refuses(con):
+@pytest.mark.parametrize("exact", [True, False])
+def test_nonfinite_history_refuses(con, exact):
     pair = _state(
         con,
         [float("nan"), 2.0],
         times=[datetime(2025, 1, d, 12, tzinfo=UTC) for d in (1, 2)],
+        exact=exact,
     )
     with pytest.raises(TerrineError) as error:
         _rows(con, _result(_anchors(con), [pair]))
     assert error.value.code == "terrine.temporal.float64_precision"
     assert error.value.context["reason"] == "nonfinite_input"
     assert set(error.value.context) == {"reason", "failed_count", "source", "measure", "output"}
+
+
+@pytest.mark.parametrize("dialect", ["duckdb", "generic"])
+def test_native_prefix_overflow_refuses_instead_of_publishing(con, dialect):
+    """DuckDB publishes an infinite running sum for the finite check to refuse; a
+    policy whose float arithmetic raises withholds the state instead. Both refuse."""
+    from terrine.backends.dialect import dialect_scope
+
+    with dialect_scope(dialect):
+        pair = _state(
+            con,
+            [1.0, 1.7e308, 1.7e308, 1.0],
+            times=[datetime(2025, 1, d, 12, tzinfo=UTC) for d in (2, 3, 3, 4)],
+            exact=False,
+        )
+        # A window ending before the binary64 running sum overflows is unaffected.
+        assert _rows(con, _result(_anchors(con), [pair]))[0]["requested"] == 1.0
+        # Every later window is a difference of non-finite or withheld prefixes,
+        # even one that excludes the large values.
+        for time in ("2025-01-03 00:00:00+00", "2025-01-04 00:00:00+00"):
+            with pytest.raises(TerrineError) as error:
+                _rows(con, _result(_anchors(con, time=time), [pair]))
+            assert error.value.code == "terrine.temporal.float64_precision"
+            assert error.value.context["reason"] == "bound_overflow"
+
+
+def test_bounded_native_prefix_withholds_cumulative_magnitude(con):
+    """Two groups each admitted on their own are withheld once the magnitudes
+    accumulated through the prefix exceed half the range: the window ending between
+    them publishes, every later non-empty window refuses ``bound_overflow``."""
+    from terrine.backends.dialect import dialect_scope
+
+    with dialect_scope("generic"):
+        pair = _state(
+            con,
+            [6e307, 6e307, 1.0],
+            times=[datetime(2025, 1, d, 12, tzinfo=UTC) for d in (2, 3, 4)],
+            exact=False,
+        )
+        assert _rows(con, _result(_anchors(con), [pair]))[0]["requested"] == 6e307
+        for time in ("2025-01-03 00:00:00+00", "2025-01-04 00:00:00+00"):
+            with pytest.raises(TerrineError) as error:
+                _rows(con, _result(_anchors(con, time=time), [pair]))
+            assert error.value.code == "terrine.temporal.float64_precision"
+            assert error.value.context["reason"] == "bound_overflow"
+
+
+def test_bounded_native_sum_admits_up_to_half_the_range(con):
+    """A bounding policy publishes a native sum just below half the binary64 range,
+    refuses one at the derived threshold as ``bound_overflow``, and sums a
+    subnormal input, whose magnitude the bound omits, as zero."""
+    from terrine.backends.dialect import dialect_scope
+    from tests.backends.test_generic import (
+        _admission_threshold,
+        _double_at_least,
+        _double_at_most,
+    )
+
+    threshold = _admission_threshold(Fraction(sys.float_info.max) / 2, 1)
+    refused = _double_at_least(threshold)
+    admitted = _double_at_most(threshold * (1 - 17 * Fraction(1, 2**53)))
+    with dialect_scope("generic"):
+        for values in ([admitted], [-admitted], [5e-324, 1.0]):
+            pair = _state(con, values, exact=False)
+            value = _rows(con, _result(_anchors(con), [pair]))[0]["requested"]
+            assert abs(Fraction(value) - _exact_sum(values)) <= native_window_bound(values)
+        pair = _state(con, [refused], exact=False)
+        with pytest.raises(TerrineError) as error:
+            _rows(con, _result(_anchors(con), [pair]))
+    assert error.value.code == "terrine.temporal.float64_precision"
+    assert error.value.context["reason"] == "bound_overflow"
+
+
+@pytest.mark.parametrize(
+    "numerator,denominator,aggregation,kind,expected",
+    [
+        # A mean of a subnormal sum over two events would round to zero.
+        ([5e-324, 0.0], None, "avg_event", "mean", "bound_overflow"),
+        ([1e300], [1e-10], "sum", "ratio", "bound_overflow"),
+        ([0.0], [1e-300], "sum", "ratio", 0.0),
+        ([1e-300], [1e-10], "sum", "ratio", 1e-290),
+    ],
+)
+def test_bounded_native_quotient_refuses_outside_the_range(
+    con, numerator, denominator, aggregation, kind, expected
+):
+    from terrine.backends.dialect import dialect_scope
+
+    with dialect_scope("generic"):
+        pairs = [_state(con, numerator, aggregation=aggregation, name="numerator", exact=False)]
+        if denominator is not None:
+            pairs.append(_state(con, denominator, name="denominator", exact=False))
+        result = _result(_anchors(con), pairs, kind=kind)
+        if isinstance(expected, str):
+            with pytest.raises(TerrineError) as error:
+                _rows(con, result)
+            assert error.value.code == "terrine.temporal.float64_precision"
+            assert error.value.context["reason"] == expected
+        else:
+            value = _rows(con, result)[0]["requested"]
+            assert value == pytest.approx(expected, rel=2**-50)
 
 
 def _recording(con):
@@ -265,17 +372,24 @@ def test_row_check_columns_are_true_only_on_failing_rows(con):
 
 
 @pytest.mark.parametrize(
-    "aggregation,kind,expected,reasons",
+    "aggregation,kind,expected,reasons,exact",
     [
-        ("sum", "mean", [0, None], [None, "all_values_null"]),
-        ("count", "mean", [0, 1], [None, None]),
-        ("sum", "conversion", [False, True], [None, None]),
-        ("avg_event", "mean", [None, None], ["no_observations", "all_values_null"]),
-        ("avg_calendar_day", "mean", [0.0, None], [None, "all_values_null"]),
+        ("sum", "mean", [0, None], [None, "all_values_null"], True),
+        ("sum", "mean", [0, None], [None, "all_values_null"], False),
+        ("count", "mean", [0, 1], [None, None], True),
+        ("sum", "conversion", [False, True], [None, None], True),
+        ("avg_event", "mean", [None, None], ["no_observations", "all_values_null"], True),
+        ("avg_event", "mean", [None, None], ["no_observations", "all_values_null"], False),
+        ("avg_calendar_day", "mean", [0.0, None], [None, "all_values_null"], True),
+        ("avg_calendar_day", "mean", [0.0, None], [None, "all_values_null"], False),
     ],
 )
-def test_complete_empty_and_all_null_remain_distinct(con, aggregation, kind, expected, reasons):
-    pair = _state(con, [None], dtype="float64", aggregation=aggregation, units=["null"])
+def test_complete_empty_and_all_null_remain_distinct(
+    con, aggregation, kind, expected, reasons, exact
+):
+    pair = _state(
+        con, [None], dtype="float64", aggregation=aggregation, units=["null"], exact=exact
+    )
     result = _result(_anchors(con, units=("empty", "null")), [pair], kind=kind)
     rows = sorted(_rows(con, result), key=lambda r: r["unit"])
     meta = result.columns["requested"]
@@ -509,17 +623,22 @@ def test_day_prefixes_cannot_answer_an_intraday_request(con):
     assert error.value.code == "terrine.temporal.unaligned_day_resolution"
 
 
-def test_small_window_after_large_history_meets_quantized_bound(con):
-    window = [0.01, 0.01, 0.01]
+@pytest.mark.parametrize("exact", [True, False])
+def test_small_window_after_large_history_meets_its_mode_bound(con, exact):
+    history, window = [1e12] * 1000, [0.01, 0.01, 0.01]
     pair = _state(
         con,
-        [1e12] * 1000 + window,
+        history + window,
         times=[datetime(2025, 1, 1, 12, tzinfo=UTC)] * 1000
         + [datetime(2025, 1, 2, 12, tzinfo=UTC)] * 3,
+        exact=exact,
     )
     value = _rows(con, _result(_anchors(con), [pair]))[0]["requested"]
-    assert value != 0
-    assert abs(Fraction(value) - sum(map(Fraction, window))) <= window_sum_bound(window)
+    # Native arithmetic is bounded by the history total; exact by the window alone.
+    bound = window_sum_bound(window) if exact else native_window_bound(history + window)
+    assert abs(Fraction(value) - sum(map(Fraction, window))) <= bound
+    if exact:
+        assert value != 0
 
 
 @pytest.mark.parametrize(
@@ -538,6 +657,78 @@ def test_quantization_rounds_to_nearest_nano_unit(con, value, expected):
     actual = _rows(con, _result(_anchors(con), [pair]))[0]["requested"]
     assert actual == pytest.approx(expected, rel=1e-15, abs=1e-24)
     assert abs(Fraction(actual) - Fraction(value)) <= window_sum_bound([value])
+
+
+@pytest.mark.parametrize(
+    "values,aggregation,expected,reason",
+    [
+        # Every nonzero contribution quantizes to zero: the exact sum is zero and says so.
+        ([1e-10, 2e-10, 4e-10], "sum", Fraction(0), "below_resolution"),
+        # A mixed window publishes the retained sum and still notes the loss.
+        ([4e-10, 1.0], "sum", Fraction(1), "below_resolution"),
+        ([4e-10, 1.0], "avg_event", Fraction(1, 2), "below_resolution"),
+        # Exact zeros are not discarded contributions.
+        ([0.0, -0.0], "sum", Fraction(0), None),
+        # A rounded contribution is retained, not discarded.
+        ([6e-10, 1.0], "sum", Fraction(1) + Fraction(1, 10**9), None),
+    ],
+)
+def test_exact_sum_notes_discarded_sub_resolution_contributions(
+    con, values, aggregation, expected, reason
+):
+    pair = _state(con, values, aggregation=aggregation, exact=True)
+    result = _result(_anchors(con), [pair])
+    (row,) = _rows(con, result)
+    meta = result.columns["requested"]
+    divisor = len(values) if aggregation == "avg_event" else 1
+    assert abs(Fraction(row["requested"]) - expected) <= window_sum_bound(values) / divisor
+    assert row[meta.reason_column] == reason
+    # The note describes the published value; it does not make the window incomplete.
+    assert row[meta.complete_column] is True
+
+
+def test_sub_resolution_note_counts_only_the_window_itself(con):
+    """The discarded-term count is a prefix difference: history before the window
+    start does not note a later window, and the window holding the loss does."""
+    pair = _state(
+        con,
+        [4e-10, 1.0],
+        times=[datetime(2025, 1, 1, 12, tzinfo=UTC), datetime(2025, 1, 2, 12, tzinfo=UTC)],
+        exact=True,
+    )
+    later = _result(_anchors(con), [pair])
+    (row,) = _rows(con, later)
+    assert (row["requested"], row[later.columns["requested"].reason_column]) == (1.0, None)
+    earlier = _result(_anchors(con, time="2025-01-01 00:00:00+00"), [pair])
+    (row,) = _rows(con, earlier)
+    reason = row[earlier.columns["requested"].reason_column]
+    assert (row["requested"], reason) == (0.0, "below_resolution")
+
+
+def test_ratio_carries_an_operand_note_and_keeps_blocking_reasons_first(con):
+    numerator = _state(con, [4e-10, 1.0], name="numerator", exact=True)
+    denominator = _state(con, [2.0], name="denominator", exact=True)
+    result = _result(_anchors(con), [numerator, denominator], kind="ratio")
+    (row,) = _rows(con, result)
+    assert row["requested"] == 0.5
+    assert row[result.columns["requested"].reason_column] == "below_resolution"
+    # A quantized zero denominator is unavailable, whatever the numerator noted.
+    zero = _state(con, [4e-10, -4e-10], name="denominator", exact=True)
+    result = _result(_anchors(con), [numerator, zero], kind="ratio")
+    (row,) = _rows(con, result)
+    assert row["requested"] is None
+    assert row[result.columns["requested"].reason_column] == "zero_denominator"
+
+
+def test_native_sum_keeps_sub_resolution_contributions_without_a_note(con):
+    values = [1e-10, 2e-10, 4e-10]
+    pair = _state(con, values, exact=False)
+    result = _result(_anchors(con), [pair])
+    (row,) = _rows(con, result)
+    total = sum(map(Fraction, values), Fraction())
+    assert abs(Fraction(row["requested"]) - total) <= native_window_bound(values)
+    assert row["requested"] == pytest.approx(7e-10, rel=1e-15)
+    assert row[result.columns["requested"].reason_column] is None
 
 
 def test_ratio_with_zero_quantized_denominator_is_null(con):
@@ -565,8 +756,9 @@ def test_per_day_mean_bound_uses_actual_count(con):
     assert abs(Fraction(value) - sum(map(Fraction, values)) / 3) <= window_sum_bound(values) / 3
 
 
-def test_mean_of_float_measure_is_not_rescaled(con):
-    pair = _state(con, [1.0], aggregation="avg_event")
+@pytest.mark.parametrize("exact", [True, False])
+def test_mean_of_float_measure_is_not_rescaled(con, exact):
+    pair = _state(con, [1.0], aggregation="avg_event", exact=exact)
     assert _rows(con, _result(_anchors(con), [pair]))[0]["requested"] == pytest.approx(1.0)
 
 

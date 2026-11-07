@@ -2,6 +2,7 @@
 
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from fractions import Fraction
 
 import ibis
 import ibis.expr.datatypes as dt
@@ -31,6 +32,7 @@ from terrine.semantic.models import BoundDimension, BoundValidity, PropertyBindi
 from terrine.spec import EventSequence, TimeToEvent
 from terrine.temporal.attributes import attribute_asof, validate_history
 from terrine.windows import Window
+from tests._float_bound import native_window_bound, window_sum_bound
 
 _ENGINE_FIXTURES = {
     "duckdb": "duckdb_connection",
@@ -78,13 +80,19 @@ def engine(request, monkeypatch):
     return scratch if request.param == "duckdb" else scratch.con
 
 
-def _model(con, events):
-    users_name, events_name = (
-        normalize_identifiers(exp.to_identifier(name), dialect=con.name).name
-        for name in ("users", "events")
-    )
+def _name(con, name):
+    return normalize_identifiers(exp.to_identifier(name), dialect=con.name).name
+
+
+def _model(con, events, *, exact=True):
+    """A one-unit model whose float sums use the requested arithmetic.
+
+    ``events`` is an Arrow table or an Ibis expression over ``con`` (built
+    server side when the history is large).
+    """
+    columns = events.columns if isinstance(events, ibis.Table) else events.column_names
     con.create_table(
-        users_name,
+        _name(con, "users"),
         pa.table(
             {
                 "id": ["u"],
@@ -92,21 +100,22 @@ def _model(con, events):
             }
         ),
     )
-    con.create_table(events_name, events)
+    con.create_table(_name(con, "events"), events)
     return tr.Model.from_tables(
         con,
-        units={"user": tr.UnitSource(users_name, "id", observed_until="observed_until")},
+        units={"user": tr.UnitSource(_name(con, "users"), "id", observed_until="observed_until")},
         events={
             "events": tr.Events(
-                events_name,
+                _name(con, "events"),
                 time="ts",
                 key="user_id",
                 metrics={
                     "events": tr.count(),
+                    # The float known answers state each arithmetic mode's contract.
                     **{
-                        name: tr.sum(name)
+                        name: tr.sum(name, exact=exact)
                         for name in ("amount", "weight")
-                        if name in events.column_names
+                        if name in columns
                     },
                 },
                 complete=("2024-12-01", "2025-01-31"),
@@ -114,6 +123,9 @@ def _model(con, events):
         },
         event_ids={"events": "event_id"},
     )
+
+
+_MODES = pytest.mark.parametrize("exact", [False, True], ids=["native", "exact"])
 
 
 def _rows(model, design):
@@ -185,14 +197,21 @@ def test_extrema_ignore_null_arguments(engine):
     assert [(row["low"], row["high"]) for row in rows] == [(2, 5)] * 3 + [(None, None)]
 
 
-def test_window_sums_preserve_small_values_after_large_history(engine):
-    """Catch prefix cancellation and decimal sums rounded through binary64."""
+@_MODES
+def test_window_sums_preserve_small_values_after_large_history(engine, exact):
+    """Catch prefix cancellation and decimal sums rounded through binary64.
+
+    The exact path answers a small window after a large history within the
+    window's own bound; the native path answers within a bound proportional to
+    the history prefix, which is what its contract promises.
+    """
+    history, window = [1e17, -3e16], [0.1, 0.2, 0.0]
     events = _events(
         [datetime(2024, 12, day, tzinfo=UTC) for day in (20, 21)]
         + [_ORIGIN + timedelta(hours=hour) for hour in (12, 13, 14)],
         ["history-a", "history-b", "a", "b", "c"],
     )
-    events = events.append_column("weight", pa.array([1e17, -3e16, 0.1, 0.2, 0.0]))
+    events = events.append_column("weight", pa.array(history + window))
     events = events.append_column(
         "amount",
         pa.array(
@@ -203,7 +222,7 @@ def test_window_sums_preserve_small_values_after_large_history(engine):
             type=pa.decimal128(20, 2),
         ),
     )
-    model = _model(engine, events)
+    model = _model(engine, events, exact=exact)
     design = tr.Design(
         "user",
         tr.FixedDate("2025-01-02"),
@@ -214,35 +233,106 @@ def test_window_sums_preserve_small_values_after_large_history(engine):
     )
     (row,) = _rows(model, design)
     # Independent window oracles: 0.1 + 0.2 and exact decimal coefficient addition.
-    from fractions import Fraction
-
-    from tests._float_bound import window_sum_bound
-
-    assert abs(Fraction(row["weight"]) - sum(map(Fraction, [0.1, 0.2, 0.0]))) <= window_sum_bound(
-        [0.1, 0.2, 0.0]
-    )
+    bound = window_sum_bound(window) if exact else native_window_bound(history + window)
+    assert abs(Fraction(row["weight"]) - sum(map(Fraction, window))) <= bound
+    assert row["weight__reason"] is None
     assert row["amount"] == Decimal("0.03")
 
 
-def test_bounded_accumulation_refuses_exact_overflow(engine):
-    """Withhold scale-9 coefficients before a bounded accumulator can overflow."""
+@_MODES
+def test_bounded_accumulation_refuses_exact_overflow(engine, exact):
+    """Withhold scale-9 coefficients before a bounded accumulator can overflow; the
+    same magnitudes are far inside the native binary64 range and publish."""
     with dialect_scope(engine.name):
-        if not current_dialect().bounds_accumulations:
+        if exact and not current_dialect().bounds_accumulations:
             pytest.skip("The native coefficient domain admits this sum.")  # ty: ignore[too-many-positional-arguments]
+    values = [9e28, 9e28]
     events = _events(
         [_ORIGIN + timedelta(hours=hour) for hour in (11, 12)], ["first", "second"]
-    ).append_column("weight", pa.array([9e28, 9e28], pa.float64()))
-    model = _model(engine, events)
+    ).append_column("weight", pa.array(values, pa.float64()))
+    model = _model(engine, events, exact=exact)
     design = tr.Design(
         "user",
         tr.FixedDate("2025-01-02"),
         features={"weight": tr.agg("weight", window=("-1d", "0s"))},
     )
+    if not exact:
+        (row,) = _rows(model, design)
+        assert abs(Fraction(row["weight"]) - sum(map(Fraction, values))) <= native_window_bound(
+            values
+        )
+        return
     materialized = []
     with pytest.raises(TerrineError) as caught:
         materialized.append(design.build(model).materialize(budget=_BUDGET))
     assert caught.value.code == "terrine.temporal.exact_overflow"
     assert materialized == []
+
+
+@_MODES
+def test_small_window_after_a_million_events_meets_its_mode_bound(engine, exact):
+    """Three events after a million history events of 1e3, generated on the engine.
+
+    The native sum's error is bounded against the whole history prefix, the
+    exact sum's against the window alone; both windows (a day-aligned one and
+    an intraday one) are checked against the exact sum of the three inputs.
+    """
+    from terrine.backends.sequences import integer_sequence
+
+    window = [0.1, 0.2, 0.3]
+    count = 1_000_000
+    recent = _events([_ORIGIN + timedelta(hours=hour) for hour in (12, 13, 14)], ["a", "b", "c"])
+    recent = engine.create_table(
+        _name(engine, "recent_events"), recent.append_column("weight", pa.array(window))
+    )
+    sequence = integer_sequence(count, "ordinal", dialect=engine.name)
+    history_start = ibis.timestamp(datetime(2024, 12, 1, tzinfo=UTC))
+    history = sequence.select(
+        user_id=ibis.literal("u"),
+        ts=history_start + sequence.ordinal.as_interval("s"),
+        event_id=sequence.ordinal.cast("string").lpad(8, "h"),
+        weight=ibis.literal(1e3, type=dt.float64),
+    ).cast(recent.schema())
+    model = _model(engine, recent.union(history, distinct=False), exact=exact)
+    design = tr.Design(
+        "user",
+        tr.FixedDate("2025-01-02"),
+        features={
+            "day": tr.agg("weight", window=("-1d", "0s")),
+            "intraday": tr.agg("weight", window=("-36h", "0s")),
+        },
+    )
+    (row,) = _rows(model, design)
+    total = sum(map(Fraction, window), Fraction())
+    bound = window_sum_bound(window) if exact else native_window_bound([1e3] * count + window)
+    for name in ("day", "intraday"):
+        assert abs(Fraction(row[name]) - total) <= bound, name
+        assert (row[f"{name}__complete"], row[f"{name}__reason"]) == (True, None), name
+
+
+@_MODES
+def test_sub_resolution_values_sum_natively_and_the_exact_path_notes_their_loss(engine, exact):
+    """Values below half a nano-unit: the native sum keeps them within its bound and
+    has nothing to note; the exact path discards them and says so, without making
+    the window incomplete."""
+    values = [1e-10, 2e-10, 4e-10]
+    events = _events(
+        [_ORIGIN + timedelta(hours=hour) for hour in (12, 13, 14)], ["a", "b", "c"]
+    ).append_column("weight", pa.array(values))
+    model = _model(engine, events, exact=exact)
+    design = tr.Design(
+        "user",
+        tr.FixedDate("2025-01-02"),
+        features={"weight": tr.agg("weight", window=("-1d", "0s"))},
+    )
+    (row,) = _rows(model, design)
+    assert row["weight__complete"] is True
+    if exact:
+        assert (row["weight"], row["weight__reason"]) == (0.0, "below_resolution")
+        return
+    assert abs(Fraction(row["weight"]) - sum(map(Fraction, values))) <= native_window_bound(values)
+    assert row["weight"] == pytest.approx(7e-10, rel=1e-15)
+    assert row["weight__reason"] is None
 
 
 def test_utc_conversions_ignore_session_time_zone(engine):

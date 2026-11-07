@@ -331,7 +331,7 @@ def test_registered_view_refusal_names_fix():
 def _catalog(*, table: str = "events") -> Catalog:
     return Catalog.model_validate(
         {
-            "schema_version": 2,
+            "schema_version": 3,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": {

@@ -2,13 +2,17 @@
 
 import base64
 import json
+from datetime import datetime
 from pathlib import Path
 
+import ibis
 import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 
-from terrine.data import MaterializedFrame
+from terrine.data import BoundCoverage, MaterializedFrame, UnitSource
 from terrine.dataset.manifest import DatasetManifest
+from terrine.model import Model
 from terrine.runtime.snapshot import ReopenableSnapshot
 from terrine.semantic.io import catalog_payload, load_catalog_text
 from terrine.spec import DatasetDefinition, from_json, from_yaml
@@ -52,3 +56,32 @@ def test_generation_documents_decode_and_verify(generation):
         for column in manifest.columns
         if column.role in ("feature", "outcome")
     } == dict.fromkeys(roles.features, "feature") | dict.fromkeys(roles.outcomes, "outcome")
+
+
+@pytest.mark.parametrize("generation", GENERATIONS)
+def test_generation_catalog_binds_to_recorded_model_hash(generation):
+    """A Catalog document keeps the model hash it had when its generation was staged."""
+    directory = ARTIFACTS / generation
+    receipt = ReopenableSnapshot.from_json((directory / "receipt.json").read_text(encoding="utf-8"))
+    coverage = DatasetManifest.from_json(
+        (directory / "manifest.json").read_text(encoding="utf-8")
+    ).source_coverage
+    con = ibis.duckdb.connect()
+    try:
+        for path in sorted((directory / "data").glob("*.parquet")):
+            con.create_table(path.stem, pq.read_table(path))
+        model = Model.from_catalog(
+            directory / "catalog.yaml",
+            con=con,
+            units={
+                name: UnitSource(**unit) for name, unit in json.loads(receipt.units_json).items()
+            },
+            readiness={
+                name: BoundCoverage(datetime.fromisoformat(start), datetime.fromisoformat(end))
+                for name, (start, end) in coverage.items()
+            },
+            event_ids=json.loads(receipt.event_ids_json),
+        )
+    finally:
+        con.disconnect()
+    assert model.model_hash == receipt.model_hash
