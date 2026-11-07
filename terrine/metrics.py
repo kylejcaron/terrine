@@ -119,8 +119,8 @@ def sum(column: str, *, where: Where | None = None, exact: bool = False) -> Even
     Args:
         column: Event-table column name whose values are aggregated.
         where: Label-name mapping to scalar equality or membership values; None includes all events.
-        exact: Whether float values sum exactly at nano-unit resolution; False sums them in
-            native float64. Integer and decimal values always sum exactly.
+        exact: Whether float values must sum exactly at nano-unit resolution; False allows
+            native float64 summation. Integer and decimal values always sum exactly.
 
     Returns:
         An event-sum metric declaration; complete empty windows sum to zero.
@@ -145,8 +145,8 @@ def mean(
         per: "event" averages matching event values; "day" averages local calendar-day totals;
             default "event".
         where: Label-name mapping to scalar equality or membership values; None includes all events.
-        exact: Whether float values sum exactly at nano-unit resolution before dividing; False
-            sums them in native float64. Integer and decimal values always sum exactly.
+        exact: Whether float values must sum exactly at nano-unit resolution before dividing;
+            False allows native float64 summation. Integer and decimal values always sum exactly.
 
     Returns:
         An event- or day-mean metric declaration with completeness retained.
@@ -166,7 +166,7 @@ def min(column: str, *, where: Where | None = None, exact: bool = False) -> Even
     Args:
         column: Event-table column name whose values are aggregated.
         where: Label-name mapping to scalar equality or membership values; None includes all events.
-        exact: Whether float values use exact arithmetic; False declares native float64.
+        exact: Whether float values must use exact arithmetic; False allows native float64.
             Integer and decimal values are always exact.
 
     Returns:
@@ -184,7 +184,7 @@ def max(column: str, *, where: Where | None = None, exact: bool = False) -> Even
     Args:
         column: Event-table column name whose values are aggregated.
         where: Label-name mapping to scalar equality or membership values; None includes all events.
-        exact: Whether float values use exact arithmetic; False declares native float64.
+        exact: Whether float values must use exact arithmetic; False allows native float64.
             Integer and decimal values are always exact.
 
     Returns:

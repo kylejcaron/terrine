@@ -88,7 +88,7 @@ Source filters use the same operators and typed comparisons as metric filters,
 but their keys name physical columns; those columns need not be in `labels=`.
 They apply before metrics, event selectors, anchors, survival, sequences and
 event-backed `asof` lookups. `Events` detaches the mapping and freezes collection
-values, and source filters round-trip in the version-2 catalog. Changing a source
+values, and source filters round-trip in the version-3 catalog. Changing a source
 filter also changes its features' definition identities, so fitted transforms
 cannot be reused with a different event population.
 
@@ -106,7 +106,7 @@ days), `tr.min`, `tr.max`, `tr.count_distinct(column)` and
 `tr.ratio(numerator, denominator)` over two metrics of the same `Events`.
 Metric names are unique across the model; a metric may share its event's name.
 Consume them with ordinary `agg` expressions. `tr.sum`, `tr.mean`, `tr.min` and
-`tr.max` declare native float64 arithmetic for float columns unless given
+`tr.max` allow native float64 arithmetic for float columns unless given
 `exact=True`; counts, distinct counts and integer or decimal columns are always
 exact (see [Native Catalog declarations](#native-catalog-declarations)).
 
@@ -175,7 +175,7 @@ refuses with `terrine.model.invalid_binding` (`reason="name_collision"`,
 context `kind` of `metric`, `label` or `event`, `name`, and the sorted
 `owners`, such as `("events:orders.amount", "labels:orders")`).
 
-`model.to_catalog()` writes the equivalent schema-version-2 catalog as YAML.
+`model.to_catalog()` writes the equivalent schema-version-3 catalog as YAML.
 Pass that YAML directly to `Model.from_catalog(model.to_catalog(), con=con,
 units=model.units, readiness=model.readiness, event_ids=model.event_ids)` to
 bind the same model with an equal `model_hash`. A catalog contains only source,
@@ -293,7 +293,7 @@ count` describes the per-unit session count. It does not average events or
 change a requested feature window.
 
 A `sum`, `avg_event`, `avg_calendar_day`, `min` or `max` measure over float
-values declares native float64 arithmetic with `exact: false`; without the key
+values allows native float64 arithmetic with `exact: false`; without the key
 it is exact. Counts, distinct counts and integer or decimal event values always
 aggregate exactly, so `exact: false` on them refuses with
 `terrine.catalog.invalid_definition`. `Model.from_tables` writes `exact: false`

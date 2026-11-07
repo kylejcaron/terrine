@@ -427,8 +427,8 @@ def _complete(value: tuple[date | str, date | str] | None) -> tuple[date, date] 
 class EventMetric:
     """One aggregation over an event table, optionally restricted by label filters.
 
-    ``exact=False`` declares native float arithmetic; counts, distinct counts and integer
-    or decimal values always aggregate exactly.
+    ``exact=False`` allows native float arithmetic; counts, distinct counts and integer or
+    decimal values always aggregate exactly.
     """
 
     aggregation: Literal[

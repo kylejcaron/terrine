@@ -194,7 +194,7 @@ class Filter(_Record):
 
 
 class Measure(_Record):
-    """One aggregation of an event; ``exact: false`` declares native float arithmetic.
+    """One aggregation of an event; ``exact: false`` allows native float arithmetic.
 
     Counts and distinct counts are always exact, and binding refuses native arithmetic on
     integer or decimal event values, which always aggregate exactly.
