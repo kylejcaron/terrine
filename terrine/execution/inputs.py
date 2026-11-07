@@ -510,6 +510,74 @@ class ArrowReader(Protocol):
     def __exit__(self, *args: Any) -> Any: ...
 
 
+
+class _ClosingArrowReader:
+    """Couple a PyArrow reader to the generator that owns its source."""
+
+    def __init__(
+        self,
+        reader: pa.RecordBatchReader,
+        batches: Generator[pa.RecordBatch],
+    ) -> None:
+        self._reader: pa.RecordBatchReader | None = reader
+        self._batches: Generator[pa.RecordBatch] | None = batches
+        self._schema = reader.schema
+
+    @property
+    def schema(self) -> pa.Schema:
+        return self._schema
+
+    def replace_schema_metadata(
+        self, metadata: Mapping[bytes, bytes] | None
+    ) -> _ClosingArrowReader:
+        self._schema = self._schema.with_metadata(metadata)
+        return self
+
+    def __iter__(self) -> _ClosingArrowReader:
+        return self
+
+    def __next__(self) -> pa.RecordBatch:
+        reader = self._reader
+        if reader is None:
+            raise StopIteration
+        try:
+            return next(reader)
+        except StopIteration:
+            self.close()
+            raise
+        except BaseException:
+            self.close()
+            raise
+
+    def read_next_batch(self) -> pa.RecordBatch:
+        return next(self)
+
+    def read_all(self) -> pa.Table:
+        reader = self._reader
+        if reader is None:
+            return pa.Table.from_batches([], schema=self._schema)
+        try:
+            return reader.read_all()
+        finally:
+            self.close()
+
+    def close(self) -> None:
+        batches, self._batches = self._batches, None
+        reader, self._reader = self._reader, None
+        try:
+            if batches is not None:
+                batches.close()
+        finally:
+            if reader is not None:
+                reader.close()
+
+    def __enter__(self) -> _ClosingArrowReader:
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        self.close()
+
+
 class ExecutionSession(Protocol):
     """Backend-owned query admission, execution and transaction lifetime."""
 
@@ -544,19 +612,22 @@ class _DuckDBSession:
         table = self.raw.sql(sql).to_arrow_table()
         return query.__pyarrow_result__(table, data_mapper=DuckDBPyArrowData)
 
-    def batches(self, con: Any, query: Any, sql: str, *, chunk_size: int) -> pa.RecordBatchReader:
+    def batches(self, con: Any, query: Any, sql: str, *, chunk_size: int) -> ArrowReader:
         import pyarrow_hotfix  # noqa: F401
 
         try:
             con._run_pre_execute_hooks(query)
         finally:
             invalidate_metadata()
-        result = con.raw_sql(sql)
+        relation = self.raw.sql(sql)
 
         def batches():
-            yield from result.fetch_record_batch(rows_per_batch=chunk_size)
+            with contextlib.closing(relation.to_arrow_reader(batch_size=chunk_size)) as reader:
+                yield from reader
 
-        return pa.RecordBatchReader.from_batches(query.as_table().schema().to_pyarrow(), batches())
+        source = batches()
+        reader = pa.RecordBatchReader.from_batches(query.as_table().schema().to_pyarrow(), source)
+        return _ClosingArrowReader(reader, source)
 
     def close(self) -> None:
         try:
@@ -683,6 +754,7 @@ def _open_native_execution(
                 _execution_snapshot(catalog, units, binding=input_binding),
                 resolver,
                 _session=_DuckDBSession(raw),
+                _admit=_native.exact_arithmetic_admission(private),
                 _revalidate=validate,
                 owner_con=con,
             )
@@ -710,6 +782,7 @@ def _open_native_execution(
             _execution_snapshot(catalog, units),
             resolver,
             _session=_DuckDBSession(raw),
+            _admit=_native.exact_arithmetic_admission(private),
             owner_con=con,
         )
         yield context

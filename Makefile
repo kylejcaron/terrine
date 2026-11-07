@@ -51,7 +51,7 @@ test-snowflake:
 	$(PYTEST_TIME) uv run --extra duckdb --extra snowflake pytest integration -n $(WAREHOUSE_WORKERS) -m snowflake
 
 lint:
-	uv run ruff check terrine tests integration
+	uv run ruff check terrine tests integration benchmarks
 	uv run vulture terrine
 	# Isolated: pydoclint's docstring-parser-fork and dagster's docstring-parser
 	# install the same module and would overwrite each other.
@@ -59,11 +59,11 @@ lint:
 	uv run tach check
 
 typecheck:
-	uv run ty check terrine tests integration
+	uv run ty check terrine tests integration benchmarks
 
 fmt:
-	uv run ruff format terrine tests integration
-	uv run ruff check --fix terrine tests integration
+	uv run ruff format terrine tests integration benchmarks
+	uv run ruff check --fix terrine tests integration benchmarks
 
 check: lint typecheck test
 

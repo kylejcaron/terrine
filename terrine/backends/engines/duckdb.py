@@ -14,6 +14,12 @@ from terrine.backends.numeric import _scaled_text
 from terrine.backends.registry import supported_engine_route
 from terrine.backends.timestamps import _UNSUPPORTED, _epoch, native_day_start, native_local_day
 
+
+def _duckdb_at_least(major: int, minor: int) -> bool:
+    installed = tuple(int(part) for part in version("duckdb").split(".")[:2])
+    return installed >= (major, minor)
+
+
 _EXACT = dt.Unknown(raw_type=sge.DataType.build("BIGNUM", dialect="duckdb"))
 _HUGE = dt.Unknown(raw_type=sge.DataType.build("HUGEINT", dialect="duckdb"))
 # A HUGEINT column read back from a stored relation.
@@ -334,7 +340,7 @@ class DuckDBDialect(Dialect):
         return ibis.greatest(*values)
 
     def supports_exact_prefix(self, backend_name: str) -> bool:
-        return backend_name == self.name and version("duckdb") == "1.5.6"
+        return backend_name == self.name and _duckdb_at_least(1, 5)
 
 
 def identify(con: Any) -> None:

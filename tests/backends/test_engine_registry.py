@@ -129,7 +129,7 @@ def test_postgres_identity_preserves_invalid_driver_refusal():
 @pytest.mark.parametrize(
     ("backend", "build", "scope", "accepted"),
     [
-        # A registered policy admits only its own backend, DuckDB only on its build.
+        # A registered policy admits only its own backend; DuckDB requires its supported floor.
         ("duckdb", "0.0.0", "duckdb", False),
         ("postgres", "1.5.6", "duckdb", False),
         ("bigquery", "1.5.6", "postgres", False),
@@ -172,7 +172,7 @@ def test_exact_prefix_preserves_build_and_scope_admission_without_queries(
             _require_backend(table)
     error = caught.value
     assert error.code == "terrine.temporal.exact_unsupported"
-    assert dict(error.context) == {"backend": backend}
+    assert dict(error.context) == {"backend": backend, "minimum": "1.5"}
     with pytest.raises(TypeError):
         error.context["backend"] = "other"  # ty: ignore[invalid-assignment]
     for restored in (copy.deepcopy(error), pickle.loads(pickle.dumps(error))):

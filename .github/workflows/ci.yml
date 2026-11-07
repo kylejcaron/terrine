@@ -50,7 +50,7 @@ jobs:
           enable-cache: true
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.14"
       - run: uv sync --locked --group dev --group docs --all-extras
       - run: make lint
       - run: make typecheck
@@ -62,6 +62,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        python-version: ["3.12", "3.14"]
         group: [1, 2]
     steps:
       - uses: actions/checkout@v4
@@ -70,7 +71,7 @@ jobs:
           enable-cache: true
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "${{ matrix.python-version }}"
       - run: uv sync --locked --group dev --all-extras
       - run: >-
           /usr/bin/time -f "terrine-pytest-cpu %U %S" uv run pytest -q tests
@@ -92,6 +93,7 @@ jobs:
       matrix:
         # Groups are balanced from integration/.test_durations; tests without a
         # stored duration get the average and are still assigned to a group.
+        python-version: ["3.12", "3.14"]
         group: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v4
@@ -100,7 +102,7 @@ jobs:
           enable-cache: true
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "${{ matrix.python-version }}"
       - run: uv sync --locked --group dev --all-extras
       - run: >-
           /usr/bin/time -f "terrine-pytest-cpu %U %S" uv run pytest -q integration
