@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from scripts import api_check
 from scripts.api_check import main
 from tests.test_api_check import _RELEASE, _changed
 
@@ -133,3 +134,24 @@ def test_check_fails_when_release_history_is_unavailable(repo, history, monkeypa
 
     assert main([]) == 2
     assert "comparison history unavailable" in capsys.readouterr().out
+
+
+def test_regenerated_snapshot_does_not_mask_tagged_export_removal(repo, capsys):
+    _write_version(repo, "1.0.0")
+    _write_package(repo, _RELEASE)
+    _release(repo, "v1.0.0rc1")
+    _write_package(
+        repo,
+        _changed(
+            "spec/__init__.py",
+            '__all__ = ["agg", "approx_distinct"]',
+            '__all__ = ["approx_distinct"]',
+        ),
+    )
+    snapshot = repo / "tests" / "artifacts" / "surface" / "1.0.0.txt"
+    package = api_check._load(repo)
+    api_check.write_snapshot(snapshot, api_check.snapshot_lines(api_check._stable_objects(package)))
+
+    assert main([]) == 1
+    assert "stable API breakages against v1.0.0rc1" in capsys.readouterr().out
+    assert main(["--compare", str(snapshot)]) == 0
