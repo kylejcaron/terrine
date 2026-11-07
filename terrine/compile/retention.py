@@ -124,6 +124,6 @@ def compile_retention(
         observed_until_column="_retention_observed_until",
         complete_column="_retention_complete",
         reason_column="_retention_reason",
-        arithmetic="exact",
+        numeric_policy="exact",
     )
     return TemporalResult(table, {output: meta})
