@@ -77,7 +77,7 @@ def test_custom_saved_plan_executor_is_not_limited_by_builtin_shape_preflight(tm
     con.raw_sql("INSERT INTO events VALUES ('2025-01-01', 1, 3)")
     catalog = Catalog.model_validate(
         {
-            "schema_version": 2,
+            "schema_version": 3,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": {

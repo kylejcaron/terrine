@@ -425,13 +425,18 @@ def _complete(value: tuple[date | str, date | str] | None) -> tuple[date, date] 
 
 @dataclass(frozen=True, slots=True)
 class EventMetric:
-    """One aggregation over an event table, optionally restricted by label filters."""
+    """One aggregation over an event table, optionally restricted by label filters.
+
+    ``exact=False`` declares native float arithmetic; counts, distinct counts and integer
+    or decimal values always aggregate exactly.
+    """
 
     aggregation: Literal[
         "count", "sum", "avg_event", "avg_calendar_day", "min", "max", "count_distinct"
     ]
     column: str | None
     filters: tuple[Filter, ...]
+    exact: bool = False
 
 
 @dataclass(frozen=True, slots=True)

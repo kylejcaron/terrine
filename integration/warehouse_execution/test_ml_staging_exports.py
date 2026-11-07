@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pyarrow as pa
@@ -679,6 +680,80 @@ def test_refresh_nochange_reuses_only_same_definition_and_rejects_stale_base(
     with pytest.raises(TerrineError) as error:
         dataset.refresh(frame._model, changes=empty, budget=budget)
     assert error.value.code == "terrine.dataset.stale_generation"
+    con.disconnect()
+
+
+def test_refresh_after_mode_change_rebuilds_layers_and_matches_fresh_build(tmp_path):
+    """Switching a float sum from exact to native arithmetic rebuilds its persisted layers.
+
+    A refresh without source changes replans every task for the changed declaration, and the
+    refreshed rows equal a fresh build of the native declaration. This checks invalidation and
+    equality with a fresh build, not the native error bound.
+    """
+    import ibis
+
+    import terrine as tr
+    from terrine.compile.layers import plan_layers
+
+    con = ibis.duckdb.connect(str(tmp_path / "owner.duckdb"))
+    con.create_table("customers", pa.table({"customer_id": ["alice", "bob"]}))
+    ordered_at = [datetime(2025, 1, day, 9, tzinfo=UTC) for day in (3, 12, 20)]
+    con.create_table(
+        "orders",
+        pa.table(
+            {
+                "customer_id": ["alice", "alice", "bob"],
+                "ordered_at": pa.array(ordered_at, pa.timestamp("us", tz="UTC")),
+                "amount": [30.25, 45.5, 80.125],
+            }
+        ),
+    )
+
+    def bind(exact: bool):
+        return tr.Model.from_tables(
+            con,
+            units={"customer": tr.UnitSource("customers", "customer_id")},
+            events={
+                "orders": tr.Events(
+                    "orders",
+                    time="ordered_at",
+                    key="customer_id",
+                    metrics={"spend": tr.sum("amount", exact=exact)},
+                    complete=("2025-01-01", "2025-01-31"),
+                )
+            },
+        )
+
+    models = {"exact": bind(True), "native": bind(False)}
+    design = Design(
+        "customer", FixedDate("2025-01-31"), features={"spend": agg("spend", window=("-30d", "0s"))}
+    )
+    prefixes = {
+        mode: {key for key in plan_layers(design, model).keys if key.layer == "prefix"}
+        for mode, model in models.items()
+    }
+    assert prefixes["exact"] and prefixes["native"]
+    assert prefixes["exact"].isdisjoint(prefixes["native"])
+    assert {key.measure for key in prefixes["exact"]}.isdisjoint(
+        {key.measure for key in prefixes["native"]}
+    )
+    budget = Budget(strict_scan=False)
+    dataset = design.build(models["exact"]).stage("spend", budget=budget)
+    unchanged = ChangeSet((), "operator")
+    assert not dataset.plan_refresh(models["exact"], changes=unchanged, budget=budget).tasks
+    assert dataset.plan_refresh(models["native"], changes=unchanged, budget=budget).tasks
+    refreshed = dataset.refresh(models["native"], changes=unchanged, budget=budget)
+    assert refreshed.manifest.model_hash == models["native"].model_hash
+    assert refreshed.manifest.model_hash != dataset.manifest.model_hash
+    fresh = design.build(models["native"]).materialize(budget).table.replace_schema_metadata(None)
+    rows = pa.Table.from_batches(list(refreshed.to_arrow_batches()))
+    order = [("unit", "ascending"), ("anchor_id", "ascending")]
+    assert (
+        rows.select(fresh.column_names)
+        .replace_schema_metadata(None)
+        .sort_by(order)
+        .equals(fresh.sort_by(order))
+    )
     con.disconnect()
 
 

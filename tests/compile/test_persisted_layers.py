@@ -354,6 +354,43 @@ def test_same_fact_measures_keep_filter_and_aggregation_identity(column_model):
     )
 
 
+def test_measure_identity_includes_mode(column_model):
+    measure = column_model.metrics["total"].measures[0]
+    # An exact measure keeps the identity a version 2 Catalog recorded for it.
+    assert measure_identity(measure) == (
+        "e4f8f8777d24e608509f107794e2f2bbdc64914f9eb16c608df327d45c6fc2c9"
+    )
+    assert measure_identity(replace(measure, exact=False)) != measure_identity(measure)
+    column_model.con.raw_sql("ALTER TABLE events ALTER amount TYPE DOUBLE")
+    native = column_model.catalog.model_dump(mode="json")
+    native["measures"]["total"]["exact"] = False
+    models = {
+        exact: Model.from_catalog(
+            definition,
+            con=column_model.con,
+            readiness=column_model.readiness,
+            units=column_model.units,
+        )
+        for exact, definition in ((True, column_model.catalog), (False, native))
+    }
+    design = Design(
+        "user",
+        FixedDate("2025-01-02T12:00:00+00:00"),
+        features={"total": agg("total", window=("-1d", "0s"))},
+    )
+    keys = {
+        exact: next(key for key in plan_layers(design, model).keys if key.layer == "prefix")
+        for exact, model in models.items()
+    }
+    assert keys[True].measure != keys[False].measure
+    assert keys[True].definition_hash != keys[False].definition_hash
+    # A mode change invalidates persisted layers instead of reusing them.
+    with pytest.raises(ValueError):
+        compose_materialized_frame(
+            design, models[False], persisted=_persisted_prefixes(design, models[True])
+        )
+
+
 def test_physical_source_type_change_invalidates_persisted_layer_identity(column_model):
     design = Design(
         "user",

@@ -42,7 +42,7 @@ def main() -> None:
         pa.table({"user_id": ["a"], "ts": [datetime(2025, 1, 1, tzinfo=UTC)]}),
     )
     catalog = {
-            "schema_version": 2,
+            "schema_version": 3,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": {

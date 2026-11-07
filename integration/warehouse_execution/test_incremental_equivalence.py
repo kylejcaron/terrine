@@ -103,7 +103,7 @@ def _catalog():
 
     return Catalog.model_validate(
         {
-            "schema_version": 2,
+            "schema_version": 3,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": {
@@ -817,7 +817,7 @@ def test_ratio_sources_change_independently_match_clean_compilation(column_model
     """)
     catalog = Catalog.model_validate(
         {
-            "schema_version": 2,
+            "schema_version": 3,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": {

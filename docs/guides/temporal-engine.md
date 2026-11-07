@@ -3,9 +3,12 @@
 Terrine's native `Catalog` describes source relations and their meaning without
 requiring the optional increment adapter. A catalog can be constructed from a
 Python mapping with `Catalog.model_validate(...)` or loaded from safe YAML with
-`load_catalog(path)`. YAML text uses the same strict version-2 schema gate;
+`load_catalog(path)`. YAML text uses the same strict version-3 schema gate;
 unknown fields, duplicate YAML keys, unsafe YAML tags, and unsupported schema
-versions are rejected.
+versions are rejected. `load_catalog`, `load_catalog_text` and
+`Model.from_catalog` also accept version 2 documents, which load with every
+measure exact and keep their model hash; `Catalog.model_validate(...)` accepts
+version 3 only.
 
 Schema failures from `load_catalog` and `load_catalog_text` raise `TerrineError`
 with code `terrine.catalog.invalid_definition`. Inspect its immutable
@@ -102,7 +105,10 @@ Metrics are named by you and built with `tr.count()`, `tr.sum(column)`,
 days), `tr.min`, `tr.max`, `tr.count_distinct(column)` and
 `tr.ratio(numerator, denominator)` over two metrics of the same `Events`.
 Metric names are unique across the model; a metric may share its event's name.
-Consume them with ordinary `agg` expressions.
+Consume them with ordinary `agg` expressions. `tr.sum`, `tr.mean`, `tr.min` and
+`tr.max` declare native float64 arithmetic for float columns unless given
+`exact=True`; counts, distinct counts and integer or decimal columns are always
+exact (see [Native Catalog declarations](#native-catalog-declarations)).
 
 `labels=` names event columns that become event-time properties with the same
 name, usable in metric `where=`, in `event_time(..., label_property=, equals=)`, in
@@ -261,7 +267,7 @@ results, and materializes cumulative event-origin values.
 ## Native Catalog declarations
 
 ```yaml
-schema_version: 2
+schema_version: 3
 day_boundary: UTC
 dialect: duckdb
 sources:
@@ -285,6 +291,15 @@ metrics:
 Here `kind: mean` describes the downstream population summary; `aggregation:
 count` describes the per-unit session count. It does not average events or
 change a requested feature window.
+
+A `sum`, `avg_event`, `avg_calendar_day`, `min` or `max` measure over float
+values declares native float64 arithmetic with `exact: false`; without the key
+it is exact. Counts, distinct counts and integer or decimal event values always
+aggregate exactly, so `exact: false` on them refuses with
+`terrine.catalog.invalid_definition`. `Model.from_tables` writes `exact: false`
+for float metrics declared without `exact=True`. The mode is part of the
+measure's identity: switching it changes the model hash and rebuilds persisted
+layers rather than reusing them.
 
 `day_boundary` accepts `UTC` or a fixed signed `HH:MM` offset, with an optional
 `UTC` prefix (for example, `+05:30` or `UTC-05:00`). Coverage days are local to

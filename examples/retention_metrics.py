@@ -33,7 +33,7 @@ def main() -> None:
             ),
         )
         catalog = {
-            "schema_version": 2,
+            "schema_version": 3,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": {

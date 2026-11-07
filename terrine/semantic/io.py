@@ -1,6 +1,6 @@
 """Safe YAML loading for native semantic catalogs."""
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -54,36 +54,61 @@ _HINTS = {
     "literal_error": "Choose one of the supported values for this field.",
     "string_type": "Provide a string for this field.",
     "int_type": "Provide an integer for this field.",
+    "bool_type": "Provide true or false for this field.",
     "dict_type": "Provide a mapping for this field.",
     "tuple_type": "Provide a sequence for this field.",
+    "exact_aggregation": "Remove exact: counts and distinct counts are always exact.",
+    "exact_requires_version_3": "Declare schema_version: 3 to set exact on a measure.",
+    "exact_value_type": (
+        "Remove exact: false; integer and decimal event values always aggregate exactly."
+    ),
 }
 _DEFAULT_HINT = "Correct this field to match the declared Catalog schema."
-_SCHEMA_VERSION = 2
+_SCHEMA_VERSION = 3
+_SCHEMA_VERSIONS = (2, 3)
 _SCHEMA_VERSION_HINT = (
-    "Declare schema_version: 2 and use the current keys: sources carry time, units and "
-    "events; the root and each source list events; dimensions carry unit and key; "
-    "measures carry event; metrics carry unit."
+    "Declare schema_version: 3 (version 2 documents still load) and use the current keys: "
+    "sources carry time, units and events; the root and each source list events; "
+    "dimensions carry unit and key; measures carry event; metrics carry unit."
 )
 
 
+def _issue(location: tuple[str | int, ...], kind: str) -> dict[str, Any]:
+    return {"location": location, "kind": kind, "hint": _HINTS.get(kind, _DEFAULT_HINT)}
+
+
 def _catalog_issues(error: ValidationError) -> tuple[dict[str, Any], ...]:
-    issues = []
-    for detail in error.errors(include_url=False, include_context=False, include_input=False):
-        location = tuple(
-            component for component in detail["loc"] if isinstance(component, (str, int))
+    return tuple(
+        _issue(
+            tuple(component for component in detail["loc"] if isinstance(component, (str, int))),
+            detail["type"],
         )
-        kind = detail["type"]
-        issues.append({"location": location, "kind": kind, "hint": _HINTS.get(kind, _DEFAULT_HINT)})
-    return tuple(issues)
+        for detail in error.errors(include_url=False, include_context=False, include_input=False)
+    )
 
 
-def _invalid_definition(error: ValidationError):
-    issues = _catalog_issues(error)
+def _refusal(issues: tuple[dict[str, Any], ...]):
     diagnostics = "\n".join(
         f"- {'.'.join(map(str, issue['location'])) or 'Catalog'}: {issue['hint']}"
         for issue in issues
     )
     return _INVALID_DEFINITION.error(issues=issues, diagnostics=diagnostics)
+
+
+def invalid_definition(issues: Iterable[tuple[tuple[str | int, ...], str]]):
+    """Refuse a Catalog definition at each ``(location, kind)`` with that kind's hint."""
+    return _refusal(tuple(_issue(location, kind) for location, kind in issues))
+
+
+def _version_2_issues(value: Mapping[Any, Any]) -> tuple[tuple[tuple[str | int, ...], str], ...]:
+    measures = value.get("measures")
+    if not isinstance(measures, Mapping):
+        return ()
+    return tuple(
+        (("measures", name, "exact"), "exact_requires_version_3")
+        for name, measure in measures.items()
+        if isinstance(measure, Mapping) and "exact" in measure
+    )
 
 
 class _UniqueSafeLoader(yaml.SafeLoader):
@@ -110,21 +135,30 @@ _UniqueSafeLoader.add_constructor(BaseResolver.DEFAULT_MAPPING_TAG, _mapping)
 
 
 def validate_catalog(value: Any) -> Catalog:
-    """Validate an in-memory Catalog definition with loader refusal semantics."""
+    """Validate an in-memory Catalog definition with loader refusal semantics.
+
+    Version 2 definitions, which predate ``exact``, load as version 3 with every measure
+    exact.
+    """
     declared = value.get("schema_version", _SCHEMA_VERSION) if isinstance(value, Mapping) else None
-    if isinstance(value, Mapping) and declared != _SCHEMA_VERSION:
-        issue = {
-            "location": ("schema_version",),
-            "kind": "unsupported_schema_version",
-            "hint": _SCHEMA_VERSION_HINT,
-        }
-        raise _INVALID_DEFINITION.error(
-            issues=(issue,), diagnostics=f"- schema_version: {_SCHEMA_VERSION_HINT}"
+    if isinstance(value, Mapping) and declared not in _SCHEMA_VERSIONS:
+        raise _refusal(
+            (
+                {
+                    "location": ("schema_version",),
+                    "kind": "unsupported_schema_version",
+                    "hint": _SCHEMA_VERSION_HINT,
+                },
+            )
         )
+    if isinstance(value, Mapping) and declared == 2:
+        if issues := _version_2_issues(value):
+            raise invalid_definition(issues)
+        value = {**value, "schema_version": _SCHEMA_VERSION}
     try:
         return Catalog.model_validate(value)
     except ValidationError as exc:
-        raise _invalid_definition(exc) from None
+        raise _refusal(_catalog_issues(exc)) from None
 
 
 def load_catalog(path: str | Path) -> Catalog:
@@ -179,16 +213,27 @@ def _prune_defaults(value: Any, payload: Any) -> Any:
 def catalog_payload(catalog: Catalog) -> dict[str, Any]:
     """Return the canonical Catalog payload, omitting every field equal to its default.
 
-    Catalog documents, the model hash and model references all derive from this payload, so
-    a Catalog that gains a defaulted field keeps every identity derived from it. Records
-    serialize their sealed values through a field serializer, which pydantic's
-    ``exclude_defaults`` ignores, so defaults are pruned against the record fields here.
+    The model hash, model references, input bindings and retained snapshots all derive
+    from this payload, so a Catalog that gains a defaulted field keeps every identity
+    derived from it. Records serialize their sealed values through a field serializer,
+    which pydantic's ``exclude_defaults`` ignores, so defaults are pruned against the
+    record fields here.
+
+    Measures write ``exact: false`` when native and omit ``exact`` when exact, and the
+    payload declares the oldest schema version that expresses it: 2 when every measure is
+    exact, 3 when any is native. A version 2 document therefore keeps its payload and every
+    identity derived from it, while a native measure gets a distinct identity. Documents
+    are this payload declared at the current version.
     """
-    return _prune_defaults(catalog, catalog.model_dump(mode="json"))
+    payload = _prune_defaults(catalog, catalog.model_dump(mode="json"))
+    if all(measure.exact for measure in catalog.measures.values()):
+        payload["schema_version"] = 2
+    return payload
 
 
 def dump_catalog(catalog: Catalog) -> str:
-    """Serialize a native Catalog using ordinary safe YAML values."""
+    """Serialize a native Catalog as a current-version document of safe YAML values."""
     if not isinstance(catalog, Catalog):
         raise _INVALID_INPUT.error(reason="wrong_type", field="catalog")
-    return yaml.safe_dump(catalog_payload(catalog), sort_keys=False)
+    payload = catalog_payload(catalog) | {"schema_version": _SCHEMA_VERSION}
+    return yaml.safe_dump(payload, sort_keys=False)

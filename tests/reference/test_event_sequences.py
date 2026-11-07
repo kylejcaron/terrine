@@ -31,7 +31,7 @@ def test_overlapping_event_anchors_match_independent_pandas_oracle():
         con.create_table("events", events)
         catalog = Catalog.model_validate(
             {
-                "schema_version": 2,
+                "schema_version": 3,
                 "day_boundary": "UTC",
                 "dialect": "duckdb",
                 "sources": {

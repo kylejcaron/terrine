@@ -13,6 +13,7 @@ from pydantic import (
     ConfigDict,
     Field,
     SerializerFunctionWrapHandler,
+    StrictBool,
     StrictInt,
     StrictStr,
     field_serializer,
@@ -193,12 +194,27 @@ class Filter(_Record):
 
 
 class Measure(_Record):
+    """One aggregation of an event; ``exact: false`` declares native float arithmetic.
+
+    Counts and distinct counts are always exact, and binding refuses native arithmetic on
+    integer or decimal event values, which always aggregate exactly.
+    """
+
     event: StrictStr
     aggregation: Literal[
         "sum", "count", "avg_event", "avg_calendar_day", "min", "max", "count_distinct"
     ]
     filters: tuple[Filter, ...] = ()
     window_days: StrictInt | None = None
+    exact: StrictBool = True
+
+    @model_validator(mode="after")
+    def validate_arithmetic(self):
+        if not self.exact and self.aggregation in {"count", "count_distinct"}:
+            raise PydanticCustomError(
+                "exact_aggregation", "counts and distinct counts are always exact"
+            )
+        return self
 
 
 class Metric(_Record):
@@ -230,7 +246,7 @@ class Metric(_Record):
 
 
 class Catalog(_Record):
-    schema_version: Literal[2]
+    schema_version: Literal[3]
     day_boundary: StrictStr
     dialect: StrictStr
     sources: Mapping[StrictStr, Source]
@@ -317,6 +333,7 @@ class BoundMeasure:
     filters: tuple[BoundFilter, ...]
     window_days: int | None
     value_type: str | None
+    exact: bool = True
 
 
 @dataclass(frozen=True, slots=True)

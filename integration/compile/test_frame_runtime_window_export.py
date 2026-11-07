@@ -55,7 +55,7 @@ def test_many_window_columns_compile_and_export_together(native_inputs_fixture):
 # --- the first refusal follows the check schedule ---------------------------------
 
 _ORDERS_CATALOG = {
-    "schema_version": 2,
+    "schema_version": 3,
     "day_boundary": "UTC",
     "dialect": "duckdb",
     "sources": {

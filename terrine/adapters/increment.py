@@ -362,7 +362,7 @@ def to_catalog(path_or_definitions: Any, *, dialect: str) -> Catalog:
             admit_read_query(dimension.sql, catalog_dialect, dialect)
 
     return Catalog(
-        schema_version=2,
+        schema_version=3,
         day_boundary=definitions.day_boundary,
         dialect=catalog_dialect,
         sources=sources,

@@ -28,7 +28,7 @@ def main() -> None:
     )
     con.create_table("users", pa.table({"id": ["u-1", "u-2", "u-3"]}))
     catalog = {
-            "schema_version": 2,
+            "schema_version": 3,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": {

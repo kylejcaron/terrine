@@ -27,7 +27,7 @@ from terrine.spec import Design, FixedDate, agg, asof
 
 def _catalog() -> dict:
     return {
-            "schema_version": 2,
+            "schema_version": 3,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": {

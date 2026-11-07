@@ -22,7 +22,7 @@ import ibis
 
 import terrine as tr
 
-CATALOG = """schema_version: 2
+CATALOG = """schema_version: 3
 day_boundary: UTC
 dialect: postgres
 sources:

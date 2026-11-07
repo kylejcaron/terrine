@@ -39,7 +39,11 @@ class LayerPlan:
 
 
 def measure_identity(measure) -> str:
-    """Stable identity for one bound measure, excluding schema-derived value type."""
+    """Stable identity for one bound measure, excluding schema-derived value type.
+
+    Only a native measure adds its mode, so version 2 Catalog measures keep their identities
+    and native and exact measures on one column never share a persisted layer.
+    """
     fields = (
         measure.source_name,
         measure.event,
@@ -47,6 +51,8 @@ def measure_identity(measure) -> str:
         tuple((item.property_name, item.op, item.values) for item in measure.filters),
         measure.window_days,
     )
+    if not measure.exact:
+        fields = (*fields, ("exact", False))
     return hashlib.sha256(repr(fields).encode()).hexdigest()
 
 

@@ -237,7 +237,7 @@ def test_identical_opaque_roots_share_one_publication_capture(tmp_path):
 def _catalog(*, table: str = "events") -> Catalog:
     return Catalog.model_validate(
         {
-            "schema_version": 2,
+            "schema_version": 3,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": {

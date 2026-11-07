@@ -33,7 +33,7 @@ def _trajectory_model(*, decimal_type="DECIMAL(18, 2)", unit=None):
     con.raw_sql("UPDATE events SET float_amount = amount::DOUBLE / 100")
     catalog = Catalog.model_validate(
         {
-            "schema_version": 2,
+            "schema_version": 3,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": {
