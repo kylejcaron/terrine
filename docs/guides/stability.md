@@ -71,12 +71,13 @@ least one minor release in which using it emits `DeprecationWarning`.
 
 ## Signature check
 
-Before `1.0.0rc1`, the checker selects the newest final `v0.*` tag; development,
-pre-release and post-release tags are not baselines. From `1.0.0rc1`, it selects
-the newest `v1.*` tag, including release candidates. Compatibility is enforced
-within the same 0.x minor or 1.x major line. Across 0.x minor releases, it
-reports the comparison but exits successfully because minor releases may break
-the API. `--against` selects a specific tag:
+Before `1.0.0rc1`, the newest final `v0.*` tag is the cross-minor informational
+baseline; development, pre-release and post-release tags are excluded. When a
+final tag exists in the current 0.x minor, that tag is the enforced baseline,
+and the newest cross-minor tag is also reported informationally. Without a
+same-minor tag, cross-minor breakages are reported but permitted. From
+`1.0.0rc1`, the newest `v1.*` tag, including release candidates, is enforced.
+Pass `--against` to compare with a specific tag:
 ```bash
 uv run python scripts/api_check.py
 uv run python scripts/api_check.py --against v1.2.0

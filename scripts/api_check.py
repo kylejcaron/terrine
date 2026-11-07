@@ -309,12 +309,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("no release tag on the current release line: the stable API has no baseline yet")
         return 0
     informational_breakages = None
+    failed_tag = tag
     with TemporaryDirectory(prefix="terrine-api-") as directory:
         try:
             release = _load_release(root, tag, Path(directory))
             stable_surface(release)
             breakages = stable_breakages(release, current)
             if informational_tag is not None:
+                failed_tag = informational_tag
                 with TemporaryDirectory(prefix="terrine-api-info-") as info_directory:
                     info_release = _load_release(root, informational_tag, Path(info_directory))
                     stable_surface(info_release)
@@ -326,7 +328,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             tarfile.TarError,
             LookupError,
         ) as error:
-            failed_tag = informational_tag if informational_tag is not None else tag
             print(f"comparison history unavailable: cannot load {failed_tag}: {_reason(error)}")
             return 2
     baseline_major, baseline_minor = _release_minor(tag.removeprefix("v"))
