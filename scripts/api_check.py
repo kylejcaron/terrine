@@ -245,6 +245,17 @@ def _release_minor(version: str) -> tuple[int, int]:
     return int(match.group(1)), int(match.group(2))
 
 
+def _newest_minor_release_tag(root: Path, version: str) -> str | None:
+    major, minor = _release_minor(version)
+    ordering = [f"versionsort.suffix={suffix}" for suffix in _PRERELEASE_SUFFIXES]
+    options = [part for setting in ordering for part in ("-c", setting)]
+    tags = _git(
+        root, *options, "tag", "--list", f"v{major}.{minor}.*", "--sort=-v:refname"
+    ).split()
+    final_tags = [tag for tag in tags if _is_final_release_tag(tag.decode())]
+    return final_tags[0].decode() if final_tags else None
+
+
 def _load(search_path: Path) -> griffe.Module:
     package = griffe.load(
         _PACKAGE, search_paths=[search_path], try_relative_path=False, allow_inspection=False
@@ -278,6 +289,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         current_version = tomllib.loads((root / "pyproject.toml").read_text())["project"]["version"]
         current_major, current_minor = _release_minor(current_version)
         tag = args.against or release_tag(root, current_version)
+        informational_tag = None
+        if current_major == 0 and args.against is None:
+            minor_tag = _newest_minor_release_tag(root, current_version)
+            if minor_tag is not None and minor_tag != tag:
+                informational_tag = tag
+            if minor_tag is not None:
+                tag = minor_tag
     except (HistoryUnavailable, subprocess.CalledProcessError, OSError, ValueError) as error:
         print(f"comparison history unavailable: {_reason(error)}")
         return 2
@@ -290,10 +308,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     if tag is None:
         print("no release tag on the current release line: the stable API has no baseline yet")
         return 0
+    informational_breakages = None
     with TemporaryDirectory(prefix="terrine-api-") as directory:
         try:
             release = _load_release(root, tag, Path(directory))
             stable_surface(release)
+            breakages = stable_breakages(release, current)
+            if informational_tag is not None:
+                with TemporaryDirectory(prefix="terrine-api-info-") as info_directory:
+                    info_release = _load_release(root, informational_tag, Path(info_directory))
+                    stable_surface(info_release)
+                    informational_breakages = stable_breakages(info_release, current)
         except (
             subprocess.CalledProcessError,
             OSError,
@@ -301,14 +326,21 @@ def main(argv: Sequence[str] | None = None) -> int:
             tarfile.TarError,
             LookupError,
         ) as error:
-            print(f"comparison history unavailable: cannot load {tag}: {_reason(error)}")
+            failed_tag = informational_tag if informational_tag is not None else tag
+            print(f"comparison history unavailable: cannot load {failed_tag}: {_reason(error)}")
             return 2
-        breakages = stable_breakages(release, current)
     baseline_major, baseline_minor = _release_minor(tag.removeprefix("v"))
     same_compatibility_line = (
         baseline_major == current_major
         and (current_major != 0 or baseline_minor == current_minor)
     )
+    if informational_tag is not None:
+        print(f"informational comparison against {informational_tag}:")
+        if informational_breakages:
+            for line in informational_breakages:
+                print(f"  {line}")
+        else:
+            print(f"stable API signatures are compatible with {informational_tag}")
     if breakages:
         print(f"stable API breakages against {tag}:")
         for line in breakages:
