@@ -49,17 +49,23 @@ class RangeJoin:
     matched: ibis.Table
 
 
+def _indicator(predicate: ir.BooleanValue) -> ir.IntegerValue:
+    """Represent a predicate as an integer without casting booleans across dialects."""
+    return cast(
+        ir.IntegerValue,
+        predicate.ifelse(ibis.literal(1, type=dt.int64), ibis.literal(0, type=dt.int64)),
+    )
+
+
 def _bucket(
     timestamp: ir.TimestampValue, width: int, *, offset_seconds: int = 0
 ) -> ir.NumericValue:
     _rank, key_seconds, key_nanos = timestamp_parts(timestamp)
     zero = ibis.literal(0)
-    seconds = cast(
-        ir.IntegerValue, key_seconds - cast(ir.IntegerValue, (key_nanos < zero).cast(dt.int64))
-    )
+    seconds = cast(ir.IntegerValue, key_seconds - _indicator(key_nanos < zero))
     quotient = truncating_quotient(seconds, width, like=timestamp)
     remainder = seconds % width
-    negative = cast(ir.IntegerValue, (remainder < zero).cast(dt.int64))
+    negative = _indicator(remainder < zero)
     wide = dt.Decimal(38, 0)
     base = cast(ir.DecimalValue, (quotient - negative).cast(wide))
     if offset_seconds == 0:
@@ -69,9 +75,7 @@ def _bucket(
     shifted = base + cast(ir.DecimalValue, ibis.literal(shift, type=wide))
     if residue:
         normalized = cast(ir.IntegerValue, remainder + negative * width)
-        shifted += cast(
-            ir.IntegerValue, (normalized >= ibis.literal(width - residue)).cast(dt.int64)
-        )
+        shifted += _indicator(normalized >= ibis.literal(width - residue))
     return shifted
 
 
