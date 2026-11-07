@@ -104,16 +104,6 @@
       "name": "spend_next_14d__reason",
       "type": "string",
       "role": "output"
-    },
-    {
-      "name": "__terrine_selector_start_0",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "output"
-    },
-    {
-      "name": "__terrine_selector_end_0",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "output"
     }
   ],
   "design.yaml": [
@@ -277,16 +267,6 @@
     {
       "name": "__terrine_split_reason",
       "type": "string",
-      "role": "output"
-    },
-    {
-      "name": "__terrine_selector_start_0",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "output"
-    },
-    {
-      "name": "__terrine_selector_end_0",
-      "type": "timestamp[us, tz=UTC]",
       "role": "output"
     }
   ]

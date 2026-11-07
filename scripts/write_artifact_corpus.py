@@ -23,6 +23,7 @@ import re
 import shutil
 import tempfile
 import uuid
+from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import fields, replace
 from datetime import UTC, datetime
@@ -240,6 +241,7 @@ def output_schema(frame: Any) -> list[dict[str, str]]:
 
 def materialized_schema(materialized: Any) -> list[dict[str, str]]:
     """Return output columns except support columns used only by the compiler."""
+    bookkeeping = set(materialized._bookkeeping_columns())
     return [
         {
             "name": field.name,
@@ -247,10 +249,11 @@ def materialized_schema(materialized: Any) -> list[dict[str, str]]:
             "role": role,
         }
         for field in materialized.table.schema
-        if (
-            role := _role(field.name, materialized.roles, materialized.columns)
-        ) != "support"
-        or not _is_internal_support(field.name)
+        if field.name not in bookkeeping
+        and (
+            (role := _role(field.name, materialized.roles, materialized.columns)) != "support"
+            or not _is_internal_support(field.name)
+        )
     ]
 
 
@@ -262,6 +265,9 @@ def _is_internal_support(name: str) -> bool:
             "__terrine_window_*",
             "__w*_predicate_*",
             "__terrine_value_*_observed_*",
+            "__terrine_selector_start_*",
+            "__terrine_selector_end_*",
+            "__terrine_panel_start",
             "anchor_provenance",
             "_observed_*",
         )

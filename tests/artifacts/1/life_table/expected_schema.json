@@ -139,16 +139,6 @@
       "name": "censor_rate__reason",
       "type": "list<item: string>",
       "role": "output"
-    },
-    {
-      "name": "__terrine_has_orders_start_bound",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "output"
-    },
-    {
-      "name": "__terrine_has_orders_end_bound",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "output"
     }
   ],
   "design.yaml": [
@@ -291,16 +281,6 @@
       "name": "censor_rate__reason",
       "type": "list<item: string>",
       "role": "output"
-    },
-    {
-      "name": "__terrine_has_orders_start_bound",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "output"
-    },
-    {
-      "name": "__terrine_has_orders_end_bound",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "output"
     }
   ],
   "definition.json": [
@@ -442,16 +422,6 @@
     {
       "name": "censor_rate__reason",
       "type": "list<item: string>",
-      "role": "output"
-    },
-    {
-      "name": "__terrine_has_orders_start_bound",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "output"
-    },
-    {
-      "name": "__terrine_has_orders_end_bound",
-      "type": "timestamp[us, tz=UTC]",
       "role": "output"
     }
   ]

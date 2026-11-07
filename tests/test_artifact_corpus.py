@@ -11,7 +11,7 @@ import pyarrow.parquet as pq
 import pytest
 
 from scripts.write_artifact_corpus import _is_internal_support
-from terrine.data import BoundCoverage, UnitSource
+from terrine.data import BoundCoverage, MaterializedFrame, UnitSource
 from terrine.dataset.manifest import DatasetManifest
 from terrine.model import Model
 from terrine.runtime.snapshot import ReopenableSnapshot
@@ -83,6 +83,12 @@ def test_generation_documents_decode_and_verify(generation):
         for column in manifest.columns
         if column.role != "support" or not _is_internal_support(column.name)
     ]
+    roles = MaterializedFrame.from_arrow(schema.empty_table()).roles
+    assert {
+        column.name: column.role
+        for column in manifest.columns
+        if column.role in ("feature", "outcome")
+    } == dict.fromkeys(roles.features, "feature") | dict.fromkeys(roles.outcomes, "outcome")
     if generation == "1":
         expected_names = {
             column["name"]

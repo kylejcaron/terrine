@@ -69,16 +69,6 @@
       "name": "cumulative_value__reason",
       "type": "string",
       "role": "output"
-    },
-    {
-      "name": "period_value_observed_from",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "output"
-    },
-    {
-      "name": "period_value_observed_until",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "output"
     }
   ],
   "design.yaml": [
@@ -151,16 +141,6 @@
       "name": "cumulative_value__reason",
       "type": "string",
       "role": "output"
-    },
-    {
-      "name": "period_value_observed_from",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "output"
-    },
-    {
-      "name": "period_value_observed_until",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "output"
     }
   ],
   "definition.json": [
@@ -232,16 +212,6 @@
     {
       "name": "cumulative_value__reason",
       "type": "string",
-      "role": "output"
-    },
-    {
-      "name": "period_value_observed_from",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "output"
-    },
-    {
-      "name": "period_value_observed_until",
-      "type": "timestamp[us, tz=UTC]",
       "role": "output"
     }
   ]

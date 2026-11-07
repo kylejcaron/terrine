@@ -89,31 +89,6 @@
       "name": "orders_30d__reason",
       "type": "string",
       "role": "output"
-    },
-    {
-      "name": "from_state_observed_from",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "output"
-    },
-    {
-      "name": "from_state_observed_until",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "output"
-    },
-    {
-      "name": "to_state_observed_from",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "output"
-    },
-    {
-      "name": "to_state_observed_until",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "output"
-    },
-    {
-      "name": "__terrine_panel_start",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "output"
     }
   ],
   "design.yaml": [
@@ -206,31 +181,6 @@
       "name": "orders_30d__reason",
       "type": "string",
       "role": "output"
-    },
-    {
-      "name": "from_state_observed_from",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "output"
-    },
-    {
-      "name": "from_state_observed_until",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "output"
-    },
-    {
-      "name": "to_state_observed_from",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "output"
-    },
-    {
-      "name": "to_state_observed_until",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "output"
-    },
-    {
-      "name": "__terrine_panel_start",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "output"
     }
   ],
   "definition.json": [
@@ -322,31 +272,6 @@
     {
       "name": "orders_30d__reason",
       "type": "string",
-      "role": "output"
-    },
-    {
-      "name": "from_state_observed_from",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "output"
-    },
-    {
-      "name": "from_state_observed_until",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "output"
-    },
-    {
-      "name": "to_state_observed_from",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "output"
-    },
-    {
-      "name": "to_state_observed_until",
-      "type": "timestamp[us, tz=UTC]",
-      "role": "output"
-    },
-    {
-      "name": "__terrine_panel_start",
-      "type": "timestamp[us, tz=UTC]",
       "role": "output"
     }
   ]
