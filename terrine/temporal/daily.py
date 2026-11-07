@@ -208,12 +208,19 @@ def _sparse_group(
         floating = leaf.__terrine_value.cast(dt.float64)
         finite = float_is_finite(floating)
         selected_value = leaf.__terrine_selected & floating.notnull()
-        aggregates["sum_value"] = (
-            (selected_value & finite).ifelse(floating, ibis.null(dt.float64)).sum()
-        )
         aggregates["float64_nonfinite_count"] = exact_sum(
             (selected_value & ~finite).ifelse(one, zero)
         )
+        value = (selected_value & finite).ifelse(floating, ibis.null(dt.float64))
+        # A policy whose float arithmetic raises outside the range withholds a
+        # group's values before the backend adds them when their magnitudes may
+        # leave half of it, and reports the withheld rows so later prefixes
+        # refuse instead of reading an incomplete state.
+        leaf, value, admitted = guard_accumulation(leaf, value, partition=["_unit", *keys])
+        aggregates["sum_value"] = cast(ir.FloatingColumn, value).sum()
+        if admitted is not None:
+            aggregates["sum_bound"] = current_dialect(value).float_magnitude(value).sum()
+            aggregates["sum_withheld"] = exact_sum((~admitted).ifelse(one, zero))
     else:
         source_value = leaf.__terrine_value
         if exact_floats:

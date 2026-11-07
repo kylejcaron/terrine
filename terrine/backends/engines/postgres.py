@@ -113,6 +113,9 @@ def _timestamp_isfinite(value) -> bool:
 class PostgresDialect(Dialect):
     __slots__ = ()
     bounds_accumulations = False
+    # float8 addition, subtraction, multiplication and division raise on
+    # overflow, and multiplication and division on underflow to zero.
+    bounds_float_arithmetic = True
     # Ibis emulates ASOF with a correlated scan; sparse states use union/window.
     has_native_asof = False
     operations = frozenset(

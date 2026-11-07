@@ -103,6 +103,9 @@ def _timestamp_isfinite(value) -> bool:
 class DuckDBDialect(Dialect):
     __slots__ = ()
     bounds_accumulations = False
+    # Binary64 arithmetic follows IEEE 754: overflow yields an infinity and a
+    # quotient underflows to zero, so results are checked finite after the fact.
+    bounds_float_arithmetic = False
     has_native_asof = True
     operations = frozenset(
         {

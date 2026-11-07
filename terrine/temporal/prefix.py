@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, cast
 
 import ibis
 import ibis.expr.datatypes as dt
@@ -98,7 +98,9 @@ def sparse_prefix(
     must first group equal timestamps with daily._sparse_group. A row represents
     state through its group; a strict lookup uses group timestamp < cutoff.
     A native measure's prefix is the binary64 running sum of its group sums and
-    needs no exact backend state.
+    needs no exact backend state; where the policy bounds float arithmetic the
+    running sum is withheld, like a fixed-precision coefficient prefix, once
+    the magnitudes accumulated through a state may leave half the range.
     """
     if resolution not in {"day", "event"}:
         raise ValueError("resolution must be day or event")
@@ -118,8 +120,8 @@ def sparse_prefix(
         _EXACT_FLOAT_COUNTS if exact_floats else _NATIVE_FLOAT_COUNTS if native else ()
     )
     required += float_counts
-    # A fixed-precision policy's state carries the group's accumulated
-    # magnitude bound and its count of withheld rows.
+    # A policy that bounds this state's accumulation carries the group's
+    # accumulated magnitude bound and its count of withheld rows.
     bounded = "sum_withheld" in state.columns
     if bounded:
         required += ("sum_bound",)
@@ -151,16 +153,24 @@ def sparse_prefix(
         # backend's summation order.
         state_type = state.sum_value.type()
         policy = current_dialect(cumulative.sum_bound)
-        admitted = policy.admits_accumulation(
-            cumulative.sum_bound, cumulative.nonnull_count, state_type
+        limit = (
+            policy.float_magnitude_limit()
+            if native
+            else policy.magnitude_limit(cast(dt.Decimal, state_type))
         )
+        admitted = policy.admits_accumulation(cumulative.sum_bound, cumulative.nonnull_count, limit)
         withheld = ~admitted | (cumulative.sum_withheld > exact_literal(0, cumulative.sum_withheld))
         held = withheld.ifelse(ibis.null().cast(state_type), cumulative.sum_value)
         running = ibis.window(
             group_by=cumulative._unit, order_by=cumulative._timestamp, rows=(None, 0)
         )
+        total = (
+            cast(ir.FloatingColumn, held).sum().over(running).fill_null(ibis.literal(0.0))
+            if native
+            else _running_sum(held, running, admitted=True)
+        )
         cumulative = cumulative.mutate(
-            sum_value=_running_sum(held, running, admitted=True),
+            sum_value=total,
             sum_withheld=_running_sum(withheld.ifelse(count_literal(1), count_literal(0)), running),
         ).drop("sum_bound")
     return cumulative.mutate(

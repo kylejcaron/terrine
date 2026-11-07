@@ -325,9 +325,19 @@ def _native_window_sum(
     not by the window alone. Non-finite inputs are counted instead of summed, so
     one at or before the window end refuses a non-empty window; a running sum
     that overflowed leaves no finite difference and refuses as ``bound_overflow``.
+    Where the policy bounds float arithmetic the prefix withholds such a state
+    instead and counts it, and a non-empty window reading a withheld state at
+    or before its end refuses the same way.
     """
     zero = ibis.literal(0.0)
     difference = builder.col(end["sum_value"]) - builder.col(start["sum_value"])
+    withheld = None
+    if "sum_withheld" in end:
+        count = builder.col(end["sum_withheld"])
+        withheld = builder.put(
+            "state_withheld", ~builder.col(empty) & (count > exact_literal(0, count))
+        )
+        difference = builder.col(withheld).ifelse(ibis.null(dt.float64), difference)
     # Empty windows remain zero, even after invalid input history.
     value = builder.put("sum", builder.col(empty).ifelse(zero, difference))
     held = builder.col(end["float64_nonfinite_count"])
@@ -335,6 +345,8 @@ def _native_window_sum(
         held.fill_null(exact_literal(0, held)) > exact_literal(0, held)
     )
     builder.flag(nonfinite, "nonfinite_input", context)
+    if withheld is not None:
+        builder.flag(builder.col(withheld), "bound_overflow", context)
     builder.flag(~float_is_finite(builder.col(value)), "bound_overflow", context)
     # As for exact sums, dropped inputs never make a known zero denominator.
     known_zero = builder.put("sum_zero", (builder.col(value) == zero) & ~nonfinite)

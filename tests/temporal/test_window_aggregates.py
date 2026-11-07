@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import random
+import sys
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -228,22 +229,84 @@ def test_nonfinite_history_refuses(con, exact):
     assert set(error.value.context) == {"reason", "failed_count", "source", "measure", "output"}
 
 
-def test_native_prefix_overflow_refuses_instead_of_publishing(con):
-    pair = _state(
-        con,
-        [1.0, 1.7e308, 1.7e308, 1.0],
-        times=[datetime(2025, 1, d, 12, tzinfo=UTC) for d in (2, 3, 3, 4)],
-        exact=False,
+@pytest.mark.parametrize("dialect", ["duckdb", "generic"])
+def test_native_prefix_overflow_refuses_instead_of_publishing(con, dialect):
+    """DuckDB publishes an infinite running sum for the finite check to refuse; a
+    policy whose float arithmetic raises withholds the state instead. Both refuse."""
+    from terrine.backends.dialect import dialect_scope
+
+    with dialect_scope(dialect):
+        pair = _state(
+            con,
+            [1.0, 1.7e308, 1.7e308, 1.0],
+            times=[datetime(2025, 1, d, 12, tzinfo=UTC) for d in (2, 3, 3, 4)],
+            exact=False,
+        )
+        # A window ending before the binary64 running sum overflows is unaffected.
+        assert _rows(con, _result(_anchors(con), [pair]))[0]["requested"] == 1.0
+        # Every later window is a difference of non-finite or withheld prefixes,
+        # even one that excludes the large values.
+        for time in ("2025-01-03 00:00:00+00", "2025-01-04 00:00:00+00"):
+            with pytest.raises(TerrineError) as error:
+                _rows(con, _result(_anchors(con, time=time), [pair]))
+            assert error.value.code == "terrine.temporal.float64_precision"
+            assert error.value.context["reason"] == "bound_overflow"
+
+
+def test_bounded_native_sum_admits_up_to_half_the_range(con):
+    """A bounding policy publishes a native sum just below half the binary64 range,
+    refuses one at the derived threshold as ``bound_overflow``, and sums a
+    subnormal input, whose magnitude the bound omits, as zero."""
+    from terrine.backends.dialect import dialect_scope
+    from tests.backends.test_generic import (
+        _admission_threshold,
+        _double_at_least,
+        _double_at_most,
     )
-    # A window ending before the binary64 running sum overflows is unaffected.
-    assert _rows(con, _result(_anchors(con), [pair]))[0]["requested"] == 1.0
-    # Every later window is a difference of non-finite prefixes, even one that
-    # excludes the large values.
-    for time in ("2025-01-03 00:00:00+00", "2025-01-04 00:00:00+00"):
+
+    threshold = _admission_threshold(Fraction(sys.float_info.max) / 2, 1)
+    refused = _double_at_least(threshold)
+    admitted = _double_at_most(threshold * (1 - 17 * Fraction(1, 2**53)))
+    with dialect_scope("generic"):
+        for values in ([admitted], [-admitted], [5e-324, 1.0]):
+            pair = _state(con, values, exact=False)
+            value = _rows(con, _result(_anchors(con), [pair]))[0]["requested"]
+            assert abs(Fraction(value) - _exact_sum(values)) <= native_window_bound(values)
+        pair = _state(con, [refused], exact=False)
         with pytest.raises(TerrineError) as error:
-            _rows(con, _result(_anchors(con, time=time), [pair]))
-        assert error.value.code == "terrine.temporal.float64_precision"
-        assert error.value.context["reason"] == "bound_overflow"
+            _rows(con, _result(_anchors(con), [pair]))
+    assert error.value.code == "terrine.temporal.float64_precision"
+    assert error.value.context["reason"] == "bound_overflow"
+
+
+@pytest.mark.parametrize(
+    "numerator,denominator,aggregation,kind,expected",
+    [
+        # A mean of a subnormal sum over two events would round to zero.
+        ([5e-324, 0.0], None, "avg_event", "mean", "bound_overflow"),
+        ([1e300], [1e-10], "sum", "ratio", "bound_overflow"),
+        ([0.0], [1e-300], "sum", "ratio", 0.0),
+        ([1e-300], [1e-10], "sum", "ratio", 1e-290),
+    ],
+)
+def test_bounded_native_quotient_refuses_outside_the_range(
+    con, numerator, denominator, aggregation, kind, expected
+):
+    from terrine.backends.dialect import dialect_scope
+
+    with dialect_scope("generic"):
+        pairs = [_state(con, numerator, aggregation=aggregation, name="numerator", exact=False)]
+        if denominator is not None:
+            pairs.append(_state(con, denominator, name="denominator", exact=False))
+        result = _result(_anchors(con), pairs, kind=kind)
+        if isinstance(expected, str):
+            with pytest.raises(TerrineError) as error:
+                _rows(con, result)
+            assert error.value.code == "terrine.temporal.float64_precision"
+            assert error.value.context["reason"] == expected
+        else:
+            value = _rows(con, result)[0]["requested"]
+            assert value == pytest.approx(expected, rel=2**-50)
 
 
 def _recording(con):
