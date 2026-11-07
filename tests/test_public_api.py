@@ -113,9 +113,12 @@ def test_provisional_names_are_still_exported():
         "terrine.data.SequenceMeta",
         "terrine.data.StatePanelMeta",
         "terrine.data.TreatmentHistoryMeta",
+        "terrine.data.CoverageSummary",
+        "terrine.data.EligibilitySummary",
     }
     assert expected <= PROVISIONAL_NAMES
     assert "terrine.metrics" in STABLE_FACADES
+    assert "terrine.reasons" in STABLE_FACADES
     for qualified in PROVISIONAL_NAMES:
         parts = qualified.split(".")
         for module_end in range(len(parts), 0, -1):

@@ -184,7 +184,7 @@ CLI is provisional.
 | `terrine.runtime` | Provisional | Owner-side planning, saved plans, execution/scan authorization protocols, snapshot retention, exact-generation reads and run status/events/cancellation. See [runtime](materialization-runtime.md). Persistent state rows and layer translation stay in their owning modules. |
 | `terrine.dataset` | Stable facade; `Dataset` provisional | `GroupSplit` and `TimeSplit` policies supplied to `Frame.training_set(split=...)`; split strategy is an everyday training workflow choice. |
 | `terrine.frame` | Stable facade; `Frame.stage` and `Frame.expr` provisional | Frame construction, conversion and training workflows. |
-| `terrine.data` | Stable inputs and metric types; result metadata provisional | Bind inputs with `Coverage`, `UnitSource`, `Events`, `History` and `Budget`; use `EventMetric` and `Ratio` for metric declarations. Returned `*Meta` records and `MaterializedFrame` remain inspectable results, not required inputs. |
+| `terrine.data` | Stable input declarations; result metadata provisional | Bind inputs with `Coverage`, `UnitSource`, `Events`, `History` and `Budget`. Returned `*Meta` records, `CoverageSummary`, `EligibilitySummary` and `MaterializedFrame` remain inspectable results, not required inputs. Use the stable constructors from `terrine.metrics` to declare metrics. |
 | `terrine.reasons` | Stable vocabulary | Missing-value reason vocabulary used in output columns. |
 | `terrine.errors` | Stable names; refusal codes stable only when raised by a stable name | Coded errors and warnings. |
 | `terrine.windows` | Stable except provisional `duration` | `Window`, `Duration` and `Months` are elapsed-window values; `duration` is provisional. |

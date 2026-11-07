@@ -41,6 +41,7 @@ STABLE_FACADES: tuple[str, ...] = (
     "terrine.model",
     "terrine.frame",
     "terrine.data",
+    "terrine.reasons",
 )
 PROVISIONAL_NAMES: frozenset[str] = frozenset(
     {
@@ -72,6 +73,8 @@ PROVISIONAL_NAMES: frozenset[str] = frozenset(
         "terrine.data.StatePanelMeta",
         "terrine.data.TreatmentHistoryMeta",
         "terrine.data.ExecutionSnapshot",
+        "terrine.data.CoverageSummary",
+        "terrine.data.EligibilitySummary",
         "terrine.data.MaterializedFrame",
     }
 )
