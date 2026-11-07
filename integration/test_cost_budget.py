@@ -39,9 +39,6 @@ _OVER_CHARS = {
     "ltv": "79,098 characters for one trajectory: one window per age",
     "life_table": "49,345 characters for one follow-up",
 }
-_POSTGRES_ERRORS = {
-    "event_panel": "a syntax error: the portable lookup casts a NULL struct anchor id",
-}
 
 
 class Measured(NamedTuple):
@@ -154,7 +151,7 @@ def test_recipe_matches_hand_written_query_on_duckdb(duckdb_measured, recipe):
 
 @pytest.mark.scale
 @pytest.mark.postgres
-@pytest.mark.parametrize("recipe", _cases(_POSTGRES_ERRORS, "instead of the hand-written values"))
+@pytest.mark.parametrize("recipe", list(recipe_cases(_CONFIG)))
 def test_recipe_matches_hand_written_query_on_postgres(postgres_measured, recipe):
     measured = postgres_measured[recipe]
     assert measured.error is None and measured.equal

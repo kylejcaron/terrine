@@ -38,8 +38,18 @@ def measure(con: Any, config: ScaleConfig, *, dialect: str, repeats: int) -> lis
     for name, case in recipe_cases(config).items():
         frame = case.design.build(model)
         row: dict[str, Any] = {"backend": dialect, "recipe": name}
+        # A PostgreSQL table cannot store an anonymous record, so every backend
+        # times struct columns (the event panel's anchor identifier) as text.
+        expr = frame.expr
+        structs = {
+            column: expr[column].cast("string")
+            for column, dtype in expr.schema().items()
+            if dtype.is_struct()
+        }
+        if structs:
+            expr = expr.mutate(**structs)
         try:
-            terrine = seconds(con, con.compile(frame.expr), repeats)
+            terrine = seconds(con, con.compile(expr), repeats)
         except Exception as error:  # noqa: BLE001 - reported per recipe
             row.update(terrine_seconds=None, hand_seconds=None, ratio=None, error=repr(error))
         else:

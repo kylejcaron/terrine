@@ -222,6 +222,28 @@ def test_design_matches_duckdb(postgres_scratch, tmp_path, name, naive):  # noqa
         ]
 
 
+def test_event_panel_struct_anchor_ids_match_duckdb(postgres_scratch, tmp_path):  # noqa: F811
+    """Event-relative anchor identifiers are records on PostgreSQL and publish as structs."""
+    duckdb, postgres = _both(postgres_scratch, tmp_path)
+    design = tr.recipes.event_panel(
+        event="order",
+        periods=(0, 1, 2),
+        period="1d",
+        reference_index=0,
+        features={"spend": tr.agg("spend", window=("-2d", "0s"))},
+    )
+    expected, actual = (
+        design.build(model).materialize(budget=_BUDGET).table for model in (duckdb, postgres)
+    )
+
+    def ordered(table):
+        return sorted(table.to_pylist(), key=lambda row: (row["unit"], row["t0"]))
+
+    assert expected.num_rows
+    assert actual.schema == expected.schema
+    assert ordered(actual) == ordered(expected)
+
+
 @pytest.mark.parametrize("naive", [False, True])
 def test_landmark_nth_anchor_matches_original_time_oracle(postgres_scratch, tmp_path, naive):  # noqa: F811
     duckdb, postgres = _both(postgres_scratch, tmp_path, naive=naive)
@@ -471,6 +493,41 @@ def test_nullable_array_keys_keep_scalar_distinctness(postgres_scratch):  # noqa
         )
     ).to_pylist()
     assert len(rows) == 16
+    assert all(row["actual"] is row["expected"] for row in rows)
+
+
+def test_missing_struct_key_stays_distinct_from_missing_fields(postgres_scratch):  # noqa: F811
+    from terrine.backends.dialect import current_dialect
+    from terrine.backends.joins import null_safe_equal
+
+    con = postgres_scratch.con
+    fields = con.sql(
+        "SELECT * FROM (VALUES (1, NULL::varchar, NULL::smallint), (2, 'a', NULL), (3, 'a', 0)) "
+        "AS keys(i, event_id, period)"
+    )
+    present = fields.select(
+        i=fields.i, k=ibis.struct({"event_id": fields.event_id, "period": fields.period})
+    )
+    # A typed NULL placeholder in one branch of a union, as the portable lookup builds.
+    missing = present.limit(1).select(
+        i=ibis.literal(0, type=present.i.type()),
+        k=current_dialect(present.k).typed_null(present.k.type()),
+    )
+    keys = missing.union(present)
+    left = keys.select(i=keys.i, a=keys.k)
+    right = keys.select(j=keys.i, b=keys.k).view()
+    pairs = left.cross_join(right)
+    rows = con.to_pyarrow(
+        pairs.select(
+            "i",
+            "j",
+            expected=pairs.a.identical_to(pairs.b),
+            actual=null_safe_equal(pairs.a, pairs.b),
+        )
+    ).to_pylist()
+    assert sorted((row["i"], row["j"]) for row in rows if row["expected"]) == [
+        (index, index) for index in range(4)
+    ]
     assert all(row["actual"] is row["expected"] for row in rows)
 
 

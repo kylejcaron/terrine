@@ -415,9 +415,9 @@ catalogs refuses, as does a view whose stored definition depends on such a
 function. Built-in functions inside a view are evaluated on each query.
 
 Supported: counts and exact integer/decimal sums over windows, as-of attributes,
-fixed, scheduled and event anchors, time-to-event shapes, cohort trajectories
-with their total and mean summaries, and observed state panels, with rows
-identical to the DuckDB reference
+fixed, scheduled and event anchors, event panels, time-to-event shapes, cohort
+trajectories with their total and mean summaries, and observed state panels,
+with rows identical to the DuckDB reference
 ([differential probes][postgres]). Timestamps are exact at PostgreSQL's native
 microsecond precision. Decimal columns need a declared `numeric(p, s)` with
 `p <= 38`; unconstrained `numeric` refuses with
@@ -431,6 +431,10 @@ prefix cutoffs and the inclusive lower bound of a first-occurrence window;
 duplicate requests keep their multiplicity. Lookup keys use the UTC wall
 clock at native microsecond precision, including naive source timestamps.
 Nullable anchor identities remain null-safe while admitting hash/merge joins.
+Struct anchor identities, such as an event panel's `{event_id, period}`, are
+anonymous records on PostgreSQL: a missing one stays NULL, distinct from a record
+of NULL fields, and results are read in binary so they publish as the same
+Arrow struct as the DuckDB reference.
 Compatible integer unit keys use a lossless common timeline type, including
 different roster and event key widths; output keys retain their original types.
 

@@ -11,6 +11,7 @@ import ibis
 import ibis.expr.datatypes as dt
 import ibis.expr.types as ir
 
+from terrine.backends.dialect import current_dialect
 from terrine.backends.joins import has_native_asof, union_unit_keys
 from terrine.backends.numeric import is_exact_type
 from terrine.backends.timestamps import lookup_keys
@@ -116,13 +117,14 @@ def lookup_prefix(
             **{state_aliases[name]: prefix[name] for name in state_fields},
         )
         left_unit_key, right_unit_key = union_unit_keys(points[unit_column], right[state_unit])
+        policy = current_dialect(points[timestamp_column], prefix._timestamp)
         states = right.select(
             **{
                 point_unit: right_unit_key,
                 point_time: right[state_time],
                 kind_name: ibis.literal(1).cast("int8"),
                 **{
-                    timeline_points[name]: ibis.null().cast(points[name].type())
+                    timeline_points[name]: policy.typed_null(points[name].type())
                     for name in points.columns
                 },
             }

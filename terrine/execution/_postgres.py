@@ -362,7 +362,8 @@ class PostgresSession:
 
     def _rows(self, sql: str, schema: pa.Schema, chunk_size: int):
         struct = pa.struct(list(schema))
-        with self.raw.cursor(name="terrine_cursor") as cursor:
+        # Binary results carry each anonymous record field's type; text ones do not.
+        with self.raw.cursor(name="terrine_cursor", binary=True) as cursor:
             cursor.execute(sql)
             while batch := cursor.fetchmany(chunk_size):
                 try:
