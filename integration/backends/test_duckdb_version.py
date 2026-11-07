@@ -46,7 +46,8 @@ def test_exact_measure_runs_arithmetic_witness(readme_backend, monkeypatch):
     def record_and_verify(con):
         witnesses.append(con)
         verify(con)
-
+    con, _ = readme_backend
+    model = readme_model(con, exact=True)
     monkeypatch.setattr(_native, "verify_exact_arithmetic", record_and_verify)
     design = tr.recipes.time_series(
         every="1mo",
