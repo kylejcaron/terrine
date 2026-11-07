@@ -281,17 +281,28 @@ def compile_ltv(design: Design, model: Model) -> CompiledStudy:
         table = table.mutate(
             cumulative_value_complete=~missing & table.period_value_complete.fill_null(False)
         )
-        first_reason = ibis.coalesce(
-            *(
-                table.period_value_reason.lag(offset=offset).over(frame)
-                for offset in reversed(range(trajectory.periods))
+        # A period's reason either explains its missing value or, beside a
+        # published value, notes what it omits (``below_resolution``). The
+        # cumulative value takes the earliest missing period's reason, else the
+        # earliest note among the periods it adds.
+        no_reason = ibis.null().cast("string")
+        period_missing = table.period_value.isnull()
+
+        def earliest(reason):
+            return ibis.coalesce(
+                *(
+                    reason.lag(offset=offset).over(frame)
+                    for offset in reversed(range(trajectory.periods))
+                )
             )
-        )
+
+        first_missing = earliest(period_missing.ifelse(table.period_value_reason, no_reason))
+        first_note = earliest(period_missing.ifelse(no_reason, table.period_value_reason))
         table = table.mutate(
             cumulative_value_reason=ibis.ifelse(
                 missing,
-                first_reason.fill_null(ibis.literal(reason_codes.INCOMPLETE_CONTRIBUTION)),
-                ibis.null().cast("string"),
+                first_missing.fill_null(ibis.literal(reason_codes.INCOMPLETE_CONTRIBUTION)),
+                first_note,
             )
         )
         output_columns["cumulative_value"] = replace(

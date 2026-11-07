@@ -12,6 +12,7 @@ import ibis.expr.types as ir
 
 from terrine.backends.dialect import current_dialect
 from terrine.backends.numeric import (
+    below_resolution,
     count_literal,
     decimal_coefficient,
     exact_subtract,
@@ -224,17 +225,21 @@ def _sparse_group(
     else:
         source_value = leaf.__terrine_value
         if exact_floats:
-            quantized, nonfinite_value, unrepresentable = quantized_float(
-                cast(ir.FloatingValue, source_value)
-            )
+            floating = cast(ir.FloatingValue, source_value)
+            quantized, nonfinite_value, unrepresentable = quantized_float(floating)
             exact = decimal_coefficient(quantized, 9)
             selected_value = leaf.__terrine_selected & source_value.notnull()
+            # A nonzero value the quantization rounds to zero leaves the sum
+            # silently; its count lets the window say so.
             aggregates.update(
                 float64_nonfinite_count=exact_sum(
                     (selected_value & nonfinite_value).ifelse(one, zero)
                 ),
                 float64_unrepresentable_count=exact_sum(
                     (selected_value & unrepresentable).ifelse(one, zero)
+                ),
+                float64_below_resolution_count=exact_sum(
+                    (selected_value & below_resolution(floating, exact)).ifelse(one, zero)
                 ),
             )
         else:

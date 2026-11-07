@@ -57,8 +57,13 @@ _UNKNOWN_FIELDS = (
     "unknown_filter_literal_count",
     "unknown_filter_nonfinite_count",
 )
-# Invalid inputs refused before quantized decimal accumulation.
-_EXACT_FLOAT_COUNTS = ("float64_nonfinite_count", "float64_unrepresentable_count")
+# Invalid inputs refused before quantized decimal accumulation, and nonzero
+# inputs the quantization discarded, which the window reports as a reason.
+_EXACT_FLOAT_COUNTS = (
+    "float64_nonfinite_count",
+    "float64_unrepresentable_count",
+    "float64_below_resolution_count",
+)
 # Non-finite inputs a native binary64 sum counts instead of adding.
 _NATIVE_FLOAT_COUNTS = ("float64_nonfinite_count",)
 

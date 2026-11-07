@@ -233,6 +233,7 @@ class _Builder:
 @dataclass(frozen=True, slots=True)
 class _Quantity:
     value: str
+    # A reason that makes the value unavailable (NULL), or NULL.
     reason: str
     known_zero: str
     scale: int = 0
@@ -241,6 +242,9 @@ class _Quantity:
     binary64: bool = False
     # A native binary64 sum, already checked finite, publishes unconverted.
     native: bool = False
+    # A reason published beside an available value, describing what it omits
+    # (``below_resolution``), or NULL; absent when the arithmetic cannot omit.
+    note: str | None = None
 
 
 def narrow_exact(coefficient, scale: int, target: str | dt.DataType):
@@ -257,12 +261,22 @@ def _aligned(timestamp, minutes: int):
     return timestamp == day_start(timestamp, minutes)
 
 
+def _merged_note(builder: _Builder, *quantities: _Quantity) -> str | None:
+    """One note column for a quantity derived from ``quantities``: the first
+    operand's note, else the next's. ``None`` when no operand can carry one."""
+    notes = [builder.col(q.note) for q in quantities if q.note is not None]
+    if not notes:
+        return None
+    return builder.put("note", ibis.coalesce(*notes) if len(notes) > 1 else notes[0])
+
+
 def _quotient(
     builder: _Builder, numerator: _Quantity, denominator: _Quantity, reason: str, context
 ) -> _Quantity:
     """Convert each exact operand at its own scale, then divide once in float64.
 
-    A native binary64 operand enters the division as it is.
+    A native binary64 operand enters the division as it is. An operand's note
+    describes the quotient too.
     """
     known_zero = builder.put(
         "quotient_zero",
@@ -284,7 +298,8 @@ def _quotient(
         "bound_overflow",
         context,
     )
-    return _Quantity(value, reason, known_zero, binary64=True)
+    note = _merged_note(builder, numerator, denominator)
+    return _Quantity(value, reason, known_zero, binary64=True, note=note)
 
 
 def _state_fields(measure: BoundMeasure, state: ibis.Table, *, counting: bool) -> tuple[str, ...]:
@@ -426,7 +441,9 @@ def _exact_window_sum(
     """The exact difference of two coefficient prefixes.
 
     A float fact's window also refuses when its state could not hold an input at
-    or before the window end.
+    or before the window end, and notes ``below_resolution`` when the window
+    holds a nonzero contribution the scale-9 quantization discarded: the
+    published sum is then the sum of the retained contributions.
     """
     sums = []
     for endpoint in (start, end):
@@ -481,7 +498,19 @@ def _exact_window_sum(
         # A sum that only looks zero because inputs were dropped is not a zero
         # denominator: its refusal must not be masked by a zero_denominator reason.
         known_zero = builder.put("sum_zero", (builder.col(value) == state_zero) & ~invalid)
-        quantity = _Quantity(value, reason, known_zero, scale=9, binary64=True)
+        # The discarded-term count is a prefix difference, so only the window's
+        # own discards are noted; an all-zero or all-null window has none.
+        discarded = exact_subtract(
+            builder.col(end["float64_below_resolution_count"]),
+            builder.col(start["float64_below_resolution_count"]),
+        )
+        note = builder.put(
+            "note",
+            (~builder.col(empty) & (discarded > exact_literal(0, discarded))).ifelse(
+                reason_codes.BELOW_RESOLUTION, ibis.null().cast("string")
+            ),
+        )
+        quantity = _Quantity(value, reason, known_zero, scale=9, binary64=True, note=note)
     else:
         value = builder.put("sum", difference)
         known_zero = builder.put("sum_zero", builder.col(value) == state_zero)
@@ -512,7 +541,9 @@ def aggregate_window(
     At s=t0+start and e=t0+end, P(e)-P(s) measures [s,e). Exact floats
     difference exact scale-9 coefficients and convert to float64; native floats
     difference binary64 running sums. Averages and ratios convert each exact
-    operand once, then divide once in float64.
+    operand once, then divide once in float64. The reason column names why a
+    value is NULL, or carries ``below_resolution`` beside an exact float value
+    whose window discarded a nonzero contribution below the quantization.
     """
     if not isinstance(window, Window):
         raise TypeError("window must be a Window")
@@ -694,11 +725,18 @@ def aggregate_window(
         )
     else:
         quantity = quantities[0]
-    final_reason = builder.put(
-        "reason",
-        builder.col(available).ifelse(builder.col(quantity.reason), builder.col(unavailable)),
-    )
-    evaluated = builder.put("evaluated", builder.col(final_reason).isnull())
+    # The value is published only where nothing makes it unavailable; a note
+    # then fills the reason without withdrawing the value.
+    blocking = builder.col(available).ifelse(builder.col(quantity.reason), builder.col(unavailable))
+    if quantity.note is None:
+        final_reason = builder.put("reason", blocking)
+        evaluated = builder.put("evaluated", builder.col(final_reason).isnull())
+    else:
+        blocking_name = builder.put("blocking_reason", blocking)
+        evaluated = builder.put("evaluated", builder.col(blocking_name).isnull())
+        final_reason = builder.put(
+            "reason", builder.col(blocking_name).fill_null(builder.col(quantity.note))
+        )
     if unknown_flags:
         row_checks.extend(builder.check(unknown_flags, active=builder.col(available)))
     numeric_context = {

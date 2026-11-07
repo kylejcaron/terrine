@@ -86,18 +86,23 @@ def _compile_cohorts(
     # One first-event anchor per unit makes each (bucket, age, unit) a single row,
     # and later joined state is constant per group, so min() selects that value;
     # unlike FIRST it exists on every backend. Reasons choose deterministically.
+    # A reason beside a missing value explains it; one beside a published value
+    # notes what it omits (``below_resolution``), so the two are kept apart.
+    no_reason = ibis.null().cast("string")
+    value_missing = table[value_column].isnull()
+    reason = table[reason_column] if reason_column is not None else no_reason
     per_unit = table.group_by("bucket_index", "age", "unit").aggregate(
         _value=table[value_column].min(),
         _complete=table[complete_column].min().fill_null(ibis.literal(False)),
         _mature=table.period_value_mature.min(),
-        _reason=table[reason_column].min()
-        if reason_column is not None
-        else ibis.null().cast("string"),
+        _reason=value_missing.ifelse(reason, no_reason).min(),
+        _note=value_missing.ifelse(no_reason, reason).min(),
     )
     numeric_type = per_unit._value.type()
     reduction_table = per_unit
     total_failure = None
-    decimal_mean_failure = None
+    mean_failure = None
+    rescale = None
     if grouping.statistic == "total" and numeric_type.is_decimal():
         scale = numeric_type.scale
         assert scale is not None
@@ -195,7 +200,7 @@ def _compile_cohorts(
         )
         reduction_table = per_unit.left_join(mean_state, keys)
         observed_value = reduction_table._mean_value.min()
-        decimal_mean_failure = reduction_table._mean_unrepresentable.min()
+        mean_failure = reduction_table._mean_unrepresentable.min()
     else:
         scales = per_unit.group_by("bucket_index", "age").aggregate(
             _scale=per_unit._value.abs().max()
@@ -204,10 +209,24 @@ def _compile_cohorts(
         reduction_table = scaled.mutate(
             _scale=ibis.ifelse(scaled._scale == 0.0, 1.0, scaled._scale),
         )
-        normalized = reduction_table._value / reduction_table._scale
-        observed_value = normalized.mean() * reduction_table._scale.min()
-    if decimal_mean_failure is None:
-        decimal_mean_failure = ibis.literal(False)
+        if dialect.bounds_float_arithmetic:
+            # A policy whose float arithmetic raises on underflow withholds the
+            # normalizing quotient, and below the rescaling product, before the
+            # backend evaluates them; a withheld quotient makes the mean
+            # unrepresentable. Other policies reduce directly and check the
+            # result finite.
+            normalized = cast(
+                ir.FloatingColumn,
+                dialect.float_quotient(reduction_table._value, reduction_table._scale),
+            )
+            mean_failure = (reduction_table._value.notnull() & normalized.isnull()).any()
+            observed_value = normalized.mean()
+            rescale = reduction_table._scale.min()
+        else:
+            normalized = reduction_table._value / reduction_table._scale
+            observed_value = normalized.mean() * reduction_table._scale.min()
+    if mean_failure is None:
+        mean_failure = ibis.literal(False)
     if total_failure is None:
         total_failure = ibis.literal(False)
     groups = reduction_table.group_by("bucket_index", "age").aggregate(
@@ -216,9 +235,18 @@ def _compile_cohorts(
         _observed_value=observed_value,
         _mature=reduction_table._mature.max(),
         _reason=reduction_table._reason.min(),
-        _mean_unrepresentable=decimal_mean_failure,
+        _note=reduction_table._note.min(),
+        _mean_unrepresentable=mean_failure,
         _total_unrepresentable=total_failure,
+        **({} if rescale is None else {"_rescale": rescale}),
     )
+    if rescale is not None:
+        product = dialect.float_product(groups._observed_value, groups._rescale)
+        groups = groups.mutate(
+            _observed_value=product,
+            _mean_unrepresentable=groups._mean_unrepresentable
+            | (groups._observed_value.notnull() & product.isnull()),
+        ).drop("_rescale")
     joined = groups.left_join(risk, "bucket_index")
     mature = joined._mature.fill_null(False)
     complete = (
@@ -241,8 +269,10 @@ def _compile_cohorts(
             ibis.null().cast("string"), reason_codes.ADMINISTRATIVE_CUTOFF
         ),
         complete=complete,
+        # A complete summary carries a note its units published; an incomplete
+        # one names why a unit's value is missing.
         reason=complete.ifelse(
-            ibis.null().cast("string"),
+            joined._note,
             ibis.ifelse(
                 mature,
                 joined._reason.fill_null(reason_codes.INCOMPLETE_OBSERVATION),
@@ -303,13 +333,17 @@ def _compile_cohorts(
         )
     if numeric_type.is_floating():
         # Native binary64 reductions: a total or mean that leaves the finite range,
-        # or a total a bounding policy withheld, refuses instead of publishing an
-        # infinity, NaN or incomplete sum.
+        # or one a bounding policy withheld, refuses instead of publishing an
+        # infinity, NaN or incomplete reduction.
         failure_column = "failed_cohort_nonfinite"
         observed = joined._observed_value
         failed = joined.filter(
             complete
-            & (joined._total_unrepresentable | (observed.notnull() & ~float_is_finite(observed)))
+            & (
+                joined._total_unrepresentable
+                | joined._mean_unrepresentable
+                | (observed.notnull() & ~float_is_finite(observed))
+            )
         )
         checks.append(
             _Check(

@@ -372,6 +372,54 @@ def test_float_quotient_divides_only_within_the_range():
     }
 
 
+def test_float_product_multiplies_only_within_the_range():
+    """Products from 2**-1020 to half the range multiply; those that could overflow
+    or round to zero are NULL; a zero operand multiplies to zero; NULL operands
+    stay NULL."""
+    from terrine.backends.dialect import dialect_for_name
+
+    policy = dialect_for_name("generic")
+    cases = {
+        "plain": (0.75, 4.0, 3.0),
+        "negative": (-0.5, 3.0, -1.5),
+        # A pivot below one cannot overflow; the product must stay at least 2**-1020.
+        "largest_small_pivot": (1.0, 2.0**-1020, 2.0**-1020),
+        "below_small_pivot": (math.nextafter(1.0, 0.0), 2.0**-1020, None),
+        "mean_times_tiny_scale": (1e-24, 1e-300, None),
+        "subnormal_pivot": (1.0, 5e-324, None),
+        # A pivot of at least one cannot round to zero; the product must stay
+        # within half the range, where every guarded binary64 value lives.
+        "largest_big_pivot": (0.5, sys.float_info.max, sys.float_info.max / 2),
+        "above_big_pivot": (math.nextafter(0.5, 1.0), sys.float_info.max, None),
+        "mean_above_half_range": (1.0, 1e308, None),
+        "overflow": (1e200, 1e200, None),
+        "tiny_times_huge": (2.0**-1000, sys.float_info.max, 2.0**-1000 * sys.float_info.max),
+        "zero_left": (0.0, 1e-300, 0.0),
+        "zero_right": (1e300, 0.0, 0.0),
+        "null_left": (None, 1.0, None),
+        "null_right": (1.0, None, None),
+    }
+    con = ibis.duckdb.connect()
+    try:
+        table = con.create_table(
+            "products",
+            pa.table(
+                {
+                    "case": list(cases),
+                    "a": pa.array([a for a, _, _ in cases.values()], pa.float64()),
+                    "b": pa.array([b for _, b, _ in cases.values()], pa.float64()),
+                }
+            ),
+        )
+        product = policy.float_product(table.a, table.b)
+        rows = con.to_pyarrow(table.select("case", product=product)).to_pylist()
+    finally:
+        con.disconnect()
+    assert {row["case"]: row["product"] for row in rows} == {
+        name: expected for name, (_, _, expected) in cases.items()
+    }
+
+
 @pytest.mark.parametrize("operation", ["utc_wall_clock", "utc_instant"])
 def test_portable_nanosecond_utc_conversion_refuses_before_any_query(operation):
     """The portable conversions rebuild instants from microsecond intervals, so a

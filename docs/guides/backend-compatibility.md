@@ -176,37 +176,111 @@ keep nanosecond support.
 
 ### Shared numerical contract
 
-Every engine quantizes finite float inputs once to `DECIMAL(38, 9)`-scale
-values using its own float-to-decimal conversion (nearest, ties away from
-zero, with binary64 conversion error of about $10^{-16}$ relative), so a
-value within that error of a halfway point may round either way; only the
-stated window-sum bound is promised.
-Float32 widens first. NULL stays NULL.
-The exact binary64 magnitude must be below $10^{29}$: the literal `1e29`
-is admitted because its exact value is just below that boundary; the next
-float up is refused with `terrine.temporal.float64_precision`,
+Float measures have two arithmetic modes, chosen per metric declaration
+(`tr.sum("amount")` is native; `tr.sum("amount", exact=True)` or a Catalog
+measure without `exact: false` is exact). Counts, integer measures, declared
+decimals, keys and timestamps are always exact. The mode is part of the
+measure's identity: switching it rebuilds persisted prefix layers, and every
+metric-valued output column records it in `ColumnMeta.arithmetic`
+(`"native"` when any contributing measure is native, else `"exact"`).
+Float32 widens to Float64 first. NULL stays NULL. There is no bitwise or
+order-independence promise in either mode. Row predicates compare original
+values; output thresholds compare published results.
+
+#### Native float arithmetic (default)
+
+Finite values are summed in binary64 by the engine; the persisted prefix is
+the running `SUM` of those group sums (`numeric_policy: native`, strategy
+`sparse_{day|event}_prefix/native_float`). Windows are prefix differences,
+so the error bound is stated against the history prefix $P$ of the unit up
+to the window end, not against the window alone:
+
+$$
+|\hat S - S| \le 2\,n_P\,\varepsilon \sum_{i\in P}|x_i|,
+\qquad \varepsilon = 2^{-53}.
+$$
+
+A small window after a large history therefore has an absolute error
+proportional to the history total: three events of a few tenths after
+$10^6$ events of $10^3$ (a prefix total of $10^9$) are answered within
+$0.22$, however small the window's own sum. Values below $5\cdot10^{-10}$
+are kept, within that bound. The exact mode below is the remedy when the
+window matters at a resolution the history total does not allow. A mean
+divides the bound by its actual denominator, plus the quotient's own
+rounding $2^{-52}|\hat r|$; a ratio converts each operand once and divides
+once in float64, and the ratio bound below holds with $e_N$ and $e_D$ the
+operands' native bounds (`tests/_float_bound.py` has both forms). A
+non-finite input at or before the end of a non-empty window refuses
+`terrine.temporal.float64_precision` with `reason="nonfinite_input"`; a
+sum, difference or quotient that leaves the binary64 range refuses with
+`reason="bound_overflow"`. Empty windows are zero after any history.
+
+On an IEEE 754 engine (DuckDB) an overflow is an infinity and an underflow a
+zero, so only a non-finite result refuses. PostgreSQL's `float8` raises on
+both instead, and the portable policy (which BigQuery and Snowflake inherit)
+assumes the same, so those policies withhold every binary64 sum, quotient and
+product *before* the engine evaluates it, and `bound_overflow` on them also
+refuses finite results whose admission bound leaves the safe range:
+
+- a unit's history whose summed magnitudes reach about half the binary64
+  range ($\sum|x_i| \gtrsim 8.99\cdot10^{307}$), even where the values cancel;
+  a window ending at or after such a state refuses, an empty one is still zero;
+- a mean or ratio whose quotient lies outside $2^{\pm1020}$ (about
+  $8.9\cdot10^{-308}$ to $1.1\cdot10^{307}$), including a subnormal sum over a
+  count; a zero numerator divides to zero;
+- a cohort total or cumulative trajectory whose summed magnitudes reach half
+  the range, and a cohort mean whose normalizing quotient (a unit value over
+  the cohort's largest magnitude) leaves $2^{\pm1020}$ or whose rescaling
+  product falls below $2^{-1020}$ or above half the range.
+
+These are the price of never evaluating an operation the engine would raise
+on; DuckDB publishes the same finite results.
+
+#### Exact float arithmetic (`exact=True`)
+
+Every finite input is quantized once to a `DECIMAL(38, 9)`-scale value by the
+engine's float-to-decimal conversion (nearest, ties away from zero, with
+binary64 conversion error of about $10^{-16}$ relative), so a value within
+that error of a halfway point may round either way; only the stated bound is
+promised. The exact binary64 magnitude must be below $10^{29}$: the literal
+`1e29` is admitted because its exact value is just below that boundary; the
+next float up refuses `terrine.temporal.float64_precision` with
 `reason="out_of_range"`. Non-finite inputs use `reason="nonfinite_input"`;
 a published result beyond float64 uses `reason="bound_overflow"`.
 
 The quantized value joins the declared-decimal coefficient path at scale 9:
 DuckDB `BIGNUM`, PostgreSQL `NUMERIC`, BigQuery `BIGNUMERIC`, Snowflake
 `NUMBER(38, 0)`, and portable `DECIMAL(38, 0)`. Prefix subtraction is exact,
-so a small recent window is not cancelled by a huge history. Counts,
-integer measures, declared decimals, keys and timestamps retain their exact
-domains.
+so a small recent window is not cancelled by a huge history, and the bound
+depends on the window $W$ alone:
+
+$$
+|\hat S - S| \le e_S = 10^{-9}\,n_W + 10^{-12}\sum_{i\in W}|x_i|.
+$$
+
+A nonzero input smaller than $5\cdot10^{-10}$ quantizes to zero and leaves
+the sum. The window still publishes the sum of its retained contributions,
+`__complete` is unchanged, and `__reason` carries `below_resolution` whenever
+at least one nonzero contribution of that window was discarded (a window of
+exact zeros, or an all-null one, keeps its usual reason). Means and ratios
+derived from such a sum carry the same note, as do cumulative trajectory
+values and complete cohort summaries built from noted periods; a quantized
+denominator that is exactly zero is still `zero_denominator` with a NULL
+ratio. Declare decimal measures or rescale (for example into micro-units)
+when that scale matters.
 
 The portable policy caps the integral intermediate at $\pm(10^{29}-1)$
 before its scale-9 cast, so a short float-to-decimal conversion that rounds
 an admitted boundary value up to $10^{29}$ cannot overflow that cast;
 the resulting value is still subject to the same window-sum bound.
 
-Against the exact sum of original float inputs in a window $W$, the sum's
-absolute error is bounded by
-$e_S = 10^{-9} n_W + 10^{-12}\sum_{i\in W}|x_i|$.
-A mean divides this bound by its actual denominator, including calendar-day
-means. Means and ratios convert each exact operand at its own scale once,
-then divide once in float64. A quantized denominator that is exactly zero
-returns NULL with `zero_denominator`. Otherwise, when $|\hat D| > e_D$:
+#### Means and ratios
+
+A mean divides its sum's bound by its actual denominator, including
+calendar-day means. Means and ratios convert each exact operand at its own
+scale once, then divide once in float64; a native operand enters as it is.
+A denominator that is exactly zero returns NULL with `zero_denominator`.
+Otherwise, when $|\hat D| > e_D$:
 
 $$
 |\hat r-N/D| \le
@@ -215,14 +289,28 @@ $$
 $$
 
 For $0 < |\hat D| \le e_D$ the ratio is returned with no stated accuracy.
-There is no bitwise or order-independence promise. Nonzero inputs smaller
-than $5\cdot10^{-10}$ vanish from sums: declare decimal measures or rescale
-them, for example into micro-units, when that scale matters. Row predicates
-still compare original values; output thresholds compare published results.
+
+#### When to choose exact
+
+- A small window after a large history, when the native bound (proportional
+  to the unit's history total through the window end) is wider than the
+  window's values: lifetime totals in the $10^9$ range with windows of
+  cents, or persisted prefixes that keep growing.
+- Answers that must agree across engines and summation orders to
+  $10^{-9}$: the exact sum is independent of order and engine except at
+  conversion ties; a native sum has no such promise.
+- Contributions below $5\cdot10^{-10}$ never need exact mode: both modes
+  are wrong for them in different ways (native keeps them within a bound that
+  may exceed them, exact drops them and says so); declare decimals or rescale.
+- Exact mode costs decimal prefix state, larger SQL (about a third more on
+  the README design) and a backend with exact state: an engine without it
+  refuses `terrine.temporal.exact_unsupported`, and bounded coefficient
+  engines refuse `terrine.temporal.exact_overflow` at $10^{29}$-scale
+  magnitudes where native mode publishes.
 
 Signed integer quotients still truncate toward zero, including both `int64`
 endpoints, and are NULL beyond `int64` or for a zero divisor.
-- Accumulations are admitted only when a binary64 bound on the summed
+- Exact accumulations are admitted only when a binary64 bound on the summed
   magnitudes proves the exact sum fits the type: with `n` contributing values
   the computed bound `B` lies within `e = (1 + u)(1 + γₙ₋₁) − 1` of the true
   magnitude sum (`γₖ = k · u / (1 − k · u)`), so a partition is admitted iff
@@ -230,7 +318,8 @@ endpoints, and are NULL beyond `int64` or for a zero divisor.
   adds them and every consumer of that state refuses: sums, averages and
   ratios with `terrine.temporal.exact_overflow`, including float coefficients.
   Cohort totals, means and cumulative trajectories keep their existing
-  overflow reasons. This
+  overflow reasons. The same admission, against half the binary64 range,
+  guards native sums on the policies that bound float arithmetic. This
   bound is deliberately conservative: opposite-sign history whose magnitudes
   alone exceed the domain is refused even where the exact difference would
   fit, and a prefix difference leaving the fixed domain refuses likewise.
@@ -338,13 +427,16 @@ Nullable anchor identities remain null-safe while admitting hash/merge joins.
 Compatible integer unit keys use a lossless common timeline type, including
 different roster and event key widths; output keys retain their original types.
 
-Float windows, averages and ratios use the [shared quantized contract](#shared-numerical-contract),
-not bitwise parity with DuckDB. PostgreSQL accumulates scale-9 float
-coefficients exactly in `NUMERIC`; each exact quotient operand converts at
-its own scale before one float64 division. These columns carry
-`numeric_policy=None` and no error column. A non-finite or out-of-range
-input at or before the end of a non-empty window refuses; an empty sum
-window remains zero.
+Float windows, averages and ratios use the [shared numerical contract](#shared-numerical-contract),
+not bitwise parity with DuckDB. Native float measures sum in `float8`, and
+because `float8` raises on overflow and underflow the PostgreSQL policy
+withholds sums, quotients and products before evaluating them (the finite
+refusals listed in the contract). Exact float measures accumulate scale-9
+coefficients in `NUMERIC`; each exact quotient operand converts at its own
+scale before one float64 division. These columns carry
+`numeric_policy=None`, their `arithmetic`, and no error column. A non-finite
+or out-of-range input at or before the end of a non-empty window refuses; an
+empty sum window remains zero.
 PostgreSQL rounds in unconstrained `NUMERIC` at scale 9, so a conversion
 that rounds an admitted boundary input up to $10^{29}$ cannot overflow an
 intermediate fixed-precision cast.
@@ -370,8 +462,9 @@ Supported, matching the DuckDB reference ([live probes][bigquery]): everything
 listed for PostgreSQL above, with the same tolerance contract for averages,
 ratios and float windows. Exact coefficient state is `BIGNUMERIC`, whose
 accumulation limit remains that of declared decimals; an exact accumulation
-beyond it refuses with `terrine.temporal.exact_overflow`. Floats quantize at
-scale 9 under the shared contract, and quotients divide converted float64
+beyond it refuses with `terrine.temporal.exact_overflow`. Exact float
+measures quantize at scale 9 under the shared contract, native ones sum in
+`FLOAT64` under the portable guards, and quotients divide converted float64
 operands once. Timestamps are
 microsecond-exact from year 1 to 9999; `DATETIME` columns denote UTC. Ibis reads
 every `NUMERIC` column as `decimal(38, 9)`, so decimal outputs carry scale 9 even
@@ -442,10 +535,11 @@ listed for PostgreSQL above, with the same tolerance contract for averages,
 ratios and float windows. Exact state is `NUMBER(38, 0)`; counts and decimal
 sums are exact, and a sum or difference beyond 38 digits refuses with
 `terrine.temporal.exact_overflow`, including float coefficients.
-Float inputs quantize at scale 9 and share this exact coefficient state.
-Unsafe bounded accumulations are withheld and refuse rather than publishing
-partial sums. Means and ratios convert each operand once with its scale and
-divide once in float64 under the shared error bounds.
+Exact float measures quantize at scale 9 and share this exact coefficient
+state; native ones sum in `FLOAT` under the portable guards. Unsafe bounded
+accumulations are withheld and refuse rather than publishing partial sums.
+Means and ratios convert each operand once with its scale and divide once in
+float64 under the shared error bounds.
 
 Timestamps are exact at their declared scale, nanoseconds by default, from year
 1 to 9999 (`TIMESTAMP_TZ`, `TIMESTAMP_LTZ` and `TIMESTAMP_NTZ`; naive values

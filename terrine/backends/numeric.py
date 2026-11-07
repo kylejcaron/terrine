@@ -21,6 +21,7 @@ from terrine.errors import RefusalSpec
 
 __all__ = [
     "EXACT_OVERFLOW",
+    "below_resolution",
     "coefficient_bounds",
     "count_literal",
     "decimal_coefficient",
@@ -174,6 +175,19 @@ def quantized_float(
         (~finite).fill_null(false),
         (finite & ~fits).fill_null(false),
     )
+
+
+def below_resolution(value: ir.FloatingValue, coefficient: ir.Value) -> ir.BooleanValue:
+    """Whether a nonzero finite input quantized to zero, so an exact sum drops it.
+
+    ``coefficient`` is the exact scale-9 coefficient of ``value`` (its
+    ``quantized_float`` result through ``decimal_coefficient``), compared in its
+    own exact domain. A zero input, a NULL, or an input the quantization refused
+    (NULL coefficient, counted by its own flag) is not a discarded contribution.
+    """
+    zero = ibis.literal(0.0, type=dt.float64)
+    discarded = (value.cast(dt.float64) != zero) & (coefficient == exact_literal(0, coefficient))
+    return discarded.fill_null(ibis.literal(False))
 
 
 def float_ratio(

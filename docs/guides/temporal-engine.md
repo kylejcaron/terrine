@@ -672,22 +672,35 @@ and refuse a nonrepresentable required result before export. Checked-cast
 nulls cannot masquerade as missing data. Native decimal precision above 38 is
 not available on this route.
 
-Float32 widens to Float64. Every finite float entering a sum is quantized
-once to `DECIMAL(38, 9)`-scale values by the engine's float-to-decimal
-conversion (nearest, ties away from zero, with about $10^{-16}$ relative
-binary64 conversion error), so values within that error of a halfway point
-may round either way; only the stated window-sum bound is promised.
-The result takes the declared-decimal coefficient path at scale 9.
-Thus `6e-10` becomes `1e-9`,
-and the exact tie `1/1024` becomes `0.000976563`. Float state carries
-`value_scale=9` and counts of non-finite and out-of-range inputs, without
-data-derived scales. DuckDB accumulates in unbounded `BIGNUM`, PostgreSQL
-in `NUMERIC`, BigQuery in `BIGNUMERIC`, and Snowflake in `NUMBER(38, 0)`.
-Bounded engines use the declared-decimal accumulation guards and refuse
-`terrine.temporal.exact_overflow` rather than publish incomplete state.
-Subtracting prefixes is exact, so older history cannot cancel a small window.
+Float32 widens to Float64. A float measure declared `exact: false` (the
+`Model.from_tables` default) keeps no exact state: its group sum is the
+engine's binary64 `SUM` of the finite values, the prefix the running `SUM`
+of those group sums (`numeric_policy` is `native`), and non-finite inputs are
+counted in `float64_nonfinite_count` instead of added. Where the policy
+bounds float arithmetic, the state also carries the group's scaled magnitude
+bound (`sum_bound`) and withheld-row count (`sum_withheld`), and the prefix
+withholds states whose accumulated magnitudes may leave half the range, as
+the fixed-precision prefix does. The window publishes the binary64 prefix
+difference within $2\,n_P\,2^{-53}\sum_{i\in P}|x_i|$ of the exact sum, $P$
+the unit's history through the window end.
 
-For original float inputs in window $W$, the published sum satisfies
+Every finite float of an exact measure is quantized once to
+`DECIMAL(38, 9)`-scale values by the engine's float-to-decimal conversion
+(nearest, ties away from zero, with about $10^{-16}$ relative binary64
+conversion error), so values within that error of a halfway point may round
+either way; only the stated window-sum bound is promised. The result takes
+the declared-decimal coefficient path at scale 9. Thus `6e-10` becomes
+`1e-9`, and the exact tie `1/1024` becomes `0.000976563`. Float state
+carries `value_scale=9` and counts of non-finite, out-of-range and
+below-resolution inputs (`float64_below_resolution_count`: nonzero values
+that quantized to zero), without data-derived scales. DuckDB accumulates in
+unbounded `BIGNUM`, PostgreSQL in `NUMERIC`, BigQuery in `BIGNUMERIC`, and
+Snowflake in `NUMBER(38, 0)`. Bounded engines use the declared-decimal
+accumulation guards and refuse `terrine.temporal.exact_overflow` rather than
+publish incomplete state. Subtracting prefixes is exact, so older history
+cannot cancel a small window.
+
+For original float inputs in window $W$, the published exact sum satisfies
 $|\hat S-S| \le e_S = 10^{-9}n_W+10^{-12}\sum_{i\in W}|x_i|$.
 Means divide that bound by their actual denominator, including per-day means.
 Means and ratios convert each exact operand once at its own scale, then
@@ -703,11 +716,15 @@ $$
 
 When $0<|\hat D|\le e_D$, the ratio is still returned without a stated
 accuracy bound. Floats have no bitwise or order-independence promise.
-Nonzero float measures below $5\cdot10^{-10}$ disappear from sums: declare
-them as decimals (for example `DECIMAL(18, 12)` for a `1e-12` measure),
-or record micro-units so `1e-12` becomes `1e-6` before binding the measure.
-Row predicates compare original values; output thresholds compare the
-published quantized result.
+Nonzero float measures below $5\cdot10^{-10}$ disappear from exact sums; the
+window's discarded-term count (a prefix difference of
+`float64_below_resolution_count`) then sets `__reason` to `below_resolution`
+beside the published sum of the retained terms, with `__complete` unchanged,
+and means and ratios of that sum carry the note. Declare such measures as
+decimals (for example `DECIMAL(18, 12)` for a `1e-12` measure), or record
+micro-units so `1e-12` becomes `1e-6` before binding the measure. Row
+predicates compare original values; output thresholds compare the published
+result.
 
 Window aggregation keeps its data-dependent checks as boolean flag columns
 of its own relation (`TemporalResult.row_checks`: endpoint alignment,
@@ -740,9 +757,11 @@ aggregate failed counts and identifiers only, never customer rows, keys, or
 values. `terrine.temporal.float64_precision` identifies, in `context["reason"]`,
 `nonfinite_input` (a non-finite value at or before the end of a non-empty
 window), `out_of_range` (an exact binary64 magnitude at least $10^{29}$), or
-`bound_overflow` (a result beyond binary64's range). The literal `1e29` is
-admitted because its exact value is just below $10^{29}$; the next float up
-is refused.
+`bound_overflow` (a result beyond binary64's range; on a policy that bounds
+float arithmetic also a finite result withheld before the engine could raise:
+a history whose magnitude sum reaches half the range, or a quotient or
+product outside the guarded range). The literal `1e29` is admitted because
+its exact value is just below $10^{29}$; the next float up is refused.
 
 ## Exact timestamp windows
 
@@ -800,16 +819,18 @@ original scale; counts use a checked exact integer representation.
 not a wide internal prefix whose later window fits. Conversion booleans have
 no numeric precision policy.
 
-A float window differences exact scale-9 coefficient prefixes, then converts
-the result to float64 under the quantized bounds above. Means and ratios
-convert each exact operand once and divide once in float64, including nested
-ratios of means; they do not retain unrounded intermediate quotients.
-Float outputs carry `numeric_policy=None` and no error column on every
-backend; eligibility thresholds and state-panel bins compare the published
-value. A known quantized zero denominator is NULL with `zero_denominator`.
-Cohort totals and means and
-cumulative lifetime value reduce published binary64 values natively and refuse
-`bound_overflow` when the result is not finite.
+An exact float window differences scale-9 coefficient prefixes, then converts
+the result to float64 under the quantized bounds above; a native float window
+differences binary64 running sums and publishes the difference unconverted.
+Means and ratios convert each exact operand once and divide once in float64,
+including nested ratios of means; they do not retain unrounded intermediate
+quotients. Float outputs carry `numeric_policy=None`, `arithmetic` set to
+`native` or `exact`, and no error column on every backend; eligibility
+thresholds and state-panel bins compare the published value. A known
+quantized zero denominator is NULL with `zero_denominator`. Cohort totals
+and means and cumulative lifetime value reduce published binary64 values
+natively and refuse `bound_overflow` when the result is not finite or when a
+policy that bounds float arithmetic withheld it.
 
 Run the focused fast boundary and window checks with
 `uv run pytest tests/temporal/test_prefix_lookup.py tests/temporal/test_window_aggregates.py`.

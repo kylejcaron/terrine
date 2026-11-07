@@ -659,6 +659,78 @@ def test_quantization_rounds_to_nearest_nano_unit(con, value, expected):
     assert abs(Fraction(actual) - Fraction(value)) <= window_sum_bound([value])
 
 
+@pytest.mark.parametrize(
+    "values,aggregation,expected,reason",
+    [
+        # Every nonzero contribution quantizes to zero: the exact sum is zero and says so.
+        ([1e-10, 2e-10, 4e-10], "sum", Fraction(0), "below_resolution"),
+        # A mixed window publishes the retained sum and still notes the loss.
+        ([4e-10, 1.0], "sum", Fraction(1), "below_resolution"),
+        ([4e-10, 1.0], "avg_event", Fraction(1, 2), "below_resolution"),
+        # Exact zeros are not discarded contributions.
+        ([0.0, -0.0], "sum", Fraction(0), None),
+        # A rounded contribution is retained, not discarded.
+        ([6e-10, 1.0], "sum", Fraction(1) + Fraction(1, 10**9), None),
+    ],
+)
+def test_exact_sum_notes_discarded_sub_resolution_contributions(
+    con, values, aggregation, expected, reason
+):
+    pair = _state(con, values, aggregation=aggregation, exact=True)
+    result = _result(_anchors(con), [pair])
+    (row,) = _rows(con, result)
+    meta = result.columns["requested"]
+    divisor = len(values) if aggregation == "avg_event" else 1
+    assert abs(Fraction(row["requested"]) - expected) <= window_sum_bound(values) / divisor
+    assert row[meta.reason_column] == reason
+    # The note describes the published value; it does not make the window incomplete.
+    assert row[meta.complete_column] is True
+
+
+def test_sub_resolution_note_counts_only_the_window_itself(con):
+    """The discarded-term count is a prefix difference: history before the window
+    start does not note a later window, and the window holding the loss does."""
+    pair = _state(
+        con,
+        [4e-10, 1.0],
+        times=[datetime(2025, 1, 1, 12, tzinfo=UTC), datetime(2025, 1, 2, 12, tzinfo=UTC)],
+        exact=True,
+    )
+    later = _result(_anchors(con), [pair])
+    (row,) = _rows(con, later)
+    assert (row["requested"], row[later.columns["requested"].reason_column]) == (1.0, None)
+    earlier = _result(_anchors(con, time="2025-01-01 00:00:00+00"), [pair])
+    (row,) = _rows(con, earlier)
+    reason = row[earlier.columns["requested"].reason_column]
+    assert (row["requested"], reason) == (0.0, "below_resolution")
+
+
+def test_ratio_carries_an_operand_note_and_keeps_blocking_reasons_first(con):
+    numerator = _state(con, [4e-10, 1.0], name="numerator", exact=True)
+    denominator = _state(con, [2.0], name="denominator", exact=True)
+    result = _result(_anchors(con), [numerator, denominator], kind="ratio")
+    (row,) = _rows(con, result)
+    assert row["requested"] == 0.5
+    assert row[result.columns["requested"].reason_column] == "below_resolution"
+    # A quantized zero denominator is unavailable, whatever the numerator noted.
+    zero = _state(con, [4e-10, -4e-10], name="denominator", exact=True)
+    result = _result(_anchors(con), [numerator, zero], kind="ratio")
+    (row,) = _rows(con, result)
+    assert row["requested"] is None
+    assert row[result.columns["requested"].reason_column] == "zero_denominator"
+
+
+def test_native_sum_keeps_sub_resolution_contributions_without_a_note(con):
+    values = [1e-10, 2e-10, 4e-10]
+    pair = _state(con, values, exact=False)
+    result = _result(_anchors(con), [pair])
+    (row,) = _rows(con, result)
+    total = sum(map(Fraction, values), Fraction())
+    assert abs(Fraction(row["requested"]) - total) <= native_window_bound(values)
+    assert row["requested"] == pytest.approx(7e-10, rel=1e-15)
+    assert row[result.columns["requested"].reason_column] is None
+
+
 def test_ratio_with_zero_quantized_denominator_is_null(con):
     numerator = _state(con, [1.0], name="numerator")
     denominator = _state(con, [4e-10, -4e-10, 3e-10], name="denominator")

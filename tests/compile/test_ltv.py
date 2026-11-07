@@ -174,6 +174,47 @@ def test_cumulative_partitions_repeated_anchors_and_propagates_missing_period():
         con.disconnect()
 
 
+def test_cumulative_reason_separates_missing_periods_from_notes_on_published_values():
+    """An exact float period that discarded a sub-resolution contribution publishes
+    its value with ``below_resolution``; the cumulative value carries that note
+    while every contributing period is present, and a missing period's own
+    reason once one is not."""
+    con, model = _trajectory_model()
+    try:
+        con.raw_sql(
+            "INSERT INTO events (user_id, ts, kind, amount, float_amount) VALUES "
+            "('u2', TIMESTAMPTZ '2025-01-02 00:00:00+00', 'revenue', 0, 4e-10), "
+            "('u2', TIMESTAMPTZ '2025-01-10 00:00:00+00', 'revenue', NULL, NULL)"
+        )
+        design = Design(
+            "user",
+            EventAnchor("purchase", occurrence="first"),
+            shape=CohortSpec(
+                origin="purchase",
+                trajectory=Trajectory("float_revenue", "7d", periods=3, cumulative=True),
+            ),
+        )
+        compiled = compile_ltv(design, model)
+        rows = _collect(con, compiled).to_pylist()
+        u2 = sorted((row for row in rows if row["unit"] == "u2"), key=lambda row: row["age"])
+        assert [row["period_value"] for row in u2] == [0.0, None, 0.0]
+        assert [row["period_value__reason"] for row in u2] == [
+            "below_resolution",
+            "all_values_null",
+            None,
+        ]
+        assert [row["period_value__complete"] for row in u2] == [True, True, True]
+        assert [row["cumulative_value"] for row in u2] == [0.0, None, None]
+        assert [row["cumulative_value__reason"] for row in u2] == [
+            "below_resolution",
+            "all_values_null",
+            "all_values_null",
+        ]
+        assert [row["cumulative_value__complete"] for row in u2] == [True, False, False]
+    finally:
+        con.disconnect()
+
+
 def test_portable_integer_cumulative_sums_in_its_native_domain(monkeypatch):
     """The portable policy bounds decimal and binary64 running totals only; integer
     periods accumulate as they are."""

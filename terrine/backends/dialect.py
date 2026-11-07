@@ -66,8 +66,10 @@ _SEED_BIAS = 1 - 16 * _UNIT_ROUNDOFF
 _FLOAT_SCALE = 2.0**-64
 _FLOAT_TINY = 2.0**-900
 # Admitted binary64 sums stay within half the range, so a difference of two fits.
-_FLOAT_LIMIT = math.ldexp(sys.float_info.max, -65)
-# A binary64 quotient is evaluated only when it is known to lie within 2**±1020.
+_FLOAT_HALF_RANGE = math.ldexp(sys.float_info.max, -1)
+_FLOAT_LIMIT = math.ldexp(_FLOAT_HALF_RANGE, -64)
+# A binary64 quotient is evaluated only when it is known to lie within 2**±1020;
+# a product only within 2**-1020 and half the range.
 _QUOTIENT_RANGE = 2.0**1020
 
 
@@ -147,10 +149,10 @@ class Dialect:
     # Fixed-precision state carries an accumulated binary64 magnitude bound so
     # that an accumulation leaving the domain refuses; native exact types do not.
     bounds_accumulations: ClassVar[bool] = True
-    # Binary64 sums and quotients are withheld before leaving the range where
-    # float arithmetic raises on overflow or underflow instead of yielding an
-    # infinity or zero; an IEEE 754 engine publishes the non-finite result for
-    # the finite check to refuse.
+    # Binary64 sums, quotients and products are withheld before leaving the
+    # range where float arithmetic raises on overflow or underflow instead of
+    # yielding an infinity or zero; an IEEE 754 engine publishes the non-finite
+    # result for the finite check to refuse.
     bounds_float_arithmetic: ClassVar[bool] = True
 
     def exact_type(self) -> dt.DataType:
@@ -373,6 +375,31 @@ class Dialect:
         )
         safe = (d != zero) & ((numerator == zero) | within)
         return cast(ir.FloatingValue, safe.ifelse(numerator / denominator, ibis.null(dt.float64)))
+
+    def float_product(self, left: ir.FloatingValue, right: ir.FloatingValue) -> ir.FloatingValue:
+        """``left * right`` in binary64; NULL where the product may leave the range.
+
+        The product is evaluated only when it is known to lie between
+        ``2**-1020`` and half the range, decided without any intermediate
+        leaving the range. For ``|right| >= 1`` the product cannot round to zero
+        (``|left * right| >= |left|``) and ``|left| <= (MAX / 2) / |right|``
+        suffices against overflow: the quotient is normal, within ``u`` of
+        exact, so ``|left * right| <= (MAX / 2)(1 + u) < MAX``. For
+        ``0 < |right| < 1`` the product cannot overflow (``|left * right| <
+        |left|``) and ``|left| >= 2**-1020 / |right|`` suffices against zero:
+        that quotient lies in ``(2**-1020, 2**54]``, so
+        ``|left * right| >= 2**-1020 (1 - u)``. A zero operand multiplies to
+        zero; a NULL operand yields NULL.
+        """
+        a, b = left.abs(), right.abs()
+        one = ibis.literal(1.0, type=dt.float64)
+        zero = ibis.literal(0.0, type=dt.float64)
+        within = cast(
+            ir.BooleanValue,
+            (b >= one).ifelse(a <= _FLOAT_HALF_RANGE / b, a >= (1.0 / _QUOTIENT_RANGE) / b),
+        )
+        safe = (left == zero) | (right == zero) | within
+        return cast(ir.FloatingValue, safe.ifelse(left * right, ibis.null(dt.float64)))
 
     def exact_subtract(self, left: ir.Value, right: ir.Value) -> ir.Value:
         """Subtract exactly; a difference leaving the fixed domain is NULL.
@@ -606,8 +633,24 @@ class Dialect:
     def lookup_keys(
         self, point: ir.TimestampValue, state: ir.TimestampValue
     ) -> tuple[ir.Value, ir.Value]:
-        """Keys comparing a point cutoff with a state instant: the order keys."""
-        return self.timestamp_order_key(point), self.timestamp_order_key(state)
+        """Keys comparing a point cutoff with a state instant: the order keys.
+
+        The portable lookup unions both keys into one timeline, which needs
+        one type: an instant whose scale is unstated (a fixed anchor's
+        literal) is the engine's default microsecond precision, so it takes
+        the other side's stated microsecond scale.
+        """
+        point_key, state_key = self.timestamp_order_key(point), self.timestamp_order_key(state)
+        point_type, state_type = point_key.type(), state_key.type()
+        if (
+            isinstance(point_type, dt.Timestamp)
+            and isinstance(state_type, dt.Timestamp)
+            and point_type.timezone == state_type.timezone
+            and {point_type.scale, state_type.scale} == {None, 6}
+        ):
+            target = dt.Timestamp(timezone=point_type.timezone, scale=6)
+            return point_key.cast(target), state_key.cast(target)
+        return point_key, state_key
 
     def reverse_time_key(self, value: ir.TimestampValue) -> ir.Value:
         # One exact scalar: finite instants' nanoseconds stay far below 10**38.

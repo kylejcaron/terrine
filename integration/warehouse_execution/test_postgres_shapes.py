@@ -627,3 +627,43 @@ def test_native_cohort_total_refuses_where_float8_would_raise(postgres_scratch, 
         assert error.value.context["source"] == "cohort"
     finally:
         duckdb.disconnect()
+
+
+def test_native_cohort_mean_refuses_where_float8_would_underflow(postgres_scratch, tmp_path):  # noqa: F811
+    """A native cohort mean of period spend equals DuckDB's for ordinary magnitudes
+    and keeps the value column's native arithmetic; a unit whose value is below
+    2**-1020 of the cohort's largest would make float8 raise on the normalizing
+    quotient, so the mean refuses ``bound_overflow`` instead."""
+    from terrine.errors import TerrineError
+
+    rows = [("a", 1, "2.0"), ("b", 1, "6.0")]
+    duckdb = ibis.duckdb.connect()
+    postgres = postgres_scratch.con
+    try:
+        duckdb_model = _native_trajectory_model(duckdb, rows)
+        postgres_model = _native_trajectory_model(postgres, rows)
+        design = tr.Design(
+            "user",
+            tr.EventAnchor("orders", occurrence="first"),
+            shape=CohortSpec("orders", Trajectory("spend", "1d", periods=1, cumulative=False)),
+            administrative_cutoff=datetime(2025, 1, 6, tzinfo=UTC),
+        )
+        grouping = CohortGrouping("1d", datetime(2025, 1, 1, tzinfo=UTC), statistic="mean")
+
+        def summary(model):
+            cohorts = design.build(model).cohorts(grouping=grouping, value_column="period_value")
+            materialized = cohorts.materialize(budget=_BUDGET)
+            assert materialized.columns["value"].arithmetic == "native"
+            return sorted(materialized.to_pyarrow().to_pylist(), key=lambda row: row["age"])
+
+        expected = summary(duckdb_model)
+        assert [row["value"] for row in expected] == [4.0]
+        assert summary(postgres_model) == expected
+        _insert_orders(postgres, [("c", 1, "5e-324")])
+        with pytest.raises(TerrineError) as error:
+            summary(postgres_model)
+        assert error.value.code == "terrine.temporal.float64_precision"
+        assert error.value.context["reason"] == "bound_overflow"
+        assert error.value.context["source"] == "cohort"
+    finally:
+        duckdb.disconnect()

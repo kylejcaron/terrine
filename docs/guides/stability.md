@@ -60,7 +60,7 @@ each operation is recorded in the per-operation
 summarized in [dataset capabilities](capabilities.md); an engine that does not
 verify an operation refuses it with a coded refusal. Numerical results follow
 the [shared numerical contract](backend-compatibility.md#shared-numerical-contract):
-float inputs quantize once and results meet stated bounds, not exact bits.
+native and exact float results meet their stated bounds, not exact bits.
 
 ## Deprecation
 

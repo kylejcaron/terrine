@@ -280,6 +280,41 @@ def test_native_keys_read_naive_states_as_utc_under_a_local_session(strategy):
         con.disconnect()
 
 
+def test_portable_union_lookup_aligns_an_unscaled_point_literal_with_microsecond_state():
+    """A fixed anchor's literal instant carries no stated scale while a stored
+    TIMESTAMPTZ state is microsecond-scaled; the portable union timeline needs one
+    type, so the policy states the microsecond scale on both keys."""
+    from datetime import UTC, datetime
+
+    from terrine.backends.dialect import dialect_scope
+    from terrine.temporal.lookup import lookup_prefix
+
+    con = ibis.duckdb.connect()
+    try:
+        prefix = con.sql("""
+            SELECT 'a' AS _unit, ts::TIMESTAMPTZ AS _timestamp, n
+            FROM (VALUES ('2025-01-01 12:00:00+00', 1), ('2025-01-02 12:00:00+00', 2)) AS s(ts, n)
+        """)
+        # The cutoff lands between the two states: 2025-01-01 13:00 UTC.
+        points = con.sql("SELECT 'a' AS unit, 1 AS request").mutate(
+            cutoff=ibis.timestamp(datetime(2025, 1, 3, 1, tzinfo=UTC)) + ibis.interval(hours=-36)
+        )
+        assert points.cutoff.type().scale is None and prefix._timestamp.type().scale == 6
+        with dialect_scope("generic"):
+            result = lookup_prefix(
+                points,
+                prefix,
+                unit_column="unit",
+                timestamp_column="cutoff",
+                strategy="union_window",
+            )
+            table = result.table
+            rows = con.to_pyarrow(table.select(n=table[result.columns["n"]])).to_pylist()
+        assert rows == [{"n": 1}]
+    finally:
+        con.disconnect()
+
+
 @pytest.mark.parametrize("strategy", ["native", "union_window"])
 def test_lookup_carries_only_requested_fields(strategy):
     from terrine.temporal.lookup import lookup_prefix

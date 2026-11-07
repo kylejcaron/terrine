@@ -1,6 +1,8 @@
-"""Stable reasons for unavailable values, censoring and split exclusions.
+"""Stable reasons for unavailable or reduced values, censoring and split exclusions.
 
 Use the registry to interpret completeness metadata before choosing an imputation policy.
+A reason beside a null value says why it is unavailable; ``below_resolution`` is the
+one reason published beside a value, describing what that value omits.
 Integrity-check keys and refusal-context reasons are separate vocabularies.
 
 Example: REASONS["incomplete_coverage"]
@@ -13,6 +15,7 @@ __all__ = ["REASONS"]
 
 ADMINISTRATIVE_CUTOFF = "administrative_cutoff"
 ALL_VALUES_NULL = "all_values_null"
+BELOW_RESOLUTION = "below_resolution"
 COMPLETENESS_EVIDENCE_MISSING = "completeness_evidence_missing"
 DEADLINE_ELAPSED = "deadline_elapsed"
 EMBARGO = "embargo"
@@ -50,6 +53,10 @@ REASONS: Mapping[str, str] = MappingProxyType(
     {
         ADMINISTRATIVE_CUTOFF: "Follow-up or a contribution ends at the administrative cutoff.",
         ALL_VALUES_NULL: "Events or an attribute observation exist, but their values are all null.",
+        BELOW_RESOLUTION: (
+            "An exact float sum discarded at least one nonzero contribution below its"
+            " 1e-9 resolution; the published value is the sum of the retained contributions."
+        ),
         COMPLETENESS_EVIDENCE_MISSING: "The outcome has no completeness evidence.",
         DEADLINE_ELAPSED: "The next funnel step did not occur before its deadline.",
         EMBARGO: "The row origin falls within the embargo between temporal splits.",

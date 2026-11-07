@@ -127,11 +127,13 @@ def test_exact_opt_in_keeps_quantized_path(con):
         FixedDate(_T0),
         features={name: agg(name, window=("-7d", "0s")) for name in ("spend", "largest")},
     )
-    results = {}
+    results, reasons = {}, {}
     for exact in (False, True):
         model = _model(con, ["a", "a"], times, amounts, exact=exact)
         frame = design.build(model)
-        results[exact] = frame.to_pyarrow()["spend"][0].as_py()
+        table = frame.to_pyarrow()
+        results[exact] = table["spend"][0].as_py()
+        reasons[exact] = (table["spend__reason"][0].as_py(), table["spend__complete"][0].as_py())
         # Every metric column records the arithmetic its declaration chose.
         mode = "exact" if exact else "native"
         assert {name: frame.columns[name].arithmetic for name in ("spend", "largest")} == {
@@ -141,7 +143,10 @@ def test_exact_opt_in_keeps_quantized_path(con):
         assert tr.preview(design, model).strategy["spend"] == (
             "sparse_day_prefix/native" if exact else "sparse_day_prefix/native_float"
         )
+    # The exact path says where it discarded nonzero contributions; the native
+    # path keeps them and has nothing to note. Neither makes the window incomplete.
     assert results[True] == 0.0
+    assert reasons == {True: ("below_resolution", True), False: (None, True)}
     total = sum(map(Fraction, amounts), Fraction())
     assert abs(Fraction(results[False]) - total) <= native_window_bound(amounts)
 
