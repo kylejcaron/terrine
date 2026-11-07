@@ -576,7 +576,7 @@ Fit on training rows; reuse unchanged frozen scoring limits.
 
 ## window
 
-Use ordered integral elapsed endpoints with s/m/h/d/w units.
+Use ordered integral elapsed endpoints with s/min/h/d/w units.
 
 [Recovery guide](../guides/design-specs.md)
 

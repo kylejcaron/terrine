@@ -114,7 +114,7 @@ _RECOVERY = {
     "temporal": ("temporal-engine.md", "Check exact endpoints, coverage and arithmetic validity."),
     "trajectory": ("trajectories-survival.md", "Use bounded periods and consistent observation."),
     "transform": ("ml-staging.md", "Fit on training rows; reuse unchanged frozen scoring limits."),
-    "window": ("design-specs.md", "Use ordered integral elapsed endpoints with s/m/h/d/w units."),
+    "window": ("design-specs.md", "Use ordered integral elapsed endpoints with s/min/h/d/w units."),
 }
 
 
