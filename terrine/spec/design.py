@@ -214,8 +214,8 @@ class Design:
 
     def __init__(
         self,
-        unit: str | None,
-        anchor: FixedDate | EventAnchor | Schedule,
+        unit: str | None = None,
+        anchor: FixedDate | EventAnchor | Schedule | None = None,
         *,
         features: Mapping[str, Expr | Predicate] | None = None,
         outcomes: Mapping[str, Expr | Predicate] | None = None,

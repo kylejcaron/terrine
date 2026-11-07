@@ -34,7 +34,7 @@ class SessionSpec:
     Attributes:
         gap: Nonnegative session threshold as a Duration; zero groups only simultaneous events.
 
-    Example: spec.SessionSpec(gap="30m")
+    Example: spec.SessionSpec(gap="30min")
     """
 
     gap: Duration

@@ -330,14 +330,14 @@ def test_event_sequence_matches_bounded_session_design():
             **_REQUIRED["event_sequence"],
             **_SHARED,
             occurrence="each",
-            session_gap="30m",
+            session_gap="30min",
             outcomes=_OUTCOMES,
         ),
         Design(
             "user",
             EventAnchor("purchase", "each"),
             shape=EventSequence(
-                "purchase", Window(0, "7d"), max_events=9, sessions=SessionSpec("30m")
+                "purchase", Window(0, "7d"), max_events=9, sessions=SessionSpec("30min")
             ),
             **_SHARED,
             outcomes=_OUTCOMES,

@@ -1,9 +1,10 @@
 """Exact elapsed-second windows; endpoints are half-open and never bucketed.
 
-Public elapsed durations are a signed integer followed by ``s``, ``m``, ``h``,
-``d`` or ``w``: seconds, minutes, hours, days or weeks. An optional ``+`` or
-``-`` sign is accepted. Bare integer ``0`` is allowed; nonzero bare integers,
-decimals (``"1.5d"``), compounds (``"1h30m"``) and unitless strings are refused.
+Public elapsed durations use signed integer units ``s``, ``min``, ``h``, ``d``
+or ``w`` for seconds, minutes, hours, days or weeks. An optional ``+`` or ``-``
+sign is accepted. Bare integer ``0`` is allowed; nonzero bare integers,
+decimals (``"1.5d"``), noncanonical compounds and unitless strings are refused.
+Minutes are spelled ``min``; ``m`` is reserved for calendar months spelled ``mo``.
 Offsets are exact integer seconds within the signed 64-bit range, held as
 `Duration` values whose text is the largest exact unit.
 
@@ -36,9 +37,10 @@ _INVALID_WINDOW = RefusalSpec(
     "Window start {start_offset!r} is not before end {end_offset!r}. "
     "Use window=(earlier_time, later_time); the start is included and the end is excluded.",
 )
-_PATTERN = re.compile(r"([+-]?[0-9]+)([smhdw])", re.ASCII)
+_PATTERN = re.compile(r"([+-]?[0-9]+)(min|[shdw])", re.ASCII)
+_LEGACY_PATTERN = re.compile(r"([+-]?[0-9]+)(min|m|[shdw])", re.ASCII)
 _CALENDAR_STEP = re.compile(r"([0-9]{1,19})(mo|y)", re.ASCII)
-_UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
+_UNITS = {"s": 1, "min": 60, "m": 60, "h": 3600, "d": 86400, "w": 604800}
 _MIN = -(2**63)
 _MAX = 2**63 - 1
 _MAX_MONTHS = 10**19 - 1
@@ -66,7 +68,6 @@ class Duration:
         if isinstance(seconds, bool) or not isinstance(seconds, int) or not _MIN <= seconds <= _MAX:
             raise _INVALID_DURATION.error(field="seconds", value=str(seconds))
         object.__setattr__(self, "seconds", seconds)
-
     def __str__(self) -> str:
         text = _duration(abs(self.seconds), weeks=True)
         return f"-{text}" if self.seconds < 0 else text
@@ -141,17 +142,33 @@ def calendar_or_duration(
     return duration(value, field=field)
 
 
-def _seconds(value: str | int, *, field: str) -> int:
+def _seconds(value: str | int, *, field: str, legacy_minutes: bool = False) -> int:
     """Normalize elapsed seconds, including trusted normalized integer metadata."""
     if isinstance(value, bool):
         raise _INVALID_DURATION.error(field=field, value=str(value))
     if isinstance(value, int):
         result = value
-    elif isinstance(value, str) and (match := _PATTERN.fullmatch(value)):
+    elif isinstance(value, str) and (
+        match := (_LEGACY_PATTERN if legacy_minutes else _PATTERN).fullmatch(value)
+    ):
         digits = match[1].lstrip("+-").lstrip("0") or "0"
         if len(digits) > 19:
             raise _INVALID_DURATION.error(field=field, value=value)
         result = int(digits) * (-1 if match[1].startswith("-") else 1) * _UNITS[match[2]]
+    elif isinstance(value, str) and (
+        match := re.fullmatch(r"([+-]?)([0-9]+)h([0-9]+)min", value, re.ASCII)
+    ):
+        if len(match[2]) > 19 or len(match[3]) > 19:
+            raise _INVALID_DURATION.error(field=field, value=value)
+        result = (int(match[2]) * 3600 + int(match[3]) * 60) * (
+            -1 if match[1] == "-" else 1
+        )
+    elif isinstance(value, str) and re.fullmatch(r"[+-]?[0-9]+m", value, re.ASCII):
+        raise _INVALID_DURATION.error(
+            field=field,
+            value=value,
+            hint="use 'min' for minutes or 'mo' for months",
+        )
     else:
         raise _INVALID_DURATION.error(field=field, value=str(value))
     if not _MIN <= result <= _MAX:
@@ -174,11 +191,16 @@ def _duration(value: int, *, weeks: bool = False, signed: bool = False) -> str:
     sign = "-" if signed and value < 0 else "+" if signed else ""
     if weeks and magnitude % 604_800 == 0:
         return f"{sign}{magnitude // 604_800}w"
-    for unit in ("d", "h", "m", "s"):
-        size = _UNITS[unit]
-        if magnitude % size == 0:
-            return f"{sign}{magnitude // size}{unit}"
-    raise AssertionError("every integer is a multiple of one second")
+    if magnitude % 86_400 == 0:
+        return f"{sign}{magnitude // 86_400}d"
+    if magnitude % 3_600 == 0:
+        return f"{sign}{magnitude // 3_600}h"
+    if magnitude >= 3_600 and magnitude % 60 == 0:
+        hours, remainder = divmod(magnitude, 3_600)
+        return f"{sign}{hours}h{remainder // 60}min"
+    if magnitude % 60 == 0:
+        return f"{sign}{magnitude // 60}min"
+    return f"{sign}{magnitude}s"
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -186,8 +208,8 @@ class Window:
     """Describe an elapsed [start, end) window relative to t0 or a selected event time.
 
 
-    Offsets use signed integers with s, m, h, d or w units, Duration values, or bare 0.
-    Decimals, compound durations and calendar mo/y offsets are refused; calendar
+    Offsets use signed integers with s, min, h, d or w units, Duration values, or bare 0.
+    Decimals, noncanonical compounds and calendar mo/y offsets are refused; calendar
     steps are accepted only by Schedule.every and recipe every= parameters.
 
     Args:

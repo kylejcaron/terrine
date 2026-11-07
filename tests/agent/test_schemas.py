@@ -80,6 +80,22 @@ def test_discovery_schema_accepts_canonical_temporal_nodes():
         validator.validate(json.loads(to_json(design)))
 
 
+
+def test_discovery_schema_requires_minute_units_to_use_min():
+    from jsonschema import Draft202012Validator
+
+    from terrine.agent.design_schema import design_schema
+    from terrine.spec import Design, EventAnchor
+    from terrine.spec.io import to_json
+
+    validator = Draft202012Validator(design_schema())
+    document = json.loads(
+        to_json(Design("user", EventAnchor("start", offset="1min")))
+    )
+    validator.validate(document)
+    document["design"]["anchor"]["offset"] = "1m"
+    assert not validator.is_valid(document)
+
 def test_discovery_schema_accepts_boolean_features_and_outcomes():
     from jsonschema import Draft202012Validator
 

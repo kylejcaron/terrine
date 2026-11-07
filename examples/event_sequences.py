@@ -102,7 +102,7 @@ def main() -> None:
         )
         budget = tr.Budget(max_rows=100, max_output_bytes=1_000_000)
         sequence = recipes.event_sequence(
-            "user", event="activity", horizon="2h", max_events=4, session_gap="30m",
+            "user", event="activity", horizon="2h", max_events=4, session_gap="30min",
         ).build(model).materialize(budget=budget)
         recipe_rows = sequence.table.to_pylist()
         headers = {row["unit"]: row for row in recipe_rows if not row["is_event"]}

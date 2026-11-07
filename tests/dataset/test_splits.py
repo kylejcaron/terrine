@@ -1,4 +1,4 @@
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any, cast
 from zoneinfo import ZoneInfo
 
@@ -13,6 +13,7 @@ from terrine.dataset.splits import (
     reason_counts,
 )
 from terrine.errors import TerrineError
+from terrine.windows import Duration
 
 
 def test_group_split_typed_keys_are_order_independent_and_never_alias() -> None:
@@ -71,6 +72,11 @@ def test_time_split_embargo_exclusions_have_reason_counts() -> None:
     result = assign_splits(rows, policy, catalog_timezone=UTC)
     assert result["gap"].split == "unassigned"
     assert reason_counts(result) == {"embargo": 1}
+
+
+def test_timesplit_accepts_duration():
+    policy = TimeSplit(train_until="2025-02-01", embargo=Duration(3600))
+    assert policy.embargo == timedelta(hours=1)
 
 
 def test_group_split_rejects_ambiguous_keys_and_invalid_fractions() -> None:

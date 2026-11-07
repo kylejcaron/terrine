@@ -34,9 +34,9 @@ uv run python examples/first_dataset.py
    constructor in `tr.recipes`; it returns an ordinary Design, not a wrapper.
    Names become output columns, with temporal validation on the same expressions.
    `design.describe(model)` explains rows, windows, completeness and output
-   columns before any source rows are read. Schedules accept calendar steps such
-   as `"1mo"` and include their end date; relative windows remain elapsed and
-   end-exclusive.
+   columns before any source rows are read. Durations use `min` for minutes
+   (for example, `"30min"`); schedules also accept calendar steps such as `"1mo"`
+   and include their end date. Relative windows remain elapsed and end-exclusive.
 3. **Frame** is a lazy compiled dataset. `Design.build(model)` does not materialize
    source rows. `frame.materialize()` collects a result with roles, column
    completeness, null reasons and provenance; an explicit budget bounds output.

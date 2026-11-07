@@ -17,7 +17,7 @@ from terrine.windows import Duration, Months
 
 def test_subday_duration_forms_share_canonical_spec_hashes():
     anchor = FixedDate("2025-03-01")
-    for left, right in (("60s", "1m"), ("60m", "1h"), ("24h", "1d")):
+    for left, right in (("60s", "1min"), ("60min", "1h"), ("24h", "1d")):
         one = Design(
             unit="user",
             anchor=anchor,
@@ -73,6 +73,21 @@ def test_unit_null_round_trips():
     assert error.value.code == "terrine.design.invalid"
     assert error.value.context["reason"] == "malformed_document"
 
+
+
+def test_schema4_document_with_m_loads_and_resaves_as_min():
+    design = Design("user", FixedDate("2025-01-01"), gap="5min")
+    legacy = to_yaml(design).replace("5min", "5m")
+
+    restored = from_yaml(legacy)
+
+    assert restored.gap == Duration(300)
+    assert "gap: 5min" in to_yaml(restored)
+
+
+def test_design_unit_defaults_to_none():
+    design = Design(anchor=FixedDate("2025-01-01"))
+    assert design.unit is None
 
 def test_canonical_document_omits_default_fields():
     minimal = Design("user", FixedDate("2025-03-01"))
@@ -135,13 +150,13 @@ def test_saved_design_documents_hold_canonical_duration_text(shape_name):
     shape: str | EventPanelSpec | SequentialSpec | LifeTable = "cross_section"
     elapsed_fields: dict[str, str] = {}
     if shape_name == "event_panel":
-        shape = EventPanelSpec((-1, 0, 1), period="60m", reference_period=-1)
+        shape = EventPanelSpec((-1, 0, 1), period="60min", reference_period=-1)
         elapsed_fields = {"period": "1h"}
     elif shape_name == "sequential":
         anchor = Schedule("24h", "2025-01-01", "2025-01-02")
         shape = SequentialSpec(
             Initiation("started", history_start=datetime(2024, 1, 1, tzinfo=UTC)),
-            anticipation="120m",
+            anticipation="120min",
             reference_period="-3h",
         )
         elapsed_fields = {"anticipation": "2h", "reference_period": "-3h"}

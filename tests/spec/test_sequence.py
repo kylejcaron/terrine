@@ -58,7 +58,7 @@ def test_sequence_request_round_trips_through_json_yaml_and_spec_hash():
         Window("-1d", "0d"),
         max_events=17,
         properties=("amount",),
-        sessions=SessionSpec("30m"),
+        sessions=SessionSpec("30min"),
         funnel=FunnelSpec("kind", ("view", "purchase"), within="2h"),
     )
     design = Design("user", EventAnchor("signup"), shape=shape)
@@ -99,7 +99,7 @@ def test_funnel_steps_require_distinct_declared_string_values():
 
 
 def test_session_gap_normalizes_to_a_duration():
-    assert SessionSpec("30m").gap == Duration(1800)
+    assert SessionSpec("30min").gap == Duration(1800)
     with pytest.raises(TerrineError):
         SessionSpec(cast(Any, True))
 

@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta, tzinfo
 from decimal import Decimal
 from fractions import Fraction
-from typing import Any, Literal
+from typing import Any, Literal, Protocol, runtime_checkable
 
 import terrine.reasons as reason_codes
 from terrine.errors import RefusalSpec, TerrineError
@@ -28,6 +28,12 @@ __all__ = [
 ]
 
 _INVALID = RefusalSpec("terrine.dataset.invalid_split", "Split input {field} is invalid: {reason}.")
+
+
+@runtime_checkable
+class _SecondDuration(Protocol):
+    @property
+    def seconds(self) -> int: ...
 
 
 def _boundary(value: date | datetime | str, field: str) -> date | datetime:
@@ -64,9 +70,14 @@ def _order_instant(value: date | datetime, field: str) -> datetime:
     return datetime.combine(value, datetime.min.time(), UTC)
 
 
-def _duration(value: str | timedelta) -> timedelta:
+def _duration(value: str | timedelta | _SecondDuration) -> timedelta:
     if isinstance(value, timedelta):
         result = value
+    elif isinstance(value, _SecondDuration):
+        try:
+            result = timedelta(seconds=value.seconds)
+        except OverflowError as error:
+            raise _INVALID.error(reason="out_of_range", field="embargo") from error
     elif isinstance(value, str):
         import re
 
@@ -119,7 +130,7 @@ class TimeSplit:
         *,
         train_until: date | datetime | str,
         validation_until: date | datetime | str | None = None,
-        embargo: str | timedelta = "0d",
+        embargo: str | timedelta | _SecondDuration = "0d",
         groups: GroupSplit | None = None,
     ) -> None:
         train = _boundary(train_until, "train_until")
