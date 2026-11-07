@@ -76,8 +76,8 @@
   every measure exact and their model hash, model references and retained-snapshot
   identities unchanged. A native measure has its own identity, so switching a
   metric's mode rebuilds its persisted layers. `Catalog.model_validate` accepts
-  version 3 only; load version 2 mappings with `Model.from_catalog` or
-  `load_catalog`.
+  version 3 only; load version 2 mappings with `Model.from_catalog` or load
+  catalog files with `load_catalog`.
 - `Events` replaces `keys=` and `values=` with one `key=` and named `metrics=`:
   declare each metric explicitly; generated metric names are removed. Labels,
   histories and events share a namespace, and `__` and `<source>_<column>`
@@ -271,8 +271,9 @@
   microsecond timestamps natively. The README design compiles to about 19.7k
   characters (from 66k); time-to-event and trial designs shrink by roughly
   three to five times. The scheduled scale tier checks each recipe's SQL size
-  and query time against hand-written queries of the same values (see the cost
-  guide's budget table).
+  and results against hand-written queries of the same values (see the cost
+  guide's budget table). Query-time comparisons are tracked separately; run
+  `uv run python -m benchmarks.run_cost` to measure them.
 - Warehouse exports retain scoring rows when there are no outcome windows.
 ### Fixed
 
