@@ -66,3 +66,45 @@ measurements and the [saved local record](../../benchmarks/results/duckdb-scale-
 These are measured workloads, not a promise of billion-row performance. Remote
 warehouse runs require owner authorization, credentials and separate measured
 backend evidence; none is inferred from SQL compilation.
+
+## Generated SQL and query-time budget
+
+The scheduled scale tier ([cost budget](../../integration/test_cost_budget.py))
+builds one ordinary Design per recipe over the synthetic workload at 10,000
+units and 300,000 events, and a hand-written query returning the same values
+([reference queries](../../benchmarks/workloads.py)). On that workload every
+window lies inside declared coverage, so completeness flags are constant and
+the check first asserts that both queries return equal values. Query time is
+the fastest of seven evaluations of each statement into a temporary table on
+the server; Python-side compilation and validation are measured separately by
+the [overhead benchmark](../../benchmarks/README.md#fixed-compiler-overhead).
+SQL size is `len(ibis.to_sql(frame.expr))`, the formatted statement; the
+statement sent for execution is more compact.
+
+| Budget | Ceiling |
+| --- | --- |
+| Recipe SQL | 30,000 characters per feature (declared features and outcomes, plus one for the measurement the recipe's shape adds) |
+| Recipe query time on DuckDB | 3 times the hand-written query |
+| Recipe query time on PostgreSQL 16 | 10 times the hand-written query |
+| README design SQL | 20,000 characters |
+| 5 metrics by 10 windows, BigQuery dialect | 1,000,000 characters (BigQuery accepts 1,024k) |
+
+Measured on 2026-11-07 (Apple M3 Pro; DuckDB 1.5.6; PostgreSQL 16.15). A value
+above its ceiling is open work: the check records it as an expected failure
+that turns into a failure once the recipe meets its ceiling.
+
+| Recipe | Features | SQL characters | DuckDB time ratio | PostgreSQL time ratio |
+| --- | ---: | ---: | ---: | ---: |
+| `time_series` | 3 | 21,555 | 2.6 | 5.8 |
+| `trial_panel` | 3 | 17,922 | 4.0 | 4.6 |
+| `event_panel` | 2 | 14,589 | 6.4 | does not run |
+| `ltv` | 1 | 79,098 | 6.9 | 7.2 |
+| `survival` | 3 | 65,663 | 6.3 | 21.6 |
+| `life_table` | 1 | 49,345 | 3.7–4.7 | 16.3 |
+| `state_panel` | 1 | 27,336 | 4.5 | 41.4 |
+| `event_sequence` | 3 | 21,685 | 4.2 | 4.7 |
+
+The README design measures 19,663 characters. The 5-metric by 10-window design
+measures 1,050,208 formatted characters in the BigQuery dialect, about 22,600
+per metric window. On PostgreSQL the `event_panel` statement fails to
+compile: the portable lookup casts a NULL struct anchor identifier.
