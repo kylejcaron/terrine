@@ -41,6 +41,11 @@
       "role": "outcome"
     },
     {
+      "name": "censored_by_reason",
+      "type": "map<string, int64>",
+      "role": "outcome"
+    },
+    {
       "name": "delayed_entries",
       "type": "int64",
       "role": "outcome"
@@ -98,6 +103,11 @@
       "role": "outcome"
     },
     {
+      "name": "censored_by_reason",
+      "type": "map<string, int64>",
+      "role": "outcome"
+    },
+    {
       "name": "delayed_entries",
       "type": "int64",
       "role": "outcome"
@@ -152,6 +162,11 @@
     {
       "name": "censored",
       "type": "int64",
+      "role": "outcome"
+    },
+    {
+      "name": "censored_by_reason",
+      "type": "map<string, int64>",
       "role": "outcome"
     },
     {

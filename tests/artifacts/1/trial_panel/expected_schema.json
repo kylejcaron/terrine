@@ -21,6 +21,11 @@
       "role": "feature"
     },
     {
+      "name": "paid_status",
+      "type": "bool",
+      "role": "eligibility"
+    },
+    {
       "name": "treatment",
       "type": "bool",
       "role": "treatment"
@@ -53,6 +58,11 @@
       "role": "feature"
     },
     {
+      "name": "paid_status",
+      "type": "bool",
+      "role": "eligibility"
+    },
+    {
       "name": "treatment",
       "type": "bool",
       "role": "treatment"
@@ -83,6 +93,11 @@
       "name": "orders_30d",
       "type": "int64",
       "role": "feature"
+    },
+    {
+      "name": "paid_status",
+      "type": "bool",
+      "role": "eligibility"
     },
     {
       "name": "treatment",

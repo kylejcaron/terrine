@@ -236,21 +236,31 @@ def _recipe_documents(data: Path) -> dict[str, dict[str, str]]:
 def output_schema(frame: Any) -> list[dict[str, str]]:
     """Return the ordered non-support columns of a built Frame's output."""
     materialized = frame.materialize(budget=_BUDGET)
+    support = {
+        *materialized._bookkeeping_columns(),
+        *materialized._support_columns(),
+        *(name for name in materialized.table.column_names if name.startswith("__terrine_")),
+    }
     return [
-        {"name": field.name, "type": str(field.type), "role": role}
+        {
+            "name": field.name,
+            "type": str(field.type),
+            "role": _role(field.name, materialized.roles, materialized.columns),
+        }
         for field in materialized.to_pyarrow().schema
-        if (role := _role(field.name, materialized.roles)) != "support"
+        if field.name not in support
     ]
 
 
-def _role(name: str, roles: Roles) -> str:
+def _role(name: str, roles: Roles, columns: Any) -> str:
     for role in fields(roles):
         value = getattr(roles, role.name)
         if value == name:
             return role.name
         if isinstance(value, tuple) and name in value:
             return role.name.removesuffix("s")
-    return "support"
+    metadata = columns.get(name)
+    return "output" if metadata is None else metadata.role
 
 
 @contextmanager

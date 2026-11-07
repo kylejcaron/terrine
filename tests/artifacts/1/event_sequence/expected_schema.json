@@ -16,6 +16,31 @@
       "role": "t0"
     },
     {
+      "name": "is_event",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "sequence_position",
+      "type": "int64",
+      "role": "output"
+    },
+    {
+      "name": "event_id",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "output"
+    },
+    {
+      "name": "event_time",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "output"
+    },
+    {
+      "name": "event_count",
+      "type": "int64",
+      "role": "event_property"
+    },
+    {
       "name": "orders_30d",
       "type": "int64",
       "role": "feature"
@@ -38,6 +63,31 @@
       "role": "t0"
     },
     {
+      "name": "is_event",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "sequence_position",
+      "type": "int64",
+      "role": "output"
+    },
+    {
+      "name": "event_id",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "output"
+    },
+    {
+      "name": "event_time",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "output"
+    },
+    {
+      "name": "event_count",
+      "type": "int64",
+      "role": "event_property"
+    },
+    {
       "name": "orders_30d",
       "type": "int64",
       "role": "feature"
@@ -58,6 +108,31 @@
       "name": "t0",
       "type": "timestamp[us, tz=UTC]",
       "role": "t0"
+    },
+    {
+      "name": "is_event",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "sequence_position",
+      "type": "int64",
+      "role": "output"
+    },
+    {
+      "name": "event_id",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "output"
+    },
+    {
+      "name": "event_time",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "output"
+    },
+    {
+      "name": "event_count",
+      "type": "int64",
+      "role": "event_property"
     },
     {
       "name": "orders_30d",

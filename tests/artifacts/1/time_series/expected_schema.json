@@ -24,6 +24,11 @@
       "name": "spend_next_14d",
       "type": "double",
       "role": "outcome"
+    },
+    {
+      "name": "has_orders",
+      "type": "bool",
+      "role": "eligibility"
     }
   ],
   "design.yaml": [
@@ -51,6 +56,11 @@
       "name": "spend_next_14d",
       "type": "double",
       "role": "outcome"
+    },
+    {
+      "name": "has_orders",
+      "type": "bool",
+      "role": "eligibility"
     }
   ],
   "definition.json": [
@@ -78,6 +88,11 @@
       "name": "spend_next_14d",
       "type": "double",
       "role": "outcome"
+    },
+    {
+      "name": "has_orders",
+      "type": "bool",
+      "role": "eligibility"
     }
   ]
 }

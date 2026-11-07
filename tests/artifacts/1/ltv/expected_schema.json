@@ -16,9 +16,19 @@
       "role": "t0"
     },
     {
+      "name": "age",
+      "type": "int64",
+      "role": "output"
+    },
+    {
       "name": "period_value",
       "type": "double",
       "role": "outcome"
+    },
+    {
+      "name": "period_value_mature",
+      "type": "bool",
+      "role": "output"
     },
     {
       "name": "orders_30d",
@@ -48,9 +58,19 @@
       "role": "t0"
     },
     {
+      "name": "age",
+      "type": "int64",
+      "role": "output"
+    },
+    {
       "name": "period_value",
       "type": "double",
       "role": "outcome"
+    },
+    {
+      "name": "period_value_mature",
+      "type": "bool",
+      "role": "output"
     },
     {
       "name": "orders_30d",
@@ -80,9 +100,19 @@
       "role": "t0"
     },
     {
+      "name": "age",
+      "type": "int64",
+      "role": "output"
+    },
+    {
       "name": "period_value",
       "type": "double",
       "role": "outcome"
+    },
+    {
+      "name": "period_value_mature",
+      "type": "bool",
+      "role": "output"
     },
     {
       "name": "orders_30d",

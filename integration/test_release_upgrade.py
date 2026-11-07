@@ -191,12 +191,13 @@ if RELEASES:  # An empty list defines no test, rather than collecting a skipped 
                 reopened = Dataset.from_manifest(manifest, con=con).to_pyarrow()
                 assert reopened.schema.equals(staged.schema)
                 assert reopened.to_pylist() == staged.to_pylist()
-                roles = MaterializedFrame.from_arrow(reopened).roles
+                materialized = MaterializedFrame.from_arrow(reopened)
+                roles = materialized.roles
                 reopened_schema = [
                     {
                         "name": field.name,
                         "type": str(field.type),
-                        "role": _role(field.name, roles),
+                        "role": _role(field.name, roles, materialized.columns),
                     }
                     for field in reopened.schema
                 ]

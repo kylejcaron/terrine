@@ -16,6 +16,21 @@
       "role": "t0"
     },
     {
+      "name": "parent_event_id",
+      "type": "string",
+      "role": "output"
+    },
+    {
+      "name": "parent_t0",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "output"
+    },
+    {
+      "name": "event_period",
+      "type": "int8",
+      "role": "output"
+    },
+    {
       "name": "orders_30d",
       "type": "int64",
       "role": "feature"
@@ -38,6 +53,21 @@
       "role": "t0"
     },
     {
+      "name": "parent_event_id",
+      "type": "string",
+      "role": "output"
+    },
+    {
+      "name": "parent_t0",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "output"
+    },
+    {
+      "name": "event_period",
+      "type": "int8",
+      "role": "output"
+    },
+    {
       "name": "orders_30d",
       "type": "int64",
       "role": "feature"
@@ -58,6 +88,21 @@
       "name": "t0",
       "type": "timestamp[us, tz=UTC]",
       "role": "t0"
+    },
+    {
+      "name": "parent_event_id",
+      "type": "string",
+      "role": "output"
+    },
+    {
+      "name": "parent_t0",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "output"
+    },
+    {
+      "name": "event_period",
+      "type": "int8",
+      "role": "output"
     },
     {
       "name": "orders_30d",

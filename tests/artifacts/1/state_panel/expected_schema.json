@@ -16,6 +16,31 @@
       "role": "t0"
     },
     {
+      "name": "from_time",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "output"
+    },
+    {
+      "name": "to_time",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "output"
+    },
+    {
+      "name": "scheduled_to",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "output"
+    },
+    {
+      "name": "period_index",
+      "type": "int64",
+      "role": "output"
+    },
+    {
+      "name": "gap",
+      "type": "duration[us]",
+      "role": "output"
+    },
+    {
       "name": "from_state",
       "type": "string",
       "role": "prior_state"
@@ -24,6 +49,11 @@
       "name": "to_state",
       "type": "string",
       "role": "outcome"
+    },
+    {
+      "name": "terminal",
+      "type": "bool",
+      "role": "output"
     },
     {
       "name": "orders_30d",
@@ -48,6 +78,31 @@
       "role": "t0"
     },
     {
+      "name": "from_time",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "output"
+    },
+    {
+      "name": "to_time",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "output"
+    },
+    {
+      "name": "scheduled_to",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "output"
+    },
+    {
+      "name": "period_index",
+      "type": "int64",
+      "role": "output"
+    },
+    {
+      "name": "gap",
+      "type": "duration[us]",
+      "role": "output"
+    },
+    {
       "name": "from_state",
       "type": "string",
       "role": "prior_state"
@@ -56,6 +111,11 @@
       "name": "to_state",
       "type": "string",
       "role": "outcome"
+    },
+    {
+      "name": "terminal",
+      "type": "bool",
+      "role": "output"
     },
     {
       "name": "orders_30d",
@@ -80,6 +140,31 @@
       "role": "t0"
     },
     {
+      "name": "from_time",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "output"
+    },
+    {
+      "name": "to_time",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "output"
+    },
+    {
+      "name": "scheduled_to",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "output"
+    },
+    {
+      "name": "period_index",
+      "type": "int64",
+      "role": "output"
+    },
+    {
+      "name": "gap",
+      "type": "duration[us]",
+      "role": "output"
+    },
+    {
       "name": "from_state",
       "type": "string",
       "role": "prior_state"
@@ -88,6 +173,11 @@
       "name": "to_state",
       "type": "string",
       "role": "outcome"
+    },
+    {
+      "name": "terminal",
+      "type": "bool",
+      "role": "output"
     },
     {
       "name": "orders_30d",

@@ -51,6 +51,8 @@ def test_generation_designs_compile_to_recorded_schema(design_path):
         for name, columns in json.loads(read("expected_schema.json")).items()
     }
     assert schemas == expected_schema
+    if directory.name == "ltv":
+        assert "age" in {column["name"] for column in schemas["design.json"]}
 
 
 def test_corpus_generator_is_deterministic_without_mutating_baseline(tmp_path):
