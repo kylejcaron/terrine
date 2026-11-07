@@ -172,7 +172,7 @@ def _legacy_minutes(value: Any) -> Any:
         feature_hash = "unit_binding" in value
         result: dict[Any, Any] = {}
         for key, item in value.items():
-            if key == "semantic":
+            if key == "semantic" and feature_hash:
                 result[key] = item
             else:
                 duration_field = (

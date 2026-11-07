@@ -540,7 +540,17 @@ def test_legacy_minute_identity_converts_typed_durations_and_preserves_comparand
     }
     assert _legacy_minute_digest(payload) != _legacy_minute_digest(changed_filter)
 
-    semantic = {"semantic": {"source": {"type": "AttributeAsOf", "before": "5min"}}}
-    rebound = {"semantic": {"source": {"type": "AttributeAsOf", "before": "5m"}}}
-    assert _legacy_minutes(semantic) == semantic
-    assert _legacy_minute_digest(semantic) != _legacy_minute_digest(rebound)
+    feature_payload = {
+        "unit": "user",
+        "unit_binding": {},
+        "semantic": {"source": {"type": "AttributeAsOf", "before": "5min"}},
+        "features": {
+            "semantic": {
+                "type": "EventTime",
+                "window": {"type": "Window", "start": "5min", "end": "0s"},
+            }
+        },
+    }
+    old_feature_payload = _legacy_minutes(feature_payload)
+    assert old_feature_payload["semantic"] == feature_payload["semantic"]
+    assert old_feature_payload["features"]["semantic"]["window"]["start"] == "5m"
