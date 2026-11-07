@@ -433,8 +433,8 @@ clock at native microsecond precision, including naive source timestamps.
 Nullable anchor identities remain null-safe while admitting hash/merge joins.
 Struct anchor identities, such as an event panel's `{event_id, period}`, are
 anonymous records on PostgreSQL: a missing one stays NULL, distinct from a record
-of NULL fields, and results are read in binary so they publish as the same
-Arrow struct as the DuckDB reference.
+of NULL fields, and results holding them are read in binary, which carries each
+field's type, so they publish as the same Arrow struct as the DuckDB reference.
 Compatible integer unit keys use a lossless common timeline type, including
 different roster and event key widths; output keys retain their original types.
 

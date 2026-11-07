@@ -362,8 +362,10 @@ class PostgresSession:
 
     def _rows(self, sql: str, schema: pa.Schema, chunk_size: int):
         struct = pa.struct(list(schema))
-        # Binary results carry each anonymous record field's type; text ones do not.
-        with self.raw.cursor(name="terrine_cursor", binary=True) as cursor:
+        # Only binary results carry an anonymous record's field types. Other
+        # results stay text, which loads types without a binary loader (macaddr).
+        binary = any(pa.types.is_struct(field.type) for field in schema)
+        with self.raw.cursor(name="terrine_cursor", binary=binary) as cursor:
             cursor.execute(sql)
             while batch := cursor.fetchmany(chunk_size):
                 try:
