@@ -551,10 +551,11 @@ class _DuckDBSession:
             con._run_pre_execute_hooks(query)
         finally:
             invalidate_metadata()
-        result = con.raw_sql(sql)
+        relation = self.raw.sql(sql)
 
         def batches():
-            yield from result.fetch_record_batch(rows_per_batch=chunk_size)
+            with contextlib.closing(relation.to_arrow_reader(batch_size=chunk_size)) as reader:
+                yield from reader
 
         return pa.RecordBatchReader.from_batches(query.as_table().schema().to_pyarrow(), batches())
 
