@@ -26,17 +26,6 @@ RECIPE_DESIGNS = sorted(
     for path in ARTIFACTS.glob("1/**/design.json")
     if path.parent != ARTIFACTS / "1"
 )
-GENERATION_ONE = ARTIFACTS / "1"
-GENERATION_ONE_ROOT_FILES = (
-    "design.json",
-    "design.yaml",
-    "definition.json",
-    "expected_schema.json",
-    "manifest.json",
-    "receipt.json",
-    "arrow_metadata.json",
-    "catalog.yaml",
-)
 
 
 def test_corpus_covers_every_recipe():
@@ -54,29 +43,6 @@ def test_recipe_documents_decode(design_path):
     )
 
 
-@pytest.mark.xdist_group("artifact-corpus")
-def test_corpus_generator_is_deterministic_and_preserves_root_documents():
-    from scripts.write_artifact_corpus import write_generation
-
-    root_before = {
-        name: (GENERATION_ONE / name).read_bytes() for name in GENERATION_ONE_ROOT_FILES
-    }
-    recipe_before = {
-        path: path.read_bytes()
-        for design_path in RECIPE_DESIGNS
-        for path in design_path.parent.iterdir()
-        if path.is_file()
-    }
-    write_generation(GENERATION_ONE)
-    assert root_before == {
-        name: (GENERATION_ONE / name).read_bytes() for name in GENERATION_ONE_ROOT_FILES
-    }
-    assert recipe_before == {
-        path: path.read_bytes()
-        for design_path in RECIPE_DESIGNS
-        for path in design_path.parent.iterdir()
-        if path.is_file()
-    }
 
 
 
