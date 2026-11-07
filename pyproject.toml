@@ -47,7 +47,7 @@ diff-diff = ["diff-diff>=3.13,<4"]
 
 [project.urls]
 Homepage = "https://github.com/kylejcaron/terrine"
-Documentation = "https://github.com/kylejcaron/terrine/tree/main/docs/guides"
+Documentation = "https://kylejcaron.github.io/terrine/"
 Repository = "https://github.com/kylejcaron/terrine"
 Changelog = "https://github.com/kylejcaron/terrine/blob/main/CHANGELOG.md"
 Issues = "https://github.com/kylejcaron/terrine/issues"
@@ -68,7 +68,12 @@ dev = [
     "mutmut>=3.8,<3.9",
     "griffe>=2.4,<3",
 ]
-docs = ["mkdocs>=1.6,<2", "mkdocs-material>=9.6,<10"]
+docs = [
+    "mkdocs>=1.6,<2",
+    "mkdocs-material>=9.6,<10",
+    "mkdocstrings[python]>=0.29,<1",
+    "pymdown-extensions>=10.11,<12",
+]
 
 [build-system]
 requires = ["hatchling>=1.27,<2"]

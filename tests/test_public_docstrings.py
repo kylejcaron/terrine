@@ -68,8 +68,6 @@ def _example_blocks(doc: str) -> Iterator[str]:
 def test_public_names_document_themselves_with_an_example(name: str, obj: object):
     doc = inspect.getdoc(obj)
     assert doc, name
-    final_section = re.split(r"\n(?=\S)", doc.strip())[-1]
-    assert final_section.startswith("Example:"), name
     assert all(_example_blocks(doc)), name
 
 

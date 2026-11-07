@@ -6,6 +6,38 @@ DuckDB is the reference execution provider. An Ibis PostgreSQL backend
 (`terrine[bigquery]`) and an Ibis Snowflake backend (`terrine[snowflake]`)
 materialize Frames directly from their tables.
 
+## Backend verification status
+
+| Backend | Verification status |
+| --- | --- |
+| DuckDB | Verified local reference backend |
+| PostgreSQL | Verified on PostgreSQL 16 |
+| Snowflake | Verified at 0.1.0.dev2 |
+| BigQuery | Verified at 0.1.0.dev2 |
+
+The support matrix and dependency extras are summarized before the operation
+evidence below. The live probes and measured limits are detailed in each
+backend's section.
+
+### Optional extras
+
+Each extra is separately declared; none is loaded by base/facade imports.
+The locked Python 3.12 checks install all extras and run the integration suites.
+The Python 3.14 native wheel checks do **not** establish that all optional
+orchestration or modeling libraries support that interpreter.
+
+| Extra | Dependency contract / evidence |
+| --- | --- |
+| `duckdb` | DuckDB 1.5.6 and Ibis DuckDB backend; wheel matrix above |
+| `pandas`, `polars` | Common-stack round trips in the operation matrix below |
+| `airflow` | Airflow 3.3.2 / standard provider 1.20.1; [adapter tests](../../tests/adapters/test_airflow.py) |
+| `dagster` | Dagster 1.13.26; [adapter tests](../../tests/adapters/test_dagster.py) |
+| `dbt` | Core 1.10.13 / dbt-duckdb 1.9.6; [adapter tests](../../tests/adapters/test_dbt_core_after_build.py) |
+| `increment` | 0.1.0a2; [independent optional compatibility contract][increment] |
+| `sketches` | DataSketches 5.2 or later below 6; [sketch support/refusals][sketches] |
+| `doubleml`, `duckreg`, `lifelines`, `diff-diff` | Pinned downstream versions in `pyproject.toml`; [real library hand-offs][libraries] |
+| `dowhy` | 0.14 on Python **below 3.14 only**; dependency marker omits it on 3.14, not a promise of adapter availability |
+
 Backends fall into three tiers:
 
 - **Verified engines**: DuckDB, PostgreSQL 16, BigQuery and Snowflake. Each has
@@ -665,24 +697,6 @@ tests/test_errors.py tests/test_windows.py tests/compile/test_columns.py`.
 The wheel matrix is narrower than the full operation and optional-adapter suites;
 do not infer warehouse or downstream-library support from the tutorial.
 
-### Optional extras
-
-Each extra is separately declared; none is loaded by base/facade imports.
-The locked Python 3.12 checks install all extras and run the integration suites.
-The Python 3.14 native wheel checks do **not** establish that all optional
-orchestration or modeling libraries support that interpreter.
-
-| Extra | Dependency contract / evidence |
-| --- | --- |
-| `duckdb` | DuckDB 1.5.6 and Ibis DuckDB backend; wheel matrix above |
-| `pandas`, `polars` | Common-stack round trips in the operation matrix below |
-| `airflow` | Airflow 3.3.2 / standard provider 1.20.1; [adapter tests](../../tests/adapters/test_airflow.py) |
-| `dagster` | Dagster 1.13.26; [adapter tests](../../tests/adapters/test_dagster.py) |
-| `dbt` | Core 1.10.13 / dbt-duckdb 1.9.6; [adapter tests](../../tests/adapters/test_dbt_core_after_build.py) |
-| `increment` | 0.1.0a2; [independent optional compatibility contract][increment] |
-| `sketches` | DataSketches 5.2 or later below 6; [sketch support/refusals][sketches] |
-| `doubleml`, `duckreg`, `lifelines`, `diff-diff` | Pinned downstream versions in `pyproject.toml`; [real library hand-offs][libraries] |
-| `dowhy` | 0.14 on Python **below 3.14 only**; dependency marker omits it on 3.14, not a promise of adapter availability |
 
 [Third-party notices](../../THIRD_PARTY_NOTICES.txt) inventory every direct base
 and optional dependency. Upstream binaries and their transitive dependencies

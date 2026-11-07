@@ -178,6 +178,12 @@ provisional ones may change in a minor release with a changelog entry, and
 internal modules may change in any release. The `terrine` root is stable; its
 CLI is provisional.
 
+The [stable API reference](../reference/api/terrine.md) documents stable names
+in `terrine`, `terrine.recipes`, `terrine.spec`, `terrine.windows`,
+`terrine.errors`, `terrine.dataset` and `terrine.data` only. Provisional names
+are intentionally omitted; their status and owner-guide links remain listed in
+this facade table.
+
 | Facade | Tier | Supported use |
 | --- | --- | --- |
 | `terrine.recipes` | Stable | The eight constructor-first dataset workflows above; returns plain Designs that compile through the existing low-level API. |

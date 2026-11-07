@@ -1,11 +1,22 @@
 site_name: Terrine
 site_description: Typed point-in-time analytical and ML datasets
-site_dir: .superpowers/docs-site
+site_dir: site
 theme:
   name: material
   features:
     - navigation.sections
     - content.code.copy
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            docstring_style: google
+            show_root_heading: true
+            show_root_full_path: false
+            show_source: false
+            inherited_members: true
 nav:
   - Overview: docs/index.md
   - First dataset: docs/guides/first-dataset.md
@@ -14,6 +25,14 @@ nav:
   - Public API: docs/guides/public-api.md
   - API stability: docs/guides/stability.md
   - Compatibility: docs/guides/backend-compatibility.md
+  - API reference:
+      - Package root: docs/reference/api/terrine.md
+      - Recipes: docs/reference/api/recipes.md
+      - Design specifications: docs/reference/api/spec.md
+      - Windows: docs/reference/api/windows.md
+      - Errors: docs/reference/api/errors.md
+      - Dataset policies: docs/reference/api/dataset.md
+      - Data declarations: docs/reference/api/data.md
   - Refusal codes: docs/reference/refusals.md
   - Inherent limits: docs/guides/limitations.md
   - README: README.md
