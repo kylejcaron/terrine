@@ -227,7 +227,8 @@ def event_panel(
         anchor_range=anchor_range,
         gap=gap,
     )
-    return EventPanel(base, periods=periods, period=period, reference_period=reference_index)
+    with parameter_names(reference_period="reference_index"):
+        return EventPanel(base, periods=periods, period=period, reference_period=reference_index)
 
 
 def ltv(
@@ -270,7 +271,8 @@ def ltv(
     """
     with parameter_names(event="start_event"):
         anchor = EventAnchor(start_event)
-    trajectory = Trajectory(metric, period, max_periods, cumulative=True)
+    with parameter_names(periods="max_periods"):
+        trajectory = Trajectory(metric, period, max_periods, cumulative=True)
     with parameter_names(origin="start_event"):
         shape = CohortSpec(start_event, trajectory)
     return Design(
@@ -438,7 +440,7 @@ def state_panel(
     schedule = Schedule(every, start, end)
     whole_periods = schedule_periods(schedule)
     max_periods = whole_periods if max_periods is None else max_periods
-    with parameter_names(state="state_source"):
+    with parameter_names(state="state_source", periods="max_periods"):
         shape = StatePanel(state_source, periods=max_periods)
     return Design(
         unit,

@@ -92,7 +92,26 @@ def test_event_panel_reference_index_is_int_and_trial_panel_reference_period_is_
     assert trial_design.shape.reference_period == Duration(seconds=-86_400)
 
 
-def test_time_series_is_a_plain_scheduled_design_with_all_supported_roles():
+
+def test_recipe_refusals_use_public_parameter_names():
+    with pytest.raises(TerrineError) as event_error:
+        recipes.event_panel(event="purchase", periods=(-1, 0), period="1d", reference_index=1)
+    assert event_error.value.context["field"] == "reference_index"
+
+    with pytest.raises(TerrineError) as ltv_error:
+        recipes.ltv(start_event="purchase", metric="revenue", period="1d", max_periods=0)
+    assert ltv_error.value.context["field"] == "max_periods"
+
+    with pytest.raises(TerrineError) as state_error:
+        recipes.state_panel(
+            state_source=StateObservations("health", ("well", "ill")),
+            every="1d",
+            start="2025-01-01",
+            end="2025-01-02",
+            max_periods=0,
+        )
+    assert state_error.value.context["field"] == "max_periods"
+
     _assert_equivalent(
         recipes.time_series(
             "user", **_SCHEDULE, **_SHARED, outcomes=_OUTCOMES, treatment=_TREATMENT
