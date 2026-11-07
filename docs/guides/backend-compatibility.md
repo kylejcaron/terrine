@@ -233,9 +233,8 @@ refuses finite results whose admission bound leaves the safe range:
   and publishes; a zero numerator divides to zero;
 - a cohort total or cumulative trajectory whose summed magnitudes reach half
   the range, and a cohort mean whose normalizing quotient (a unit value over
-  the cohort's largest magnitude, itself at most one) falls below $2^{-1020}$
-  of that magnitude, or whose rescaling product falls below $2^{-1020}$ or
-  above half the range.
+  the cohort's largest magnitude, so at most one) falls below $2^{-1020}$, or
+  whose rescaling product falls below $2^{-1020}$ or above half the range.
 
 These are the price of never evaluating an operation the engine would raise
 on; DuckDB publishes the same finite results.
