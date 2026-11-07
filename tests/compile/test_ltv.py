@@ -174,6 +174,66 @@ def test_cumulative_partitions_repeated_anchors_and_propagates_missing_period():
         con.disconnect()
 
 
+def test_portable_integer_cumulative_sums_in_its_native_domain(monkeypatch):
+    """The portable policy bounds decimal and binary64 running totals only; integer
+    periods accumulate as they are."""
+    from dataclasses import replace
+    from datetime import UTC, datetime
+
+    from terrine.backends.dialect import dialect_scope
+    from terrine.compile.columns import compile_columns
+    from terrine.data import ColumnMeta
+    from terrine.windows import Window
+
+    con, model = _trajectory_model(unit="u1")
+    try:
+        base = compile_columns(Design("user", EventAnchor("purchase", occurrence="first")), model)
+        periods = con.create_table(
+            "period_values",
+            base.table.mutate(
+                __trajectory_age_0=ibis.literal(10, type="int64"),
+                __trajectory_age_1=ibis.literal(5, type="int64"),
+                complete=ibis.literal(True),
+                reason=ibis.null().cast("string"),
+                observed_from=ibis.literal(datetime(2025, 1, 1, tzinfo=UTC)),
+                observed_until=ibis.literal(datetime(2025, 1, 31, tzinfo=UTC)),
+            ),
+        )
+        period = 7 * 24 * 60 * 60
+        metadata = {
+            f"__trajectory_age_{age}": ColumnMeta(
+                Window(f"{age * period}s", f"{(age + 1) * period}s"),
+                "outcome",
+                "observed_from",
+                "observed_until",
+                "complete",
+                "reason",
+                numeric_policy="exact",
+                arithmetic="exact",
+            )
+            for age in range(2)
+        }
+        prepared = replace(base, table=periods, columns=metadata)
+        monkeypatch.setattr("terrine.compile.shapes.ltv.compile_columns", lambda *_args: prepared)
+        with dialect_scope("generic"):
+            compiled = compile_ltv(
+                Design(
+                    "user",
+                    EventAnchor("purchase", occurrence="first"),
+                    shape=CohortSpec(
+                        origin="purchase",
+                        trajectory=Trajectory("net_revenue", "7d", periods=2, cumulative=True),
+                    ),
+                ),
+                model,
+            )
+        rows = _collect(con, compiled).to_pylist()
+        assert compiled.columns["cumulative_value"].arithmetic == "exact"
+        assert {row["age"]: row["cumulative_value"] for row in rows} == {0: 10, 1: 15}
+    finally:
+        con.disconnect()
+
+
 def test_cutoff_nulls_immature_float_period_value():
     from datetime import UTC, datetime
 
@@ -203,10 +263,22 @@ def test_cutoff_nulls_immature_float_period_value():
         con.disconnect()
 
 
-def test_cumulative_float_overflow_refuses(monkeypatch):
+@pytest.mark.parametrize(
+    "dialect,value,published",
+    [
+        # DuckDB sums to an infinity, which the finite check refuses.
+        ("duckdb", 1e308, None),
+        # The portable policy withholds the second period once the magnitudes
+        # accumulated through it pass half the range, and keeps a total within it.
+        ("generic", 6e307, None),
+        ("generic", 4e307, 8e307),
+    ],
+)
+def test_cumulative_float_overflow_refuses(monkeypatch, dialect, value, published):
     from dataclasses import replace
     from datetime import UTC, datetime
 
+    from terrine.backends.dialect import dialect_scope
     from terrine.compile.columns import compile_columns
     from terrine.data import ColumnMeta
     from terrine.windows import Window
@@ -217,8 +289,8 @@ def test_cumulative_float_overflow_refuses(monkeypatch):
         periods = con.create_table(
             "period_values",
             base.table.mutate(
-                __trajectory_age_0=ibis.literal(1e308),
-                __trajectory_age_1=ibis.literal(1e308),
+                __trajectory_age_0=ibis.literal(value),
+                __trajectory_age_1=ibis.literal(value),
                 complete=ibis.literal(True),
                 reason=ibis.null().cast("string"),
                 observed_from=ibis.literal(datetime(2025, 1, 1, tzinfo=UTC)),
@@ -234,27 +306,34 @@ def test_cumulative_float_overflow_refuses(monkeypatch):
                 "observed_until",
                 "complete",
                 "reason",
+                arithmetic="native",
             )
             for age in range(2)
         }
         prepared = replace(base, table=periods, columns=metadata)
         monkeypatch.setattr("terrine.compile.shapes.ltv.compile_columns", lambda *_args: prepared)
-        frame = compile_ltv(
-            Design(
-                "user",
-                EventAnchor("purchase", occurrence="first"),
-                shape=CohortSpec(
-                    origin="purchase",
-                    trajectory=Trajectory("float_revenue", "7d", periods=2, cumulative=True),
+        with dialect_scope(dialect):
+            frame = compile_ltv(
+                Design(
+                    "user",
+                    EventAnchor("purchase", occurrence="first"),
+                    shape=CohortSpec(
+                        origin="purchase",
+                        trajectory=Trajectory("float_revenue", "7d", periods=2, cumulative=True),
+                    ),
                 ),
-            ),
-            model,
-        )
-        with pytest.raises(TerrineError) as error:
-            frame.validate(execute=con.to_pyarrow)
-        assert error.value.code == "terrine.temporal.float64_precision"
-        assert error.value.context["reason"] == "bound_overflow"
-        assert error.value.context["output"] == "cumulative_value"
+                model,
+            )
+        assert frame.columns["cumulative_value"].arithmetic == "native"
+        if published is None:
+            with pytest.raises(TerrineError) as error:
+                frame.validate(execute=con.to_pyarrow)
+            assert error.value.code == "terrine.temporal.float64_precision"
+            assert error.value.context["reason"] == "bound_overflow"
+            assert error.value.context["output"] == "cumulative_value"
+        else:
+            rows = _collect(con, frame).to_pylist()
+            assert {row["age"]: row["cumulative_value"] for row in rows} == {0: value, 1: published}
     finally:
         con.disconnect()
 

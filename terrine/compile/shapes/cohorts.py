@@ -96,7 +96,7 @@ def _compile_cohorts(
     )
     numeric_type = per_unit._value.type()
     reduction_table = per_unit
-    decimal_total_failure = None
+    total_failure = None
     decimal_mean_failure = None
     if grouping.statistic == "total" and numeric_type.is_decimal():
         scale = numeric_type.scale
@@ -130,7 +130,29 @@ def _compile_cohorts(
         )
         reduction_table = per_unit.left_join(total_state, keys)
         observed_value = reduction_table._total_value.min()
-        decimal_total_failure = reduction_table._total_unrepresentable.min()
+        total_failure = reduction_table._total_unrepresentable.min()
+    elif grouping.statistic == "total" and numeric_type.is_floating():
+        keys = ["bucket_index", "age"]
+        # A policy whose float arithmetic raises outside the range withholds a
+        # partition's binary64 values before the backend adds them when their
+        # magnitudes may leave half of it; the NULL total then reports the
+        # overflow. Other policies sum directly and check the result finite.
+        total_inputs, guarded, admitted = guard_accumulation(
+            per_unit, per_unit._value, partition=keys
+        )
+        if admitted is None:
+            observed_value = per_unit._value.sum()
+        else:
+            total_state = total_inputs.group_by(*keys).aggregate(
+                _total=cast(ir.FloatingColumn, guarded).sum(),
+                _total_count=total_inputs._value.notnull().cast("int32").sum(),
+            )
+            total_state = total_state.mutate(
+                _total_unrepresentable=(total_state._total_count > 0) & total_state._total.isnull()
+            )
+            reduction_table = per_unit.left_join(total_state, keys)
+            observed_value = reduction_table._total.min()
+            total_failure = reduction_table._total_unrepresentable.min()
     elif grouping.statistic == "total":
         observed_value = per_unit._value.sum()
     elif numeric_type.is_integer():
@@ -186,8 +208,8 @@ def _compile_cohorts(
         observed_value = normalized.mean() * reduction_table._scale.min()
     if decimal_mean_failure is None:
         decimal_mean_failure = ibis.literal(False)
-    if decimal_total_failure is None:
-        decimal_total_failure = ibis.literal(False)
+    if total_failure is None:
+        total_failure = ibis.literal(False)
     groups = reduction_table.group_by("bucket_index", "age").aggregate(
         observable=reduction_table._complete.cast("int32").sum(),
         _value_count=reduction_table._value.notnull().cast("int32").sum(),
@@ -195,7 +217,7 @@ def _compile_cohorts(
         _mature=reduction_table._mature.max(),
         _reason=reduction_table._reason.min(),
         _mean_unrepresentable=decimal_mean_failure,
-        _total_unrepresentable=decimal_total_failure,
+        _total_unrepresentable=total_failure,
     )
     joined = groups.left_join(risk, "bucket_index")
     mature = joined._mature.fill_null(False)
@@ -229,8 +251,18 @@ def _compile_cohorts(
         ),
     )
     roles = Roles("bucket_index", "bucket_index", "bucket_start", None, (), ("value",))
+    # The summary keeps the value column's declared arithmetic; the denominators
+    # count units and declare none.
     columns = {
-        "value": ColumnMeta(None, "outcome", None, None, "complete", "reason"),
+        "value": ColumnMeta(
+            None,
+            "outcome",
+            None,
+            None,
+            "complete",
+            "reason",
+            arithmetic=study.columns[value_column].arithmetic,
+        ),
         **{
             name: ColumnMeta(
                 None, "denominator", None, None, "denominators_complete", "denominators_reason"
@@ -270,13 +302,18 @@ def _compile_cohorts(
             )
         )
     if numeric_type.is_floating():
-        # Native binary64 reductions: a total or mean that leaves the finite range
-        # refuses instead of publishing an infinity or NaN.
+        # Native binary64 reductions: a total or mean that leaves the finite range,
+        # or a total a bounding policy withheld, refuses instead of publishing an
+        # infinity, NaN or incomplete sum.
         failure_column = "failed_cohort_nonfinite"
-        failed = result.value.notnull() & ~float_is_finite(result.value)
+        observed = joined._observed_value
+        failed = joined.filter(
+            complete
+            & (joined._total_unrepresentable | (observed.notnull() & ~float_is_finite(observed)))
+        )
         checks.append(
             _Check(
-                result.filter(failed).aggregate(ibis._.count().cast("string").name(failure_column)),
+                failed.aggregate(ibis._.count().cast("string").name(failure_column)),
                 (
                     RowCheck(
                         failure_column,

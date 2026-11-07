@@ -38,6 +38,7 @@ def _cohorts(
     bucket="7d",
     origin=datetime(2025, 1, 1, tzinfo=UTC),
     dialect=None,
+    arithmetic=None,
 ):
     count = len(values)
     table = con.create_table(
@@ -70,6 +71,7 @@ def _cohorts(
                 None,
                 "period_value__complete",
                 "period_value__reason",
+                arithmetic=arithmetic,
             )
         },
         feature_cutoffs={},
@@ -159,6 +161,14 @@ def test_exact_integer_values_are_summed_before_cohort_mean_conversion(con):
     assert rows[0]["value"] == 0.5
 
 
+@pytest.mark.parametrize("dialect", ["duckdb", "generic"])
+def test_integer_cohort_total_sums_in_its_native_domain(con, dialect):
+    """Only decimal and binary64 totals are bounded; integer totals sum as they are."""
+    result, rows = _cohorts(con, [2**62, 2**62 - 1], statistic="total", dialect=dialect)
+    assert rows[0]["value"] == 2**63 - 1
+    assert result.columns["value"].arithmetic is None
+
+
 def test_cohort_mean_preserves_fractional_decimal_and_float_values(con):
     for dtype in (pa.decimal128(18, 2), pa.float64()):
         values = [Decimal("0.25")] * 2 if pa.types.is_decimal(dtype) else [0.25] * 2
@@ -220,8 +230,35 @@ def test_large_zero_float_cohort_mean_remains_available(con):
     assert rows[0]["value__complete"] is True
 
 
-def test_float_cohort_total_overflow_refuses(con):
+@pytest.mark.parametrize(
+    "dialect,value",
+    [
+        # DuckDB sums to an infinity, which the finite check refuses.
+        ("duckdb", 1e308),
+        # The portable policy withholds the partition once its magnitudes pass half
+        # the range, before the backend adds values it would raise on.
+        ("generic", 6e307),
+    ],
+)
+def test_float_cohort_total_overflow_refuses(con, dialect, value):
     with pytest.raises(TerrineError) as error:
-        _cohorts(con, [1e308, 1e308], dtype=pa.float64(), statistic="total")
+        _cohorts(con, [value, value], dtype=pa.float64(), statistic="total", dialect=dialect)
     assert error.value.code == "terrine.temporal.float64_precision"
     assert error.value.context["reason"] == "bound_overflow"
+
+
+def test_portable_float_cohort_total_within_half_the_range_keeps_its_arithmetic(con):
+    result, rows = _cohorts(
+        con,
+        [4e307, 4e307],
+        dtype=pa.float64(),
+        statistic="total",
+        dialect="generic",
+        arithmetic="native",
+    )
+    assert rows[0]["value"] == 8e307
+    assert rows[0]["value__complete"] is True
+    # The summary carries the value column's declared arithmetic; the unit
+    # denominators declare none.
+    assert result.columns["value"].arithmetic == "native"
+    assert {result.columns[name].arithmetic for name in ("at_risk", "observable")} == {None}

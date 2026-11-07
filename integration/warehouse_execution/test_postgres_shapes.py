@@ -370,6 +370,8 @@ def test_source_filters_match_duckdb_and_refuse_unknown_membership(postgres_scra
             assert error.value.context["check_key"] == "unknown_event_filter_value"
     finally:
         duckdb.con.disconnect()
+
+
 @pytest.mark.parametrize("recipe,anchor_join_count", [("forecast", 3), ("ltv", 4)])
 def test_forecast_and_ltv_use_set_based_lookups_and_anchor_joins(
     postgres_scratch,
@@ -542,5 +544,86 @@ def test_mixed_integer_unit_widths_preserve_roster_keys(
                 ]
             actual.append(rows)
         assert actual[0] == actual[1]
+    finally:
+        duckdb.disconnect()
+
+
+def _native_trajectory_model(con, rows):
+    """A native float spend trajectory over ``(user, day, amount)`` rows."""
+    con.raw_sql("CREATE TABLE users(user_id VARCHAR)")
+    con.raw_sql(
+        "CREATE TABLE orders(user_id VARCHAR, occurred_at TIMESTAMPTZ, amount DOUBLE PRECISION)"
+    )
+    _insert_orders(con, rows)
+    return tr.Model.from_tables(
+        con,
+        units={"user": tr.UnitSource("users", "user_id")},
+        events={
+            "orders": tr.Events(
+                "orders",
+                time="occurred_at",
+                key="user_id",
+                metrics={"spend": tr.sum("amount")},
+                complete=("2024-12-01", "2025-02-01"),
+            )
+        },
+    )
+
+
+def _insert_orders(con, rows) -> None:
+    """Insert ``(user, day, amount)`` January orders and their units."""
+    for statement in (
+        "INSERT INTO users VALUES "
+        + ", ".join(f"('{user}')" for user in sorted({r[0] for r in rows})),
+        "INSERT INTO orders VALUES "
+        + ", ".join(
+            f"('{user}', '2025-01-{day:02d} 00:00:00+00', {amount})" for user, day, amount in rows
+        ),
+    ):
+        cursor = con.raw_sql(statement)
+        if con.name == "postgres":  # DuckDB returns its connection, not a cursor
+            cursor.close()
+
+
+def test_native_cohort_total_refuses_where_float8_would_raise(postgres_scratch, tmp_path):  # noqa: F811
+    """A native cohort total of cumulative spend publishes what DuckDB does while the
+    cohort's magnitudes sum to less than half the binary64 range, and keeps the
+    value column's native arithmetic; a cohort whose total would overflow float8
+    refuses ``bound_overflow`` instead of raising."""
+    from terrine.errors import TerrineError
+
+    rows = [(user, day, "2e307") for user in "ab" for day in (1, 2)]
+    duckdb = ibis.duckdb.connect()
+    postgres = postgres_scratch.con
+    try:
+        duckdb_model = _native_trajectory_model(duckdb, rows)
+        postgres_model = _native_trajectory_model(postgres, rows)
+        design = tr.Design(
+            "user",
+            tr.EventAnchor("orders", occurrence="first"),
+            shape=CohortSpec("orders", Trajectory("spend", "1d", periods=2, cumulative=True)),
+            administrative_cutoff=datetime(2025, 1, 6, tzinfo=UTC),
+        )
+        grouping = CohortGrouping("1d", datetime(2025, 1, 1, tzinfo=UTC), statistic="total")
+
+        def summary(model):
+            cohorts = design.build(model).cohorts(
+                grouping=grouping, value_column="cumulative_value"
+            )
+            materialized = cohorts.materialize(budget=_BUDGET)
+            assert materialized.columns["value"].arithmetic == "native"
+            return sorted(materialized.to_pyarrow().to_pylist(), key=lambda row: row["age"])
+
+        expected = summary(duckdb_model)
+        assert [row["value"] for row in expected] == [4e307, 8e307]
+        assert summary(postgres_model) == expected
+        # Two more units take the age-1 cohort total of cumulative spend past the
+        # float8 range (2.4e308) while each unit's own total stays inside half of it.
+        _insert_orders(postgres, [(user, day, "4e307") for user in "cd" for day in (1, 2)])
+        with pytest.raises(TerrineError) as error:
+            summary(postgres_model)
+        assert error.value.code == "terrine.temporal.float64_precision"
+        assert error.value.context["reason"] == "bound_overflow"
+        assert error.value.context["source"] == "cohort"
     finally:
         duckdb.disconnect()
