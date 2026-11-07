@@ -129,7 +129,28 @@ def test_release_tag_prefers_current_line(monkeypatch, tmp_path):
     assert api_check.release_tag(tmp_path, "0.2.0") == "v0.1.0"
     assert api_check.release_tag(tmp_path, "1.0.0rc1") == "v1.0.0rc1"
 
+def test_release_tag_ignores_development_tags(monkeypatch, tmp_path):
+    def fake_git(root, *args):
+        if "--is-shallow-repository" in args:
+            return b"false"
+        return b"v0.1.0.dev2\n" if "v0.*" in args else b""
 
+    monkeypatch.setattr(api_check, "_git", fake_git)
+
+    assert api_check.release_tag(tmp_path, "0.1.0") is None
+
+
+
+def test_release_tag_fallback_parses_development_version(monkeypatch, tmp_path):
+    def fake_git(root, *args):
+        if "--is-shallow-repository" in args:
+            return b"false"
+        return b"v0.1.0.dev2\n" if "v0.*" in args else b""
+
+    monkeypatch.setattr(api_check, "Version", None)
+    monkeypatch.setattr(api_check, "_git", fake_git)
+
+    assert api_check.release_tag(tmp_path, "0.1.0.dev2") is None
 def test_release_tag_none_when_line_untagged(monkeypatch, tmp_path):
     def fake_git(root, *args):
         return b"false" if "--is-shallow-repository" in args else b""

@@ -71,10 +71,12 @@ least one minor release in which using it emits `DeprecationWarning`.
 
 ## Signature check
 
-`scripts/api_check.py` compares stable signatures against the newest tag in the
-current 0.x minor release, allowing minor-version API changes; from
-`1.0.0rc1`, it compares against the newest `v1.*` tag. Pass `--against` to
-compare with a specific tag instead:
+Before `1.0.0rc1`, the checker selects the newest final `v0.*` tag; development,
+pre-release and post-release tags are not baselines. From `1.0.0rc1`, it selects
+the newest `v1.*` tag, including release candidates. Compatibility is enforced
+within the same 0.x minor or 1.x major line. Across 0.x minor releases, it
+reports the comparison but exits successfully because minor releases may break
+the API. `--against` selects a specific tag:
 ```bash
 uv run python scripts/api_check.py
 uv run python scripts/api_check.py --against v1.2.0
@@ -89,8 +91,8 @@ removed, reordered or newly required parameter.
 
 | Exit status | Meaning |
 | --- | --- |
-| 0 | Compatible, or no baseline exists for the current 0.x minor release or 1.x line |
-| 1 | A stable name disappeared or its signature broke, or a current stable export does not resolve to a definition the check can read |
+| 0 | Compatible, no eligible baseline exists, or breakages are permitted across 0.x minor releases |
+| 1 | A stable name disappeared or its signature broke within the same compatibility line, or a current stable export does not resolve to a definition the check can read |
 | 2 | Comparison history unavailable: the tag cannot be loaded, or a shallow clone cannot show which tags exist |
 
 The check reads source without importing it, so a name a facade provides only

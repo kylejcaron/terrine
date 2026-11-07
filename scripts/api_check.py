@@ -196,16 +196,22 @@ def release_tag(root: Path, current_version: str) -> str | None:
     if Version is not None:
         stable_line = Version(current_version) >= Version(_FIRST_STABLE_LINE_VERSION)
     else:
-        match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)(?:(a|b|rc)(\d+))?", current_version)
+        match = re.fullmatch(
+            r"(\d+)\.(\d+)\.(\d+)(?:(a|b|rc)(\d+))?(?:\.post(\d+))?"
+            r"(?:\.dev(\d+))?(?:\+[a-zA-Z0-9.-]+)?",
+            current_version,
+        )
         if match is None:
             raise ValueError(f"invalid package version: {current_version}")
         major, minor, patch = (int(part) for part in match.group(1, 2, 3))
         prerelease, prerelease_number = match.group(4), match.group(5)
+        devrelease = match.group(7)
         stable_line = (major, minor, patch) > (1, 0, 0) or (
             (major, minor, patch) == (1, 0, 0)
+            and devrelease is None
             and (
                 prerelease is None
-                or (prerelease, int(prerelease_number)) >= ("rc", 1)
+                or (prerelease == "rc" and int(prerelease_number) >= 1)
             )
         )
     line = "v1.*" if stable_line else "v0.*"
@@ -214,7 +220,20 @@ def release_tag(root: Path, current_version: str) -> str | None:
     ordering = [f"versionsort.suffix={suffix}" for suffix in _PRERELEASE_SUFFIXES]
     options = [part for setting in ordering for part in ("-c", setting)]
     tags = _git(root, *options, "tag", "--list", line, "--sort=-v:refname").split()
+    if not stable_line:
+        tags = [tag for tag in tags if _is_final_release_tag(tag.decode())]
     return tags[0].decode() if tags else None
+
+def _is_final_release_tag(tag: str) -> bool:
+    version = tag.removeprefix("v")
+    if Version is not None:
+        try:
+            parsed = Version(version)
+        except ValueError:
+            return False
+        return not (parsed.is_prerelease or parsed.is_devrelease or parsed.is_postrelease)
+    return re.fullmatch(r"\d+\.\d+\.\d+", version) is not None
+
 
 def _release_minor(version: str) -> tuple[int, int]:
     if Version is not None:
@@ -224,16 +243,6 @@ def _release_minor(version: str) -> tuple[int, int]:
     if match is None:
         raise ValueError(f"invalid package version: {version}")
     return int(match.group(1)), int(match.group(2))
-
-
-def _newest_minor_release_tag(root: Path, version: str) -> str | None:
-    major, minor = _release_minor(version)
-    ordering = [f"versionsort.suffix={suffix}" for suffix in _PRERELEASE_SUFFIXES]
-    options = [part for setting in ordering for part in ("-c", setting)]
-    tags = _git(
-        root, *options, "tag", "--list", f"v{major}.{minor}.*", "--sort=-v:refname"
-    ).split()
-    return tags[0].decode() if tags else None
 
 
 def _load(search_path: Path) -> griffe.Module:
@@ -267,9 +276,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         root = Path(_git(Path.cwd(), "rev-parse", "--show-toplevel").decode().strip())
         current_version = tomllib.loads((root / "pyproject.toml").read_text())["project"]["version"]
+        current_major, current_minor = _release_minor(current_version)
         tag = args.against or release_tag(root, current_version)
-        if args.against is None and current_version.startswith("0."):
-            tag = _newest_minor_release_tag(root, current_version)
     except (HistoryUnavailable, subprocess.CalledProcessError, OSError, ValueError) as error:
         print(f"comparison history unavailable: {_reason(error)}")
         return 2
@@ -280,10 +288,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"stable API cannot be checked: {error}")
         return 1
     if tag is None:
-        if current_version.startswith("0."):
-            print("no release tag for the current 0.x minor release: minor releases may break the API")
-        else:
-            print("no release tag on the current release line: the stable API has no baseline yet")
+        print("no release tag on the current release line: the stable API has no baseline yet")
         return 0
     with TemporaryDirectory(prefix="terrine-api-") as directory:
         try:
@@ -299,13 +304,21 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"comparison history unavailable: cannot load {tag}: {_reason(error)}")
             return 2
         breakages = stable_breakages(release, current)
-    if not breakages:
+    baseline_major, baseline_minor = _release_minor(tag.removeprefix("v"))
+    same_compatibility_line = (
+        baseline_major == current_major
+        and (current_major != 0 or baseline_minor == current_minor)
+    )
+    if breakages:
+        print(f"stable API breakages against {tag}:")
+        for line in breakages:
+            print(f"  {line}")
+    else:
         print(f"stable API signatures are compatible with {tag}")
+    if not same_compatibility_line:
+        print("breaking changes are permitted across 0.x minor releases")
         return 0
-    print(f"stable API breakages against {tag}:")
-    for line in breakages:
-        print(f"  {line}")
-    return 1
+    return 1 if breakages else 0
 
 
 if __name__ == "__main__":

@@ -50,8 +50,15 @@ def test_check_passes_without_a_current_line_release_tag(repo, capsys):
     _release(repo, "v1.0.0")
 
     assert main([]) == 0
-    assert "no release tag for the current 0.x minor release" in capsys.readouterr().out
+    assert "no release tag" in capsys.readouterr().out
 
+
+def test_check_ignores_0x_development_tag(repo, capsys):
+    _write_package(repo, _RELEASE)
+    _release(repo, "v0.1.0.dev2")
+
+    assert main([]) == 0
+    assert "no release tag" in capsys.readouterr().out
 
 def test_check_requires_every_current_stable_export_to_resolve(repo, capsys):
     _write_package(
@@ -84,17 +91,17 @@ def test_check_allows_breaking_change_in_new_0x_minor(repo, capsys):
     _write_version(repo, "0.2.0")
 
     assert main([]) == 0
-    assert main(["--against", "v0.1.0"]) == 1
-    assert "terrine.agg" in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert "stable API breakages against v0.1.0" in output
+    assert "breaking changes are permitted across 0.x minor releases" in output
 
 
 def test_check_rejects_breaking_change_in_0x_patch(repo, capsys):
     _write_package(repo, _RELEASE)
-    _write_version(repo, "0.2.0")
-    _release(repo, "v0.2.0")
-    _release(repo, "v0.3.0")
+    _write_version(repo, "0.1.0")
+    _release(repo, "v0.1.0")
     _write_package(repo, _changed("spec/expressions.py", "agg(metric, window)", "agg(metric)"))
-    _write_version(repo, "0.2.1")
+    _write_version(repo, "0.1.1")
 
     assert main([]) == 1
     assert "terrine.agg" in capsys.readouterr().out
