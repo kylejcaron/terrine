@@ -30,7 +30,7 @@ from terrine.compile.anchors import (
     _utc_column,
     compile_anchors,
 )
-from terrine.compile.layers import build_measure_layer, measure_identity
+from terrine.compile.numeric import CompileContext, lower_aggregate
 from terrine.compile.ranges import plan_ranges
 from terrine.compile.retention import compile_retention
 from terrine.data import (
@@ -48,7 +48,6 @@ from terrine.errors import RefusalSpec
 from terrine.execution.gates import fold, foldable, gate_totals, validate_schedule
 from terrine.semantic.bind import normalize_events
 from terrine.semantic.models import BoundDimension
-from terrine.semantic.rules import calendar_average_alignment
 from terrine.spec.anchors import FixedDate, Schedule
 from terrine.spec.design import _RESERVED_OUTPUT_NAME as _RESERVED_NAME
 from terrine.spec.design import Design
@@ -70,7 +69,7 @@ from terrine.spec.expressions import (
 )
 from terrine.spec.sequence import _UNSUPPORTED_SHAPE
 from terrine.spec.validate import _fixed_anchors
-from terrine.temporal.aggregate import TemporalResult, aggregate_window
+from terrine.temporal.aggregate import TemporalResult
 from terrine.temporal.attributes import (
     _enriched_property_columns,
     enrich_events,
@@ -486,6 +485,8 @@ def compile_columns(
                 events, source, source_histories[source_name]
             )
         return selector_sources[source_name]
+
+    lowering = CompileContext(model, unit_name, fixed, events_for, states)
 
     selector_columns: dict[EventTime, str] = {}
     selector_metadata = {}
@@ -1025,48 +1026,15 @@ def compile_columns(
             strategy = "blocked_range_join/nonadditive"
             result_table = result.table
         elif not isinstance(node, EventTime):
-            metric = model.metrics[node.metric]
-            resolution: Literal["day", "event"] = (
-                "day"
-                if fixed
-                and relative is None
-                and all(
-                    calendar_average_alignment(
-                        node.window, anchor=instant, day_boundary=model.catalog.day_boundary
-                    )
-                    == "aligned"
-                    for instant in fixed
-                )
-                else "event"
-            )
-            resolved = []
-            supplied = {}
-            for measure in metric.measures:
-                source = model.sources[measure.source_name]
-                events = events_for(source.name)
-                measure = resolve_measure(events, measure, source=source)
-                key = (measure.source_name, measure_identity(measure), design.unit, resolution)
-                if key not in states:
-                    states[key] = build_measure_layer(
-                        events,
-                        measure,
-                        source,
-                        boundary=model.catalog.day_boundary,
-                        resolution=resolution,
-                    )
-                resolved.append(measure)
-                supplied[measure] = states[key]
-            result = aggregate_window(
-                expression_anchors,
-                replace(metric, measures=tuple(resolved)),
-                supplied,
+            lowered = lower_aggregate(
+                lowering,
+                model.metrics[node.metric],
                 node.window,
-                model.readiness,
-                boundary=model.catalog.day_boundary,
+                anchors=expression_anchors,
                 output=output,
-                role="feature",
-                resolution=resolution,
+                relative=relative is not None,
             )
+            result = lowered.result
             meta = result.columns[output]
             cutoff_seconds = (
                 selector_timing(relative)[0][1] + node.window.end.seconds
@@ -1074,7 +1042,7 @@ def compile_columns(
                 else node.window.end.seconds
             )
             cutoff = FeatureCutoff(cutoff_seconds, True, "retrospective_effective_time")
-            strategy = f"sparse_{resolution}_prefix/native"
+            strategy = lowered.strategy
             result_table = result.table
 
         if relative is not None and selector_point_column is None:
