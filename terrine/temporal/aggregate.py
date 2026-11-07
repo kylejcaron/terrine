@@ -191,7 +191,7 @@ class _Builder:
 
     def name(self, label: str) -> str:
         while True:
-            name = f"__terrine_window_{self.counter}_{label}"
+            name = f"__w{self.counter}_{label}"
             self.counter += 1
             if name.casefold() not in self.used:
                 self.used.add(name.casefold())
@@ -594,8 +594,13 @@ def aggregate_window(
         if calendar_average_alignment(window, anchor=None, day_boundary=boundary) == "unaligned":
             raise UNALIGNED_CALENDAR_AVERAGE.error(measure=measure.event, **domain_context)
     builder = _Builder(anchors, output)
-    start = builder.put("start", anchors.t0 + ibis.interval(seconds=window.start.seconds))
-    end = builder.put("end", builder.table.t0 + ibis.interval(seconds=window.end.seconds))
+
+    def shifted(seconds: int):
+        t0 = builder.table.t0
+        return t0 + ibis.interval(seconds=seconds) if seconds else t0
+
+    start = builder.put("start", shifted(window.start.seconds))
+    end = builder.put("end", shifted(window.end.seconds))
     row_checks: list[RowCheck] = []
     if calendars or resolution == "day":
         invalid = builder.put(
@@ -616,19 +621,21 @@ def aggregate_window(
     )
     observed_from = ibis.literal(source_start)
     observed_until = ibis.literal(source_end)
-    observation_complete = cast(ir.BooleanValue, ibis.literal(True))
+    bounds = []
     if "_observed_from" in anchors.columns:
         bound = builder.table._observed_from
         observed_from = greatest(observed_from, bound.fill_null(observed_from))
-        observation_complete = observation_complete & (
-            bound.isnull() | (builder.col(start) >= bound)
-        )
+        bounds.append(bound.isnull() | (builder.col(start) >= bound))
     if "_observed_until" in anchors.columns:
         bound = builder.table._observed_until
         observed_until = least(observed_until, bound.fill_null(observed_until))
-        observation_complete = observation_complete & (bound.isnull() | (builder.col(end) <= bound))
+        bounds.append(bound.isnull() | (builder.col(end) <= bound))
     observed_from = builder.put("observed_from", observed_from)
     observed_until = builder.put("observed_until", observed_until)
+    observation_complete = cast(ir.BooleanValue, ibis.literal(True))
+    if bounds:
+        conjunction = bounds[0] if len(bounds) == 1 else bounds[0] & bounds[1]
+        observation_complete = builder.col(builder.put("observed", conjunction))
     available = builder.put("complete", builder.col(source_complete) & observation_complete)
     unavailable = builder.put(
         "unavailable_reason",
@@ -639,6 +646,9 @@ def aggregate_window(
             ),
         ),
     )
+    # Windows over the same anchors, bounds and coverage read one relation of
+    # request points; each lookup chain starts from its own reference to it.
+    builder.table = builder.table.view()
     quantities = []
     unknown_flags = []
     conversion = metric.kind == "conversion"

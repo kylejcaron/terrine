@@ -9,6 +9,7 @@ import ibis
 import pyarrow as pa
 
 from terrine.compile.columns import CompiledStudy, compile_columns
+from terrine.compile.prune import prune_columns
 from terrine.execution._metadata import metadata_operation
 from terrine.spec.design import Design
 from terrine.spec.sequence import EventSequence
@@ -30,17 +31,21 @@ def compile_design(
     persisted_prefixes: Mapping[tuple[str, str, str, str], ibis.Table] | None = None,
     persisted_anchors: ibis.Table | None = None,
 ) -> CompiledStudy:
-    """Compile a shape, propagating supported verified logical substitutions."""
+    """Compile a shape, propagating supported verified logical substitutions.
+
+    The output relation keeps only the columns some consumer reads.
+    """
     from terrine.compile.columns import exact_scope
 
     design = resolve_unit(design, model)
     with exact_scope(model):
-        return _compile_design(
+        compiled = _compile_design(
             design,
             model,
             persisted_prefixes=persisted_prefixes,
             persisted_anchors=persisted_anchors,
         )
+    return compiled.with_output(prune_columns(compiled.table))
 
 
 def _compile_design(

@@ -184,17 +184,24 @@ def _sparse_group(
     if not native:
         _require_backend(events)
     predicate, observed_null, missing, literal_null, nonfinite = _predicate(events, measure, source)
+    filtered = bool(measure.filters)
     selected = predicate.fill_null(False)
     unknown = predicate.isnull()
     column = source.events[measure.event]
     value = ibis.literal(1) if column is None else events[column]
-    nonnull = selected & value.notnull()
     one, zero = count_literal(1), count_literal(0)
+    # An unfiltered measure selects every event: its predicate is the literal TRUE.
     fields = {
-        "event_count": selected.ifelse(one, zero),
-        "nonnull_count": nonnull.ifelse(one, zero),
+        "event_count": selected.ifelse(one, zero) if filtered else one,
+        "nonnull_count": (
+            (selected & value.notnull()).ifelse(one, zero)
+            if filtered
+            else one
+            if column is None
+            else value.notnull().ifelse(one, zero)
+        ),
     }
-    if measure.filters:
+    if filtered:
         fields.update(
             zip(
                 _UNKNOWN_FIELDS,
@@ -211,18 +218,26 @@ def _sparse_group(
     # A single projection shares predicates and original leaves across all reductions.
     leaf = events.select(
         **{"_unit": events[unit_column], **keys, **fields},
-        __terrine_selected=selected,
-        __terrine_possible=predicate.fill_null(True),
+        **(
+            {"__terrine_selected": selected, "__terrine_possible": predicate.fill_null(True)}
+            if filtered
+            else {}
+        ),
         __terrine_value=value,
     )
-    leaf = leaf.filter(leaf.__terrine_possible)
+    if filtered:
+        leaf = leaf.filter(leaf.__terrine_possible)
+
+    def chosen(condition: ir.BooleanValue) -> ir.BooleanValue:
+        return leaf.__terrine_selected & condition if filtered else condition
+
     aggregates = {name: exact_sum(leaf[name]) for name in fields}
     if measure.aggregation == "count":
         aggregates["sum_value"] = exact_sum(leaf.event_count)
     elif native:
         floating = leaf.__terrine_value.cast(dt.float64)
         finite = float_is_finite(floating)
-        selected_value = leaf.__terrine_selected & floating.notnull()
+        selected_value = chosen(floating.notnull())
         aggregates["float64_nonfinite_count"] = exact_sum(
             (selected_value & ~finite).ifelse(one, zero)
         )
@@ -242,7 +257,7 @@ def _sparse_group(
             floating = cast(ir.FloatingValue, source_value)
             quantized, nonfinite_value, unrepresentable = quantized_float(floating)
             exact = decimal_coefficient(quantized, 9)
-            selected_value = leaf.__terrine_selected & source_value.notnull()
+            selected_value = chosen(source_value.notnull())
             # A nonzero value the quantization rounds to zero leaves the sum
             # silently; its count lets the window say so.
             aggregates.update(
@@ -259,7 +274,11 @@ def _sparse_group(
         else:
             scale = dtype.scale if isinstance(dtype, dt.Decimal) else 0
             exact = decimal_coefficient(source_value, scale or 0)
-        coefficient = leaf.__terrine_selected.ifelse(exact, ibis.null().cast(exact.type()))
+        coefficient = (
+            leaf.__terrine_selected.ifelse(exact, ibis.null().cast(exact.type()))
+            if filtered
+            else exact
+        )
         # A fixed-precision policy withholds a group's coefficients before the
         # backend adds them when their magnitudes may leave the domain, and
         # reports the withheld rows so later prefixes refuse instead of

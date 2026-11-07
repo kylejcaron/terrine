@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import unicodedata
 from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager
@@ -321,6 +322,14 @@ class CompiledStudy:
             checks.append(check)
         object.__setattr__(self, "_checks", tuple(checks))
         object.__setattr__(self, "sketches", tuple(self.sketches))
+
+    def with_output(self, table: ibis.Table) -> CompiledStudy:
+        """This study with an equivalent output relation of the published schema."""
+        if table.schema() != self.table.schema():
+            raise ValueError("an equivalent output keeps the published schema")
+        study = copy.copy(self)
+        object.__setattr__(study, "table", table)
+        return study
 
     def reads(self) -> tuple[ibis.Table, ...]:
         """Every relation materialization may execute: the output, its audit, the
@@ -1321,6 +1330,7 @@ def compile_columns(
     eligible = ibis.literal(True)
     for name in design.eligibility:
         eligible &= table[name]
+    candidates = table
     table = table.mutate(__terrine_eligible=eligible)
     support = list(anchors.table.columns)
     for meta in columns.values():
@@ -1340,8 +1350,9 @@ def compile_columns(
         ):
             if name is not None and name in table.columns and name not in support:
                 support.append(name)
-    projection = {name: table[name] for name in support}
-    projection.update({name: table[value] for name, value in public.items()})
+    names = {name: name for name in support}
+    names.update(public)
+    projection = {name: table[value] for name, value in names.items()}
     # A window result's row checks are counted over the audit only when nothing
     # registered after it joins into the candidates under a check that runs
     # later: an as-of lookup whose history conflicts duplicates candidate rows
@@ -1363,7 +1374,13 @@ def compile_columns(
         __terrine_eligible=table.__terrine_eligible,
         **{name: table[name] for names in audit_bound.values() for name in names},
     )
-    retained = table.filter(table.__terrine_eligible.fill_null(False)).select(**projection)
+    # Without eligibility rules every candidate is retained, selected from the
+    # candidates' own relation.
+    retained = (
+        table.filter(table.__terrine_eligible.fill_null(False)).select(**projection)
+        if design.eligibility
+        else candidates.select(**{name: candidates[value] for name, value in names.items()})
+    )
     # A window result's one-row checks and its row checks take its place in the
     # schedule, in the order its own validation ran them.
     schedule: list[_DeferredCheck | RowCheckGroup] = []
