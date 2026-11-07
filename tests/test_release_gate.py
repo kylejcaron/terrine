@@ -96,3 +96,60 @@ def test_gate_uses_newest_completed_run_of_each_workflow():
     }
 
     assert not gate(runs, jobs.__getitem__, "v0.1.0")
+
+
+def test_rc_accepts_scheduled_postgres_and_scale_runs():
+    runs = [
+        _run("CI", 1),
+        _run("warehouse-backends", 2, event="schedule"),
+        _run("scale", 3, event="schedule"),
+    ]
+    jobs = {
+        1: [{"name": "ci-ok", "conclusion": "success"}],
+        2: [{"name": "postgres", "conclusion": "success"}],
+        3: [{"name": "scale", "conclusion": "success"}],
+    }
+
+    assert gate(runs, jobs.__getitem__, "v1.0.0rc1")
+
+
+def test_advisory_warehouse_dispatch_does_not_replace_postgres_check():
+    runs = [
+        _run("CI", 1),
+        _run("warehouse-backends", 2),
+        _run("warehouse-backends", 3, created_at="2026-01-02T00:00:00Z"),
+        _run("scale", 4),
+    ]
+    jobs = {
+        1: [{"name": "ci-ok", "conclusion": "success"}],
+        2: [{"name": "postgres", "conclusion": "success"}],
+        3: [
+            {"name": "postgres", "conclusion": "skipped"},
+            {"name": "bigquery", "conclusion": "failure"},
+        ],
+        4: [{"name": "scale", "conclusion": "success"}],
+    }
+
+    assert gate(runs, jobs.__getitem__, "v1.0.0rc1")
+
+
+def test_newer_scheduled_failure_blocks_release():
+    runs = [
+        _run("CI", 1),
+        _run("warehouse-backends", 2),
+        _run("scale", 3),
+        _run(
+            "scale",
+            4,
+            event="schedule",
+            created_at="2026-01-02T00:00:00Z",
+        ),
+    ]
+    jobs = {
+        1: [{"name": "ci-ok", "conclusion": "success"}],
+        2: [{"name": "postgres", "conclusion": "success"}],
+        3: [{"name": "scale", "conclusion": "success"}],
+        4: [{"name": "scale", "conclusion": "failure"}],
+    }
+
+    assert not gate(runs, jobs.__getitem__, "v1.0.0rc1")

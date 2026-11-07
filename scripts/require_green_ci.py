@@ -30,9 +30,12 @@ def required_jobs(tag: str) -> dict[str, tuple[str, ...]]:
 
 
 def _completed_commit_run(run: dict[str, Any], workflow: str) -> bool:
+    allowed_events = {"push", "workflow_dispatch"}
+    if workflow in {"warehouse-backends", "scale"}:
+        allowed_events.update({"schedule", "workflow_call"})
     return (
         run.get("name") == workflow
-        and run.get("event") in {"push", "workflow_dispatch"}
+        and run.get("event") in allowed_events
         and run.get("status") == "completed"
     )
 
@@ -47,20 +50,24 @@ def gate(
     jobs_by_run: Callable[[int], list[dict[str, Any]]],
     tag: str,
 ) -> bool:
-    """Check each required job in that workflow's newest completed commit run."""
+    """Check required jobs in the newest completed run that executed each job."""
     for workflow, job_names in required_jobs(tag).items():
-        candidates = [
-            run for run in runs if _completed_commit_run(run, workflow)
-        ]
-        if not candidates:
-            return False
-        newest = max(candidates, key=_run_order)
-        successful_jobs = {
-            job.get("name")
-            for job in jobs_by_run(int(newest["id"]))
-            if job.get("conclusion") == "success"
-        }
-        if not all(job_name in successful_jobs for job_name in job_names):
+        candidates = sorted(
+            (run for run in runs if _completed_commit_run(run, workflow)),
+            key=_run_order,
+            reverse=True,
+        )
+        for run in candidates:
+            jobs = jobs_by_run(int(run["id"]))
+            by_name = {job.get("name"): job.get("conclusion") for job in jobs}
+            if workflow == "warehouse-backends" and all(
+                by_name.get(job_name) in {None, "skipped"} for job_name in job_names
+            ):
+                continue
+            if not all(by_name.get(job_name) == "success" for job_name in job_names):
+                return False
+            break
+        else:
             return False
     return True
 
