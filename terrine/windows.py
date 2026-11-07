@@ -6,7 +6,7 @@ sign is accepted. Bare integer ``0`` is allowed; nonzero bare integers,
 decimals (``"1.5d"``), noncanonical compounds and unitless strings are refused.
 Minutes are spelled ``min``; ``m`` is reserved for calendar months spelled ``mo``.
 Offsets are exact integer seconds within the signed 64-bit range, held as
-`Duration` values whose text is the largest exact unit.
+`Duration` values whose text uses the largest exact unit or canonical hour/minute parts.
 
 Calendar months (``"1mo"``) and years (``"1y"``) are `Months` values, accepted only
 by ``Schedule.every`` and recipe ``every=`` parameters, not by elapsed windows.
@@ -23,7 +23,7 @@ __all__ = ["Window", "Duration", "Months", "duration"]
 _INVALID_DURATION = RefusalSpec(
     "terrine.window.invalid_duration",
     "{field}={value!r} is not an elapsed duration: use a signed integer with a unit "
-    'such as "-30s", "-30d", or "4w"; bare 0 is allowed. Calendar months ("1mo", "1y") '
+    'such as "-30s", "-30min", or "4w"; bare 0 is allowed. Calendar months ("1mo", "1y") '
     "are accepted only by a Schedule's every.",
 )
 _INVALID_MONTHS = RefusalSpec(
@@ -50,8 +50,8 @@ _MAX_MONTHS = 10**19 - 1
 class Duration:
     """Hold an exact signed elapsed duration in whole seconds.
 
-    Values compare and hash by seconds; ``str()`` is the canonical text in the largest
-    exact unit, which `duration` parses back to an equal value.
+    Values compare and hash by seconds; ``str()`` is canonical text using the largest exact
+    unit, or hour and minute parts, which `duration` parses back to an equal value.
 
     Args:
         seconds: Signed whole seconds within the 64-bit integer range; booleans are refused.

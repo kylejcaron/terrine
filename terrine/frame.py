@@ -167,7 +167,9 @@ def _selector_definition(selector: EventTime, model: Model) -> object:
     }
 
 
-def _feature_definition_hash(design: Design, features: tuple[str, ...], model: Model) -> str:
+def _feature_definition_hash(
+    design: Design, features: tuple[str, ...], model: Model, *, legacy_minutes: bool = False
+) -> str:
     from terrine.semantic.attributes import resolve_attribute
     from terrine.spec.expressions import (
         ApproxMetricDistinct,
@@ -289,10 +291,13 @@ def _feature_definition_hash(design: Design, features: tuple[str, ...], model: M
         "features": selected_records,
         "semantic": semantic,
     }
+    if legacy_minutes:
+        from terrine.spec.io import _legacy_minutes
+
+        payload = _legacy_minutes(payload)
     return hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
-
 
 def _apply_training_view(compiled: CompiledStudy, view: _TrainingView) -> CompiledStudy:
     table = compiled.table
@@ -669,21 +674,32 @@ class Frame:
         if bound.fit is not None:
             fit = bound.fit
             if self._training_view is not None:
-                definition_hash = (
-                    import_module("terrine.dataset.reference")
-                    ._definition_for(self, include_transforms=False)
-                    .digest
+                definition = import_module("terrine.dataset.reference")._definition_for(
+                    self, include_transforms=False
                 )
-                compatible = definition_hash == fit.definition_hash
+                from terrine.spec.io import _legacy_minute_digest
+
+                compatible = (
+                    definition.digest == fit.definition_hash
+                    or _legacy_minute_digest(definition._payload()) == fit.definition_hash
+                )
             else:
                 compatible = (
                     self._scoring_view is not None
                     and self._scoring_view.parent_design_hash == fit.design_hash
                 )
+            feature_hash = _feature_definition_hash(
+                self._design, (transform.column,), self._model
+            )
             if (
                 not compatible
-                or _feature_definition_hash(self._design, (transform.column,), self._model)
-                != fit.feature_definition_hash
+                or (
+                    feature_hash != fit.feature_definition_hash
+                    and _feature_definition_hash(
+                        self._design, (transform.column,), self._model, legacy_minutes=True
+                    )
+                    != fit.feature_definition_hash
+                )
             ):
                 raise transforms.identity_error(transform.column)
         result = Frame(self._design, self._model)

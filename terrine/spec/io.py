@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Mapping
 from datetime import UTC, date, datetime
 from decimal import Decimal
@@ -134,6 +135,40 @@ def canonical_digest(payload: Mapping[str, Any]) -> str:
     decoded from it.
     """
     return hashlib.sha256(_canonical_bytes(payload)).hexdigest()
+
+
+_CANONICAL_MINUTE = re.compile(r"([+-]?)(?:(\d+)h)?(\d+)min")
+
+
+def _legacy_minutes(value: Any) -> Any:
+    """Encode canonical minute durations as their former ``m`` spelling."""
+    if isinstance(value, Mapping):
+        return {key: _legacy_minutes(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_legacy_minutes(item) for item in value]
+    if not isinstance(value, str):
+        return value
+    match = _CANONICAL_MINUTE.fullmatch(value)
+    if match is None:
+        return value
+    sign, hours, minutes = match.groups()
+    seconds = (int(hours or 0) * 60 + int(minutes)) * 60
+    if sign == "-":
+        seconds = -seconds
+    if seconds == 0:
+        return "0s"
+    magnitude = abs(seconds)
+    unit, size = next(
+        (unit, size)
+        for unit, size in (("w", 604_800), ("d", 86_400), ("h", 3_600), ("m", 60), ("s", 1))
+        if magnitude % size == 0
+    )
+    return f"{'-' if seconds < 0 else ''}{magnitude // size}{unit}"
+
+
+def _legacy_minute_digest(payload: Mapping[str, Any]) -> str:
+    """Hash a payload using the pre-1.0 elapsed-minute canonical spelling."""
+    return hashlib.sha256(_canonical_bytes(_legacy_minutes(payload))).hexdigest()
 
 
 def _is_default(item: Any, default: Any) -> bool:
