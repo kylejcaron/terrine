@@ -23,7 +23,9 @@ ARTIFACTS = Path(__file__).parent / "artifacts"
 
 
 def _generation_names(root: Path) -> list[str]:
-    return sorted(path.name for path in root.iterdir() if path.is_dir() and path.name.isdecimal())
+    return sorted(
+        path.name for path in root.iterdir() if path.is_dir() and (path / "receipt.json").is_file()
+    )
 
 
 GENERATIONS = _generation_names(ARTIFACTS)
@@ -31,9 +33,13 @@ GENERATIONS = _generation_names(ARTIFACTS)
 
 def test_generation_discovery_ignores_surface_directory(tmp_path):
     (tmp_path / "1").mkdir()
+    (tmp_path / "1" / "receipt.json").touch()
+    (tmp_path / "format_2").mkdir()
+    (tmp_path / "format_2" / "receipt.json").touch()
     (tmp_path / "surface").mkdir()
+    (tmp_path / "surface" / "0.1.0.txt").touch()
 
-    assert _generation_names(tmp_path) == ["1"]
+    assert _generation_names(tmp_path) == ["1", "format_2"]
 
 RECIPE_DESIGNS = sorted(
     path

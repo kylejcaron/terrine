@@ -89,7 +89,8 @@ Before tagging a release:
    `RELEASES` records every published release starting with `0.1.0`. Validate
    the producer once against the locally built wheel as well: run `uv build`,
    add the wheel's absolute path as one line in `tests/artifacts/RELEASES`, and
-   run the command above. Keep all recorded releases in `RELEASES`.
+   run the command above. After validation, remove only that temporary wheel
+   path; keep every published release in `RELEASES`.
 
 5. If a saved format changed, add a generation to the artifact corpus:
 
