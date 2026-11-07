@@ -44,6 +44,8 @@ __all__ = [
     "ExecutionSnapshot",
     "ExpressionTiming",
     "FeatureCutoff",
+    "EventMetric",
+    "Ratio",
     "History",
     "MaterializedFrame",
     "Preview",

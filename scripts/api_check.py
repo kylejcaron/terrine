@@ -18,7 +18,7 @@ import re
 import subprocess
 import tarfile
 import tomllib
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -76,6 +76,23 @@ PROVISIONAL_NAMES: frozenset[str] = frozenset(
         "terrine.data.CoverageSummary",
         "terrine.data.EligibilitySummary",
         "terrine.data.MaterializedFrame",
+        "terrine.execution.inputs.VerifiedInputBinding",
+        "terrine.runtime.changes.ChangeSet",
+        "terrine.runtime.planner.RefreshPlan",
+        "terrine.dataset.manifest.DatasetManifest",
+        "terrine.execution.inputs.PhysicalRelationId",
+        "terrine.execution.inputs.RelationHandle",
+        "terrine.data.DataFrameLike",
+        "terrine.data.Where",
+        "terrine.spec.expressions.JsonScalar",
+        "terrine.spec.expressions.MetricAgg",
+        "terrine.spec.expressions.AttributeAsOf",
+        "terrine.spec.expressions.RetentionMetric",
+        "terrine.spec.expressions.MetricQuantile",
+        "terrine.spec.expressions.Eq",
+        "terrine.spec.expressions.Gt",
+        "terrine.spec.expressions.IsNull",
+        "terrine.spec.expressions.And",
     }
 )
 
@@ -217,6 +234,72 @@ def _within(paths: set[str], owners: set[str]) -> bool:
     return any(path == owner or path.startswith(f"{owner}.") for path in paths for owner in owners)
 
 
+def _stable_objects(package: griffe.Module) -> dict[str, griffe.Object]:
+    """Resolve stable facade exports to the definitions used for annotations."""
+    provisional = _provisional_paths(package)
+    surface = {}
+    for facade_path, facade in _facades(package):
+        for name in _exports(facade):
+            qualified = f"{facade_path}.{name}"
+            member = facade.members.get(name)
+            target = None if member is None else _resolved(member)
+            if target is None or target.is_alias:
+                continue
+            if qualified not in PROVISIONAL_NAMES and not _within({target.path}, provisional):
+                surface[qualified] = target
+    return surface
+
+
+def _annotation_names(annotation: griffe.Expr) -> Iterator[str]:
+    if isinstance(annotation, str):
+        return
+    for expression in annotation.iterate():
+        if not isinstance(expression, griffe.ExprName | griffe.ExprAttribute):
+            continue
+        path = expression.canonical_path
+        if path is not None and path.startswith(f"{_PACKAGE}."):
+            yield path
+
+def check_signature_types(surface: Mapping[str, griffe.Object]) -> list[str]:
+    """Find stable callables whose annotations name non-stable Terrine types."""
+    stable_paths = {name for name in surface}
+    stable_paths.update(_resolved(obj).path for obj in surface.values())
+    violations = []
+
+    def check_callable(qualified: str, obj: griffe.Object | griffe.Alias) -> None:
+        target = _resolved(obj)
+        if not isinstance(target, griffe.Function):
+            return
+        annotations = [
+            parameter.annotation
+            for parameter in target.parameters
+            if parameter.annotation is not None
+        ]
+        if target.returns is not None:
+            annotations.append(target.returns)
+        found = set()
+        for annotation in annotations:
+            for name in _annotation_names(annotation):
+                if name not in stable_paths and name not in PROVISIONAL_NAMES:
+                    found.add(name)
+        violations.extend(f"{qualified}: {name}" for name in sorted(found))
+
+    for qualified, obj in surface.items():
+        target = _resolved(obj)
+        if isinstance(target, griffe.Class):
+            for name, member in target.members.items():
+                member_name = f"{qualified}.{name}"
+                member_path = f"{target.path}.{name}"
+                if (
+                    not name.startswith("_")
+                    and member_name not in PROVISIONAL_NAMES
+                    and member_path not in PROVISIONAL_NAMES
+                ):
+                    check_callable(member_name, member)
+        check_callable(qualified, obj)
+    return violations
+
+
 def _git(root: Path, *args: str) -> bytes:
     return subprocess.run(["git", *args], cwd=root, check=True, capture_output=True).stdout
 
@@ -353,6 +436,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         stable_surface(current)
     except LookupError as error:
         print(f"stable API cannot be checked: {error}")
+        return 1
+    type_leaks = check_signature_types(_stable_objects(current))
+    if type_leaks:
+        print("stable API signature types are not stable or provisional:")
+        for line in type_leaks:
+            print(f"  {line}")
         return 1
     if tag is None:
         print("no release tag on the current release line: the stable API has no baseline yet")

@@ -18,10 +18,11 @@ From 1.0, breaking changes happen only in a major release.
 - `terrine.spec`, except provisional transforms and members listed below.
 - `terrine.windows`, including `Window`, `Duration` and `Months`.
 - `terrine.errors` and refusal codes raised by stable names.
-- `terrine.dataset`, `terrine.model` (except `Model.from_increment`) and
-  `terrine.frame`, except provisional members listed below.
-- The input declarations and metric types exported by `terrine.data`; returned
-  metadata records are provisional.
+- `terrine.dataset`, `terrine.model` (including `Catalog` and `Readiness`, except
+  `Model.from_increment`) and `terrine.frame`, except provisional members listed
+  below.
+- The input declarations and metric types exported by `terrine.data`, including
+  `EventMetric` and `Ratio`; returned metadata records are provisional.
 - `terrine.reasons`: the missing-value reason vocabulary.
 - The Design, dataset definition, Catalog, manifest and Arrow/Parquet metadata
   formats (see [saved artifacts](#saved-artifacts)).
@@ -47,6 +48,10 @@ changelog entry:
   `matched_t0` and `CalendarComparisonSpec`;
 - `windows.duration`, `approx_distinct`, `approx_quantile` and
   `Model.from_increment`;
+- VerifiedInputBinding, ChangeSet, RefreshPlan, DatasetManifest, lower-level
+  data and JSON aliases, and concrete expression result records when they appear
+  in stable signatures. These types describe variants and returned values, not
+  additional stable construction inputs.
 - refusal context fields such as `reason` and `field`. Refusal codes are frozen
   only when raised by a stable name.
 
@@ -95,10 +100,14 @@ provisional method of a stable class such as `Model.from_increment`. It reports
 stable names that leave a facade's `__all__` and signature changes such as a
 removed, reordered or newly required parameter.
 
+Each stable callable's parameter and return annotations are checked as well: any
+Terrine type must be exported from a stable facade or classified as a
+provisional variant. An unclassified type fails the check.
+
 | Exit status | Meaning |
 | --- | --- |
 | 0 | Compatible, no eligible baseline exists, or breakages are permitted across 0.x minor releases |
-| 1 | A stable name disappeared or its signature broke within the same compatibility line, or a current stable export does not resolve to a definition the check can read |
+| 1 | A stable name disappeared or its signature broke within the same compatibility line, a current stable export does not resolve to a definition the check can read, or a stable signature names an unclassified Terrine type |
 | 2 | Comparison history unavailable: the tag cannot be loaded, or a shallow clone cannot show which tags exist |
 
 The check reads source without importing it, so a name a facade provides only

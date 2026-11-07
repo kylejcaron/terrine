@@ -84,7 +84,10 @@ shadowing Python's builtins in your own namespace.
 Import shape-specific inputs from `terrine.spec`, as with `Initiation`:
 `Treatment`, `EventTime`, `Trajectory`, `CohortSpec`, `CohortGrouping`,
 `TimeToEvent`, `LifeTable`, `StatePanel`, `StateObservations`,
-`BinnedMetricState`, `EventSequence`, `SessionSpec` and `FunnelSpec`.
+`BinnedMetricState`, `EventSequence`, `SessionSpec` and `FunnelSpec`. Stable
+shape values include `SequentialSpec` and `EventPanelSpec`.
+Use the `Expr` and `Predicate` aliases to type expression and eligibility
+inputs; expression functions remain the usual construction path.
 The specialized `retention` and `quantile` expressions, the provisional
 `approx_distinct` and `approx_quantile` expressions, and `DatasetDefinition`
 also live there. Import elapsed `Window`, `Duration` and calendar `Months`
@@ -184,7 +187,8 @@ CLI is provisional.
 | `terrine.runtime` | Provisional | Owner-side planning, saved plans, execution/scan authorization protocols, snapshot retention, exact-generation reads and run status/events/cancellation. See [runtime](materialization-runtime.md). Persistent state rows and layer translation stay in their owning modules. |
 | `terrine.dataset` | Stable facade; `Dataset` provisional | `GroupSplit` and `TimeSplit` policies supplied to `Frame.training_set(split=...)`; split strategy is an everyday training workflow choice. |
 | `terrine.frame` | Stable facade; `Frame.stage` and `Frame.expr` provisional | Frame construction, conversion and training workflows. |
-| `terrine.data` | Stable input declarations; result metadata provisional | Bind inputs with `Coverage`, `UnitSource`, `Events`, `History` and `Budget`. Returned `*Meta` records, `CoverageSummary`, `EligibilitySummary` and `MaterializedFrame` remain inspectable results, not required inputs. Use the stable constructors from `terrine.metrics` to declare metrics. |
+| `terrine.model` | Stable | `Catalog` and `Readiness` types used with `Model.from_catalog`; `Model` remains the binding entry point. |
+| `terrine.data` | Stable input declarations and metric types; result metadata provisional | Bind inputs with `Coverage`, `UnitSource`, `Events`, `History` and `Budget`; `EventMetric` and `Ratio` describe stable metric declarations. Returned `*Meta` records, `CoverageSummary`, `EligibilitySummary` and `MaterializedFrame` remain inspectable results, not required inputs. Use the stable constructors from `terrine.metrics` to declare metrics. |
 | `terrine.reasons` | Stable vocabulary | Missing-value reason vocabulary used in output columns. |
 | `terrine.errors` | Stable names; refusal codes stable only when raised by a stable name | Coded errors and warnings. |
 | `terrine.windows` | Stable except provisional `duration` | `Window`, `Duration` and `Months` are elapsed-window values; `duration` is provisional. |

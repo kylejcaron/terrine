@@ -203,3 +203,53 @@ def test_release_tag_fallback_treats_rc1_post_development_as_v1(monkeypatch, tmp
 
     assert api_check.release_tag(tmp_path, "1.0.0rc1.post1.dev1") == "v1.0.0rc1"
 
+
+def test_signature_type_leak_detected(tmp_path, monkeypatch):
+    package = tmp_path / "terrine"
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    (package / "api.py").write_text(
+        "class Hidden:\n"
+        "    pass\n\n"
+        "def f(x: Hidden):\n"
+        "    pass\n"
+    )
+    monkeypatch.chdir(tmp_path)
+    module = griffe.load("terrine.api", search_paths=[tmp_path])
+
+    assert api_check.check_signature_types({"terrine.api.f": module["f"]}) == [
+        "terrine.api.f: terrine.api.Hidden"
+    ]
+
+
+def test_real_surface_has_no_signature_type_leaks():
+    package = api_check._load(api_check.Path(__file__).resolve().parents[1])
+
+    assert api_check.check_signature_types(api_check._stable_objects(package)) == []
+
+
+def test_main_fails_when_stable_signature_names_hidden_type(tmp_path, monkeypatch):
+    package = tmp_path / "terrine"
+    package.mkdir()
+    (package / "__init__.py").write_text(
+        "from .api import f\n"
+        '__all__ = ["f"]\n'
+    )
+    (package / "api.py").write_text(
+        "class Hidden:\n"
+        "    pass\n\n"
+        "def f(value: Hidden):\n"
+        "    pass\n"
+    )
+    module = griffe.load("terrine", search_paths=[tmp_path])
+    repository = api_check.Path(__file__).resolve().parents[1]
+    monkeypatch.setattr(
+        api_check,
+        "_git",
+        lambda root, *args: str(repository).encode(),
+    )
+    monkeypatch.setattr(api_check, "_load", lambda root: module)
+    monkeypatch.setattr(api_check, "release_tag", lambda root, version: None)
+    monkeypatch.setattr(api_check, "_newest_minor_release_tag", lambda root, version: None)
+
+    assert api_check.main([]) == 1
