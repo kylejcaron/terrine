@@ -11,7 +11,7 @@ matrix.
 
 ### Stable
 
-Breaking changes happen only in a major release.
+From 1.0, breaking changes happen only in a major release.
 
 - The `terrine` root facade and `terrine.recipes`.
 - `terrine.spec`, except the approximate expressions `approx_distinct` and

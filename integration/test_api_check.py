@@ -17,12 +17,15 @@ def _git(repo: Path, *args: str) -> None:
     )
 
 
+def _write_version(repo: Path, version: str) -> None:
+    (repo / "pyproject.toml").write_text(f'[project]\nversion = "{version}"\n')
+
+
 def _write_package(repo: Path, modules: dict[str, str]) -> None:
     for name, text in modules.items():
         path = repo / "terrine" / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text)
-
 
 def _release(repo: Path, tag: str) -> None:
     _git(repo, "add", "-A")
@@ -37,16 +40,17 @@ def repo(tmp_path, monkeypatch) -> Path:
     repo = tmp_path / "repo"
     repo.mkdir()
     _git(repo, "init", "-q")
+    _write_version(repo, "0.1.0")
     monkeypatch.chdir(repo)
     return repo
 
 
-def test_check_passes_without_a_1x_release_tag(repo, capsys):
+def test_check_passes_without_a_current_line_release_tag(repo, capsys):
     _write_package(repo, _RELEASE)
-    _release(repo, "v0.9.0")
+    _release(repo, "v1.0.0")
 
     assert main([]) == 0
-    assert "no 1.x release tag" in capsys.readouterr().out
+    assert "no release tag on the current release line" in capsys.readouterr().out
 
 
 def test_check_requires_every_current_stable_export_to_resolve(repo, capsys):
@@ -57,8 +61,8 @@ def test_check_requires_every_current_stable_export_to_resolve(repo, capsys):
     assert main([]) == 1
     assert "terrine.spec.lazy" in capsys.readouterr().out
 
-
 def test_check_compares_with_the_newest_1x_release_tag(repo, capsys):
+    _write_version(repo, "1.0.0")
     _write_package(
         repo, _changed("spec/expressions.py", "agg(metric, window)", "agg(metric, window, extra)")
     )
@@ -71,8 +75,32 @@ def test_check_compares_with_the_newest_1x_release_tag(repo, capsys):
     assert "terrine.agg" in capsys.readouterr().out
 
 
+
+def test_check_allows_breaking_change_in_new_0x_minor(repo, capsys):
+    _write_package(repo, _RELEASE)
+    _write_version(repo, "0.1.0")
+    _release(repo, "v0.1.0")
+    _write_package(repo, _changed("spec/expressions.py", "agg(metric, window)", "agg(metric)"))
+    _write_version(repo, "0.2.0")
+
+    assert main([]) == 0
+    assert main(["--against", "v0.1.0"]) == 1
+    assert "terrine.agg" in capsys.readouterr().out
+
+
+def test_check_rejects_breaking_change_in_0x_patch(repo, capsys):
+    _write_package(repo, _RELEASE)
+    _write_version(repo, "0.2.0")
+    _release(repo, "v0.2.0")
+    _write_package(repo, _changed("spec/expressions.py", "agg(metric, window)", "agg(metric)"))
+    _write_version(repo, "0.2.1")
+
+    assert main([]) == 1
+    assert "terrine.agg" in capsys.readouterr().out
+
 @pytest.mark.parametrize("history", ["release-without-package", "shallow-clone"])
 def test_check_fails_when_release_history_is_unavailable(repo, history, monkeypatch, capsys):
+    _write_version(repo, "1.0.0")
     if history == "release-without-package":
         _release(repo, "v1.0.0")
         _write_package(repo, _RELEASE)

@@ -1,6 +1,7 @@
 import griffe
 import pytest
 
+from scripts import api_check
 from scripts.api_check import stable_breakages
 
 _RELEASE = {
@@ -114,41 +115,26 @@ def test_formerly_shared_exports_are_compared_with_their_own_current_targets():
         griffe.temporary_visited_package("terrine", current) as changed,
     ):
         breakages = stable_breakages(release, changed)
-
     assert [line.split(":", 1)[0] for line in breakages] == ["terrine.spec.agg"]
 
-def test_release_tag_prefers_current_line(tmp_path):
-    import subprocess
 
-    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
-    subprocess.run(
-        ["git", "-C", str(tmp_path), "config", "user.email", "test@example.com"], check=True
-    )
-    subprocess.run(["git", "-C", str(tmp_path), "config", "user.name", "Test"], check=True)
-    (tmp_path / "file").write_text("")
-    subprocess.run(["git", "-C", str(tmp_path), "add", "file"], check=True)
-    subprocess.run(["git", "-C", str(tmp_path), "commit", "-qm", "initial"], check=True)
-    for tag in ("v0.1.0", "v1.0.0rc1"):
-        subprocess.run(["git", "-C", str(tmp_path), "tag", tag], check=True)
+def test_release_tag_prefers_current_line(monkeypatch, tmp_path):
+    def fake_git(root, *args):
+        if "--is-shallow-repository" in args:
+            return b"false"
+        return b"v0.1.0\n" if "v0.*" in args else b"v1.0.0rc1\n"
 
-    from scripts.api_check import release_tag
+    monkeypatch.setattr(api_check, "_git", fake_git)
 
-    assert release_tag(tmp_path, "0.2.0") == "v0.1.0"
-    assert release_tag(tmp_path, "1.0.0rc1") == "v1.0.0rc1"
+    assert api_check.release_tag(tmp_path, "0.2.0") == "v0.1.0"
+    assert api_check.release_tag(tmp_path, "1.0.0rc1") == "v1.0.0rc1"
 
 
-def test_release_tag_none_when_line_untagged(tmp_path):
-    import subprocess
+def test_release_tag_none_when_line_untagged(monkeypatch, tmp_path):
+    def fake_git(root, *args):
+        return b"false" if "--is-shallow-repository" in args else b""
 
-    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
-    subprocess.run(
-        ["git", "-C", str(tmp_path), "config", "user.email", "test@example.com"], check=True
-    )
-    subprocess.run(["git", "-C", str(tmp_path), "config", "user.name", "Test"], check=True)
-    (tmp_path / "file").write_text("")
-    subprocess.run(["git", "-C", str(tmp_path), "add", "file"], check=True)
-    subprocess.run(["git", "-C", str(tmp_path), "commit", "-qm", "initial"], check=True)
+    monkeypatch.setattr(api_check, "_git", fake_git)
 
-    from scripts.api_check import release_tag
+    assert api_check.release_tag(tmp_path, "0.2.0") is None
 
-    assert release_tag(tmp_path, "0.2.0") is None

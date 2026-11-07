@@ -216,6 +216,15 @@ def release_tag(root: Path, current_version: str) -> str | None:
     tags = _git(root, *options, "tag", "--list", line, "--sort=-v:refname").split()
     return tags[0].decode() if tags else None
 
+def _release_minor(version: str) -> tuple[int, int]:
+    if Version is not None:
+        parsed = Version(version)
+        return parsed.release[0], parsed.release[1] if len(parsed.release) > 1 else 0
+    match = re.match(r"(\d+)\.(\d+)", version)
+    if match is None:
+        raise ValueError(f"invalid package version: {version}")
+    return int(match.group(1)), int(match.group(2))
+
 
 def _load(search_path: Path) -> griffe.Module:
     package = griffe.load(
@@ -260,6 +269,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
     if tag is None:
         print("no release tag on the current release line: the stable API has no baseline yet")
+        return 0
+    if (
+        args.against is None
+        and current_version.startswith("0.")
+        and _release_minor(current_version) != _release_minor(tag.removeprefix("v"))
+    ):
+        print("no release tag for the current 0.x minor release: minor releases may break the API")
         return 0
     with TemporaryDirectory(prefix="terrine-api-") as directory:
         try:
