@@ -745,7 +745,9 @@ def test_refresh_after_mode_change_rebuilds_layers_and_matches_fresh_build(tmp_p
     refreshed = dataset.refresh(models["native"], changes=unchanged, budget=budget)
     assert refreshed.manifest.model_hash == models["native"].model_hash
     assert refreshed.manifest.model_hash != dataset.manifest.model_hash
-    fresh = design.build(models["native"]).materialize(budget).table.replace_schema_metadata(None)
+    fresh = (
+        design.build(models["native"]).materialize(budget=budget).table.replace_schema_metadata(None)
+    )
     rows = pa.Table.from_batches(list(refreshed.to_arrow_batches()))
     order = [("unit", "ascending"), ("anchor_id", "ascending")]
     assert (
@@ -809,7 +811,7 @@ def test_native_and_exact_measures_on_same_column_stage_and_refresh(tmp_path):
         staged = MaterializedFrame.from_arrow(
             pa.Table.from_batches(list(dataset.to_arrow_batches()))
         )
-        fresh = design.build(model).materialize(budget)
+        fresh = design.build(model).materialize(budget=budget)
         assert {name: staged.columns[name].arithmetic for name in ("native", "exact")} == {
             "native": "native",
             "exact": "exact",
