@@ -368,27 +368,37 @@ def _signature_text(obj: griffe.Function | griffe.Class) -> str:
     return signature.removeprefix(obj.name)
 
 
+def _attribute_text(obj: griffe.Attribute) -> str:
+    return str(obj.annotation) if obj.annotation is not None else "<attribute>"
+
+
 def snapshot_lines(surface: Mapping[str, griffe.Object]) -> list[str]:
-    """Return sorted stable callable signatures for a release snapshot."""
+    """Return sorted stable API exports and callable signatures."""
     lines = set()
     for qualified, obj in surface.items():
         target = _resolved(obj)
         if isinstance(target, griffe.Function):
             lines.add(f"{qualified}: {_signature_text(target)}")
-            continue
-        if not isinstance(target, griffe.Class):
-            continue
-        lines.add(f"{qualified}: {_signature_text(target)}")
-        for name, member in target.members.items():
-            if (
-                (name.startswith("_") and name not in {"__init__", "__new__"})
-                or f"{qualified}.{name}" in PROVISIONAL_NAMES
-                or f"{target.path}.{name}" in PROVISIONAL_NAMES
-            ):
-                continue
-            method = _resolved(member)
-            if isinstance(method, griffe.Function):
-                lines.add(f"{qualified}.{name}: {_signature_text(method)}")
+        elif isinstance(target, griffe.Class):
+            lines.add(f"{qualified}: {_signature_text(target)}")
+            for name, member in target.members.items():
+                if (
+                    (name.startswith("_") and name not in {"__init__", "__new__"})
+                    or f"{qualified}.{name}" in PROVISIONAL_NAMES
+                    or f"{target.path}.{name}" in PROVISIONAL_NAMES
+                ):
+                    continue
+                attribute = _resolved(member)
+                if isinstance(attribute, griffe.Function):
+                    lines.add(f"{qualified}.{name}: {_signature_text(attribute)}")
+                elif isinstance(attribute, griffe.Attribute):
+                    lines.add(f"{qualified}.{name}: {_attribute_text(attribute)}")
+        elif isinstance(target, griffe.Attribute):
+            lines.add(f"{qualified}: {_attribute_text(target)}")
+        elif isinstance(target, griffe.Module):
+            lines.add(f"{qualified}: <module>")
+        else:
+            lines.add(f"{qualified}: <non-callable>")
     return sorted(lines)
 
 

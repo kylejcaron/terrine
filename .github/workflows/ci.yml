@@ -208,9 +208,8 @@ jobs:
       - run: uv sync --locked --group dev --extra duckdb
       - run: /usr/bin/time -f "terrine-pytest-cpu %U %S" uv run pytest -q -n auto integration/conformance
 
-  # Signatures of the stable API against the newest v1.* release tag; passes
-  # until the first 1.x release is tagged. The comparison needs every tag and
-  # the history they point to.
+  # Validates stable exports and annotations, then compares signatures with the
+  # newest versioned snapshot; differences are informational during 0.x.
   api-compat:
     needs: scope
     if: needs.scope.outputs.defer != 'true'
@@ -231,10 +230,15 @@ jobs:
       - name: Compare stable API snapshot
         run: |
           set -euo pipefail
-          snapshot=$(find tests/artifacts/surface -maxdepth 1 -type f -name '*.txt' -print 2>/dev/null | sort -V | tail -n 1 || true)
+          snapshot=$(uv run python -c '
+          from pathlib import Path
+          from packaging.version import Version
+          snapshots = list(Path("tests/artifacts/surface").glob("*.txt"))
+          print(max(snapshots, key=lambda path: Version(path.stem.removeprefix("v"))) if snapshots else "")
+          ')
           if [ -z "$snapshot" ]; then
-            echo "No stable API snapshot exists yet; comparison skipped."
-            exit 0
+            uv run python scripts/api_check.py --compare tests/artifacts/surface/.no-snapshot-yet.txt
+            exit $?
           fi
           uv run python scripts/api_check.py --compare "$snapshot"
 

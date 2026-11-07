@@ -371,7 +371,10 @@ def test_snapshot_round_trip(tmp_path, monkeypatch):
     package = tmp_path / "terrine"
     package.mkdir()
     (package / "__init__.py").write_text(
-        '__all__ = ["public"]\n\ndef public(value: int) -> str:\n    return str(value)\n'
+        '__all__ = ["public", "REASONS"]\n'
+        "REASONS: dict[str, str] = {}\n"
+        "\ndef public(value: int) -> str:\n"
+        "    return str(value)\n"
     )
     module = griffe.load("terrine", search_paths=[tmp_path])
     assert isinstance(module, griffe.Module)
@@ -381,7 +384,10 @@ def test_snapshot_round_trip(tmp_path, monkeypatch):
     snapshot_path = tmp_path / "surface.txt"
 
     assert api_check.main(["--snapshot", str(snapshot_path)]) == 0
-    assert snapshot_path.read_text().splitlines() == ["terrine.public: (value: int) -> str"]
+    assert snapshot_path.read_text().splitlines() == [
+        "terrine.REASONS: dict[str, str]",
+        "terrine.public: (value: int) -> str",
+    ]
     assert api_check.main(["--compare", str(snapshot_path)]) == 0
 
 
