@@ -181,12 +181,12 @@ def compile_ltv(design: Design, model: Model) -> CompiledStudy:
         or name == compiled.roles.treatment
     }
     output_columns["period_value"] = ColumnMeta(
-        Window(0, trajectory.period),
-        "outcome",
-        "period_value_observed_from",
-        "period_value_observed_until",
-        "period_value_complete",
-        "period_value_reason",
+        window=Window(0, trajectory.period),
+        role="outcome",
+        observed_from_column="period_value_observed_from",
+        observed_until_column="period_value_observed_until",
+        complete_column="period_value_complete",
+        reason_column="period_value_reason",
         numeric_policy=compiled.columns[names[0]].numeric_policy,
         arithmetic=compiled.columns[names[0]].arithmetic,
     )

@@ -30,7 +30,7 @@ def materialized_baseline(world: World, *, weighted: bool = False) -> Materializ
     No warehouse execution snapshot or replay equivalence is claimed.
     """
     table = reference_rows(world)
-    cutoff = FeatureCutoff(0, True, "retrospective_effective_time")
+    cutoff = FeatureCutoff(latest_seconds=0, strict=True, knowledge="retrospective_effective_time")
     generations = dict.fromkeys(("world_roster", "world_events", "world_attributes"))
     declaration = (
         f"baseline-v1:{world.config.t0.isoformat()}:"

@@ -34,21 +34,48 @@ def handoff_frame():
         }
     )
     return MaterializedFrame(
-        table,
-        Roles("unit", "anchor_id", "t0", "treatment", ("x",), ("y",)),
-        {
-            "x": ColumnMeta(None, "feature", None, None, None, None),
-            "y": ColumnMeta(None, "outcome", None, None, "complete", "reason"),
+        table=table,
+        roles=Roles(
+            unit="unit",
+            anchor="anchor_id",
+            t0="t0",
+            treatment="treatment",
+            features=("x",),
+            outcomes=("y",),
+        ),
+        columns={
+            "x": ColumnMeta(
+                window=None,
+                role="feature",
+                observed_from_column=None,
+                observed_until_column=None,
+                complete_column=None,
+                reason_column=None,
+            ),
+            "y": ColumnMeta(
+                window=None,
+                role="outcome",
+                observed_from_column=None,
+                observed_until_column=None,
+                complete_column="complete",
+                reason_column="reason",
+            ),
         },
-        Provenance(
-            {},
-            {},
-            "example",
-            "example",
-            {},
-            ExecutionSnapshot(None, "arrow", {}, None, "unverified"),
-            "cross_section",
-            "baseline_binary",
+        provenance=Provenance(
+            feature_cutoffs={},
+            eligibility_cutoffs={},
+            design_hash="example",
+            model_hash="example",
+            source_generations={},
+            execution_snapshot=ExecutionSnapshot(
+                snapshot_id=None,
+                backend="arrow",
+                source_generations={},
+                input_binding_id=None,
+                replay_equivalence="unverified",
+            ),
+            shape="cross_section",
+            treatment_design="baseline_binary",
             engine_name="arrow",
             dialect="generic",
             engine_status="unverified",

@@ -877,7 +877,14 @@ def event_sequence(
         )
     if funnel_event_property is not None:
         value_support["funnel_attempts"] = ("funnel_attempts_complete", "funnel_attempts_reason")
-    roles = Roles("unit", "anchor_id", "t0", None, feature_names, ())
+    roles = Roles(
+        unit="unit",
+        anchor="anchor_id",
+        t0="t0",
+        treatment=None,
+        features=feature_names,
+        outcomes=(),
+    )
     columns = {}
     for name in (*feature_names, "event_count"):
         complete_name, reason_name = value_support.get(
@@ -891,11 +898,13 @@ def event_sequence(
                 }
             )
         columns[name] = ColumnMeta(
-            Window(_elapsed(window_start, field="window"), _elapsed(window_end, field="window")),
-            "event_property",
-            None,
-            None,
-            complete_name,
-            reason_name,
+            window=Window(
+                _elapsed(window_start, field="window"), _elapsed(window_end, field="window")
+            ),
+            role="event_property",
+            observed_from_column=None,
+            observed_until_column=None,
+            complete_column=complete_name,
+            reason_column=reason_name,
         )
     return SequenceResult(table, roles, columns, None, {}, over_limit, max_events)

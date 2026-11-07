@@ -280,22 +280,34 @@ def _compile_cohorts(
             ),
         ),
     )
-    roles = Roles("bucket_index", "bucket_index", "bucket_start", None, (), ("value",))
+    roles = Roles(
+        unit="bucket_index",
+        anchor="bucket_index",
+        t0="bucket_start",
+        treatment=None,
+        features=(),
+        outcomes=("value",),
+    )
     # The summary keeps the value column's declared arithmetic; the denominators
     # count units and declare none.
     columns = {
         "value": ColumnMeta(
-            None,
-            "outcome",
-            None,
-            None,
-            "complete",
-            "reason",
+            window=None,
+            role="outcome",
+            observed_from_column=None,
+            observed_until_column=None,
+            complete_column="complete",
+            reason_column="reason",
             arithmetic=study.columns[value_column].arithmetic,
         ),
         **{
             name: ColumnMeta(
-                None, "denominator", None, None, "denominators_complete", "denominators_reason"
+                window=None,
+                role="denominator",
+                observed_from_column=None,
+                observed_until_column=None,
+                complete_column="denominators_complete",
+                reason_column="denominators_reason",
             )
             for name in ("at_risk", "observable")
         },

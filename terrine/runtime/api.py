@@ -639,10 +639,10 @@ class DesignExecutor:
             )
             table = self._frame._winsorize_output(table)
             metadata = MaterializedFrame(
-                table,
-                compiled.roles,
-                compiled.columns,
-                Provenance(
+                table=table,
+                roles=compiled.roles,
+                columns=compiled.columns,
+                provenance=Provenance(
                     feature_cutoffs=compiled.feature_cutoffs,
                     eligibility_cutoffs=compiled.eligibility_cutoffs,
                     eligibility_summary=summary,
@@ -665,9 +665,9 @@ class DesignExecutor:
                     panel=panel,
                     sampling=(
                         SamplingMeta(
-                            self.design.sample.strata,
-                            self.design.sample.controls_per_treated,
-                            self.design.sample.seed,
+                            strata=self.design.sample.strata,
+                            controls_per_treated=self.design.sample.controls_per_treated,
+                            seed=self.design.sample.seed,
                         )
                         if self.design.sample is not None
                         else None
@@ -678,10 +678,10 @@ class DesignExecutor:
             )
             metadata = (
                 MaterializedFrame(
-                    metadata.table,
-                    metadata.roles,
-                    metadata.columns,
-                    self._frame._view_provenance(metadata.provenance, excluded_counts),
+                    table=metadata.table,
+                    roles=metadata.roles,
+                    columns=metadata.columns,
+                    provenance=self._frame._view_provenance(metadata.provenance, excluded_counts),
                 )
                 .to_pyarrow()
                 .schema
@@ -810,4 +810,6 @@ def open_published_frame(receipt: RunReceipt, *, con: Any, namespace: str):
     ):
         raise ValueError("published Arrow partitions do not share one Frame metadata contract")
     table = pa.concat_tables([frame.table for frame in frames])
-    return MaterializedFrame(table, first.roles, first.columns, first.provenance)
+    return MaterializedFrame(
+        table=table, roles=first.roles, columns=first.columns, provenance=first.provenance
+    )

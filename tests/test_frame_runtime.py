@@ -163,7 +163,9 @@ def test_unresolved_eligibility_refuses_export_with_only_aggregate_counts():
         compiled = CompiledStudy(
             table,
             table,
-            Roles("unit", "anchor_id", "t0", None, (), ()),
+            Roles(
+                unit="unit", anchor="anchor_id", t0="t0", treatment=None, features=(), outcomes=()
+            ),
             {},
             {},
             {},
@@ -198,9 +200,10 @@ def test_strict_scan_policy_precedes_integrity_reads(native_inputs):
         frame.materialize(budget=Budget(max_scan_bytes=1))
     assert error.value.code == "terrine.budget.scan_unknown"
     with pytest.raises(TerrineError) as error:
-        assert frame.materialize(
-            budget=Budget(max_scan_bytes=1, strict_scan=False)
-        ).table.num_rows == 2
+        assert (
+            frame.materialize(budget=Budget(max_scan_bytes=1, strict_scan=False)).table.num_rows
+            == 2
+        )
     assert error.value.code == "terrine.compile.anchor_integrity"
 
 
@@ -220,7 +223,7 @@ def test_dataframe_conversion_selects_compact_or_lossless_columns(
     from terrine.frame import Frame
 
     materialized = MaterializedFrame(
-        pa.table(
+        table=pa.table(
             {
                 "unit": ["a"],
                 "anchor_id": ["a1"],
@@ -234,22 +237,47 @@ def test_dataframe_conversion_selects_compact_or_lossless_columns(
                 "_observed_from": [datetime(2024, 1, 1, tzinfo=UTC)],
             }
         ),
-        Roles("unit", "anchor_id", "t0", None, ("value",), ("label",)),
-        {
+        roles=Roles(
+            unit="unit",
+            anchor="anchor_id",
+            t0="t0",
+            treatment=None,
+            features=("value",),
+            outcomes=("label",),
+        ),
+        columns={
             "value": ColumnMeta(
-                None, "feature", "_observed_from", None, "value__complete", "value__reason"
+                window=None,
+                role="feature",
+                observed_from_column="_observed_from",
+                observed_until_column=None,
+                complete_column="value__complete",
+                reason_column="value__reason",
             ),
-            "label": ColumnMeta(None, "outcome", None, None, "label__complete", "label__reason"),
+            "label": ColumnMeta(
+                window=None,
+                role="outcome",
+                observed_from_column=None,
+                observed_until_column=None,
+                complete_column="label__complete",
+                reason_column="label__reason",
+            ),
         },
-        Provenance(
-            {},
-            {},
-            "design",
-            "model",
-            {},
-            ExecutionSnapshot(None, "duckdb", {}, None, "unverified"),
-            "cross_section",
-            None,
+        provenance=Provenance(
+            feature_cutoffs={},
+            eligibility_cutoffs={},
+            design_hash="design",
+            model_hash="model",
+            source_generations={},
+            execution_snapshot=ExecutionSnapshot(
+                snapshot_id=None,
+                backend="duckdb",
+                source_generations={},
+                input_binding_id=None,
+                replay_equivalence="unverified",
+            ),
+            shape="cross_section",
+            treatment_design=None,
             engine_name="duckdb",
             dialect="duckdb",
             engine_status="verified",

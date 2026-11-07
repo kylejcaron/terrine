@@ -667,7 +667,7 @@ class History:
         )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class Roles:
     unit: str
     anchor: str
@@ -712,7 +712,7 @@ class Roles:
             raise ValueError("feature and outcome names must be unique")
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ApproximationMeta:
     algorithm: str
     implementation: str
@@ -735,7 +735,7 @@ class ApproximationMeta:
         object.__setattr__(self, "parameters", MappingProxyType(dict(self.parameters)))
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ColumnMeta:
     window: Window | None
     role: str
@@ -775,7 +775,7 @@ class ColumnMeta:
             )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class FeatureCutoff:
     latest_seconds: int
     strict: bool
@@ -792,7 +792,7 @@ class FeatureCutoff:
             raise ValueError("unsupported cutoff reference")
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ExpressionTiming:
     """Conservative support and exact resolved time-column references for one expression."""
 
@@ -855,7 +855,7 @@ class ExpressionTiming:
         object.__setattr__(self, "selector_support_seconds", MappingProxyType(supports))
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class StatePanelMeta:
     """Portable state-panel definition and structural timing references."""
 
@@ -923,7 +923,7 @@ class StatePanelMeta:
             _nonempty(getattr(self, name), name)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class SequenceMeta:
     """Portable event-sequence schema and stable references to status fields."""
 
@@ -1026,7 +1026,7 @@ class SequenceMeta:
         )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class TreatmentHistoryMeta:
     kind: Literal["initiation", "persistent_adoption"]
     source: str
@@ -1054,7 +1054,7 @@ class TreatmentHistoryMeta:
             raise ValueError("initiation metadata cannot declare persistence")
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class TrialWeightMeta:
     kind: Literal["equal_trial", "explicit"]
     values: Mapping[str, float] | None = None
@@ -1072,7 +1072,7 @@ class TrialWeightMeta:
             raise ValueError("equal_trial weights cannot include values")
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class SamplingMeta:
     strata: tuple[str, ...]
     controls_per_treated: int
@@ -1095,7 +1095,7 @@ class SamplingMeta:
         object.__setattr__(self, "strata", strata)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class PanelMeta:
     """Portable shape-specific identity and treatment-history metadata."""
 
@@ -1139,7 +1139,7 @@ class PanelMeta:
             raise ValueError("anticipation_seconds must be nonnegative")
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class CalendarComparisonMeta:
     """Portable control, cohort and period policy for stacked comparisons."""
 
@@ -1167,7 +1167,7 @@ class CalendarComparisonMeta:
             object.__setattr__(self, name, tuple(getattr(self, name)))
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class CohortOperationMeta:
     bucket_seconds: int
     bucket_origin: datetime
@@ -1242,7 +1242,7 @@ class RowCheckGroup:
         object.__setattr__(self, "checks", tuple(self.checks))
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ExecutionSnapshot:
     snapshot_id: str | None
     backend: str
@@ -1268,7 +1268,7 @@ class ExecutionSnapshot:
         )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class DatasetViewMeta:
     """Portable selections and split/exclusion summary for a dataset view."""
 
@@ -1314,7 +1314,7 @@ class DatasetViewMeta:
         object.__setattr__(self, "counts_by_reason", MappingProxyType(counts))
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class Provenance:
     """Design, model, input and execution evidence recorded with every result.
 
@@ -1493,7 +1493,7 @@ class CoverageSummary:
         object.__setattr__(self, "end_exclusive", end)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class Preview:
     planned_rows: int | None
     output_bytes: int | None
@@ -1663,42 +1663,44 @@ def _decode(value: Any, cls: type) -> Any:
             treatment = item.get("treatment")
             if treatment is not None:
                 treatment = TreatmentHistoryMeta(
-                    treatment["kind"],
-                    treatment["source"],
-                    treatment["property"],
-                    datetime.fromisoformat(treatment["history_start"]["$datetime"]),
-                    treatment["knowledge"],
-                    treatment.get("adopted_value"),
-                    treatment.get("persistence"),
+                    kind=treatment["kind"],
+                    source=treatment["source"],
+                    property=treatment["property"],
+                    history_start=datetime.fromisoformat(treatment["history_start"]["$datetime"]),
+                    knowledge=treatment["knowledge"],
+                    adopted_value=treatment.get("adopted_value"),
+                    persistence=treatment.get("persistence"),
                 )
             weight = item.get("trial_weight")
             if weight is not None:
-                weight = TrialWeightMeta(weight["kind"], weight.get("values"))
+                weight = TrialWeightMeta(kind=weight["kind"], values=weight.get("values"))
             kwargs[field.name] = PanelMeta(
-                item["shape"],
-                treatment,
-                weight,
-                tuple(item.get("periods", ())),
-                item.get("period_seconds"),
-                item.get("reference_period"),
-                tuple(item.get("trials", ())),
-                item.get("anticipation_seconds", 0),
+                shape=item["shape"],
+                treatment=treatment,
+                trial_weight=weight,
+                periods=tuple(item.get("periods", ())),
+                period_seconds=item.get("period_seconds"),
+                reference_period=item.get("reference_period"),
+                trials=tuple(item.get("trials", ())),
+                anticipation_seconds=item.get("anticipation_seconds", 0),
             )
         elif field.name == "calendar_comparison" and item is not None:
             kwargs[field.name] = CalendarComparisonMeta(
-                item["control"],
-                item["cohort_source"],
-                item["cohort_property"],
-                datetime.fromisoformat(item["history_start"]["$datetime"]),
-                item["knowledge"],
-                item["reference_period"],
-                tuple(item["comparison_periods"]),
-                tuple(item["anticipation_periods"]),
-                item["period_seconds"],
+                control=item["control"],
+                cohort_source=item["cohort_source"],
+                cohort_property=item["cohort_property"],
+                history_start=datetime.fromisoformat(item["history_start"]["$datetime"]),
+                knowledge=item["knowledge"],
+                reference_period=item["reference_period"],
+                comparison_periods=tuple(item["comparison_periods"]),
+                anticipation_periods=tuple(item["anticipation_periods"]),
+                period_seconds=item["period_seconds"],
             )
         elif field.name == "sampling" and item is not None:
             kwargs[field.name] = SamplingMeta(
-                tuple(item["strata"]), item["controls_per_treated"], item["seed"]
+                strata=tuple(item["strata"]),
+                controls_per_treated=item["controls_per_treated"],
+                seed=item["seed"],
             )
         elif field.name == "cohort_operation" and item is not None:
             kwargs[field.name] = _decode(item, CohortOperationMeta)
@@ -1825,7 +1827,7 @@ def output_sort_keys(schema: pa.Schema, roles: Roles, *, shape: str) -> tuple[st
     return tuple(dict.fromkeys(ordered))
 
 
-@dataclass(frozen=True, slots=True, repr=False)
+@dataclass(frozen=True, slots=True, repr=False, kw_only=True)
 class MaterializedFrame:
     table: pa.Table
     roles: Roles
@@ -1930,7 +1932,7 @@ class MaterializedFrame:
         roles = _decode(payload["roles"], Roles)
         columns = {key: _decode(item, ColumnMeta) for key, item in payload["columns"].items()}
         provenance = _decode(payload["provenance"], Provenance)
-        return cls(table, roles, columns, provenance)
+        return cls(table=table, roles=roles, columns=columns, provenance=provenance)
 
     @classmethod
     def from_arrow(cls, table: pa.Table) -> MaterializedFrame:
@@ -1946,9 +1948,7 @@ class MaterializedFrame:
             if payload.get("version") != 2:
                 raise _UNSUPPORTED_METADATA_VERSION.error(version=payload.get("version"))
             roles = _decode(payload["roles"], Roles)
-            columns = {
-                key: _decode(item, ColumnMeta) for key, item in payload["columns"].items()
-            }
+            columns = {key: _decode(item, ColumnMeta) for key, item in payload["columns"].items()}
             provenance = _decode(payload["provenance"], Provenance)
             missing = tuple(
                 name for name in payload["bookkeeping_columns"] if name not in table.column_names
@@ -1957,7 +1957,12 @@ class MaterializedFrame:
                 raise _MISSING_COLUMNS.error(columns=missing)
             clean = dict(table.schema.metadata or {})
             del clean[_ARROW_METADATA_KEY]
-            return cls(table.replace_schema_metadata(clean or None), roles, columns, provenance)
+            return cls(
+                table=table.replace_schema_metadata(clean or None),
+                roles=roles,
+                columns=columns,
+                provenance=provenance,
+            )
         except TerrineError:
             raise
         except Exception as error:
@@ -1984,7 +1989,7 @@ class MaterializedFrame:
             roles = _decode(payload["roles"], Roles)
             columns = {key: _decode(item, ColumnMeta) for key, item in payload["columns"].items()}
             provenance = _decode(payload["provenance"], Provenance)
-            return cls(table, roles, columns, provenance)
+            return cls(table=table, roles=roles, columns=columns, provenance=provenance)
         except TerrineError:
             raise
         except json.JSONDecodeError as error:

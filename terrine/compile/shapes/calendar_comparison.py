@@ -339,13 +339,53 @@ def compile_calendar_comparison(design: Design, model: Model) -> CompiledStudy:
     columns = dict(compiled.columns)
     columns.update(
         {
-            "cohort": ColumnMeta(None, "cohort", None, None, None, None),
-            "period": ColumnMeta(None, "period", None, None, None, None),
-            "event_period": ColumnMeta(None, "event period", None, None, None, None),
-            "treatment": ColumnMeta(None, "treatment", None, None, None, None),
-            "control_eligible": ColumnMeta(None, "control eligibility", None, None, None, None),
+            "cohort": ColumnMeta(
+                window=None,
+                role="cohort",
+                observed_from_column=None,
+                observed_until_column=None,
+                complete_column=None,
+                reason_column=None,
+            ),
+            "period": ColumnMeta(
+                window=None,
+                role="period",
+                observed_from_column=None,
+                observed_until_column=None,
+                complete_column=None,
+                reason_column=None,
+            ),
+            "event_period": ColumnMeta(
+                window=None,
+                role="event period",
+                observed_from_column=None,
+                observed_until_column=None,
+                complete_column=None,
+                reason_column=None,
+            ),
+            "treatment": ColumnMeta(
+                window=None,
+                role="treatment",
+                observed_from_column=None,
+                observed_until_column=None,
+                complete_column=None,
+                reason_column=None,
+            ),
+            "control_eligible": ColumnMeta(
+                window=None,
+                role="control eligibility",
+                observed_from_column=None,
+                observed_until_column=None,
+                complete_column=None,
+                reason_column=None,
+            ),
             "__terrine_treatment_initiation_time": ColumnMeta(
-                None, "treatment initiation time", None, None, None, None
+                window=None,
+                role="treatment initiation time",
+                observed_from_column=None,
+                observed_until_column=None,
+                complete_column=None,
+                reason_column=None,
             ),
         }
     )
@@ -353,12 +393,12 @@ def compile_calendar_comparison(design: Design, model: Model) -> CompiledStudy:
         retained,
         audit,
         Roles(
-            "unit",
-            "anchor_id",
-            "t0",
-            "treatment",
-            tuple(design.features),
-            tuple(design.outcomes),
+            unit="unit",
+            anchor="anchor_id",
+            t0="t0",
+            treatment="treatment",
+            features=tuple(design.features),
+            outcomes=tuple(design.outcomes),
             cluster_unit="unit",
             trial="cohort",
         ),

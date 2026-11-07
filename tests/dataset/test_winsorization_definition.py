@@ -31,27 +31,35 @@ def test_fitted_limits_are_exact_under_small_decimal_context():
         }
     )
     data = MaterializedFrame(
-        table,
-        Roles("unit", "anchor", "t0", None, ("value",), ()),
-        {},
-        Provenance(
-            {},
-            {},
-            "c" * 64,
-            "d" * 64,
-            {},
-            ExecutionSnapshot(None, "arrow", {}, None, "unverified"),
-            "cross_section",
-            None,
+        table=table,
+        roles=Roles(
+            unit="unit", anchor="anchor", t0="t0", treatment=None, features=("value",), outcomes=()
+        ),
+        columns={},
+        provenance=Provenance(
+            feature_cutoffs={},
+            eligibility_cutoffs={},
+            design_hash="c" * 64,
+            model_hash="d" * 64,
+            source_generations={},
+            execution_snapshot=ExecutionSnapshot(
+                snapshot_id=None,
+                backend="arrow",
+                source_generations={},
+                input_binding_id=None,
+                replay_equivalence="unverified",
+            ),
+            shape="cross_section",
+            treatment_design=None,
             engine_name="arrow",
             dialect="generic",
             engine_status="unverified",
             dataset_view=DatasetViewMeta(
-                "training",
-                ("value",),
-                (),
-                "e" * 64,
-                "b" * 64,
+                kind="training",
+                selected_features=("value",),
+                selected_labels=(),
+                view_hash="e" * 64,
+                feature_definition_hash="b" * 64,
                 split_policy={"kind": "group"},
             ),
         ),

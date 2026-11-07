@@ -34,11 +34,13 @@ class CompiledPredicate:
 def conjunction_cutoff(cutoffs: tuple[FeatureCutoff, ...]) -> FeatureCutoff:
     latest = max(item.latest_seconds for item in cutoffs)
     return FeatureCutoff(
-        latest,
-        all(item.strict for item in cutoffs if item.latest_seconds == latest),
-        "retrospective_effective_time"
-        if any(item.knowledge == "retrospective_effective_time" for item in cutoffs)
-        else "recorded_at",
+        latest_seconds=latest,
+        strict=all(item.strict for item in cutoffs if item.latest_seconds == latest),
+        knowledge=(
+            "retrospective_effective_time"
+            if any(item.knowledge == "retrospective_effective_time" for item in cutoffs)
+            else "recorded_at"
+        ),
     )
 
 
@@ -108,5 +110,12 @@ def compile_predicate(
     value, reason, lower, upper, cutoff = compile_node(predicate)
     complete = builder.put("predicate_complete", builder.col(value).notnull())
     result = builder.table.mutate(**{output: builder.col(value)})
-    meta = ColumnMeta(None, role, lower, upper, complete, reason)
+    meta = ColumnMeta(
+        window=None,
+        role=role,
+        observed_from_column=lower,
+        observed_until_column=upper,
+        complete_column=complete,
+        reason_column=reason,
+    )
     return CompiledPredicate(result, meta, cutoff)

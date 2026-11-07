@@ -66,15 +66,22 @@ def _cohorts(
     study = CompiledStudy(
         table=table,
         audit_table=table,
-        roles=Roles("unit", "unit", "cohort_time", None, (), ("period_value",)),
+        roles=Roles(
+            unit="unit",
+            anchor="unit",
+            t0="cohort_time",
+            treatment=None,
+            features=(),
+            outcomes=("period_value",),
+        ),
         columns={
             "period_value": ColumnMeta(
-                None,
-                "outcome",
-                None,
-                None,
-                "period_value__complete",
-                "period_value__reason",
+                window=None,
+                role="outcome",
+                observed_from_column=None,
+                observed_until_column=None,
+                complete_column="period_value__complete",
+                reason_column="period_value__reason",
                 arithmetic=arithmetic,
             )
         },

@@ -32,8 +32,22 @@ def survival(frame):
         roles=replace(frame.roles, outcomes=("duration", "event"), weight="w", cluster_unit="id"),
         columns={
             **frame.columns,
-            "duration": ColumnMeta(None, "outcome", None, None, "complete", "reason"),
-            "event": ColumnMeta(None, "outcome", None, None, "complete", "reason"),
+            "duration": ColumnMeta(
+                window=None,
+                role="outcome",
+                observed_from_column=None,
+                observed_until_column=None,
+                complete_column="complete",
+                reason_column="reason",
+            ),
+            "event": ColumnMeta(
+                window=None,
+                role="outcome",
+                observed_from_column=None,
+                observed_until_column=None,
+                complete_column="complete",
+                reason_column="reason",
+            ),
         },
         provenance=replace(frame.provenance, shape="time_to_event"),
     )
@@ -148,9 +162,23 @@ def _risk_table(frame, *, delayed=0, groups=(0, 0)):
     return replace(
         frame,
         table=table,
-        roles=Roles("unit", "time_bin", "time_bin", None, ("time_bin",), ("events", "censored")),
+        roles=Roles(
+            unit="unit",
+            anchor="time_bin",
+            t0="time_bin",
+            treatment=None,
+            features=("time_bin",),
+            outcomes=("events", "censored"),
+        ),
         columns={
-            name: ColumnMeta(None, "outcome", None, None, f"{name}__complete", f"{name}__reason")
+            name: ColumnMeta(
+                window=None,
+                role="outcome",
+                observed_from_column=None,
+                observed_until_column=None,
+                complete_column=f"{name}__complete",
+                reason_column=f"{name}__reason",
+            )
             for name in ("events", "censored")
         },
         provenance=replace(frame.provenance, shape="life_table"),

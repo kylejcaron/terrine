@@ -804,16 +804,20 @@ def compile_columns(
                 },
             )
             meta = ColumnMeta(
-                None,
-                "event_time",
-                selector_meta["observed_from"],
-                selector_meta["observed_until"],
-                selector_meta["complete"],
-                selector_meta["reason"],
+                window=None,
+                role="event_time",
+                observed_from_column=selector_meta["observed_from"],
+                observed_until_column=selector_meta["observed_until"],
+                complete_column=selector_meta["complete"],
+                reason_column=selector_meta["reason"],
                 measure=node.measure,
             )
             selector_support, _ = selector_timing(node)
-            cutoff = FeatureCutoff(selector_support[1], True, "retrospective_effective_time")
+            cutoff = FeatureCutoff(
+                latest_seconds=selector_support[1],
+                strict=True,
+                knowledge="retrospective_effective_time",
+            )
             timing_column_refs[node] = (
                 output,
                 selector_meta["start_bound"],
@@ -847,7 +851,9 @@ def compile_columns(
                 if relative is not None
                 else node.before.seconds
             )
-            cutoff = FeatureCutoff(cutoff_seconds, True, "retrospective_effective_time")
+            cutoff = FeatureCutoff(
+                latest_seconds=cutoff_seconds, strict=True, knowledge="retrospective_effective_time"
+            )
             strategy = "strict_history"
             result_table = result.table
         elif isinstance(node, RetentionMetric):
@@ -865,7 +871,9 @@ def compile_columns(
             )
             meta = result.columns[output]
             cutoff = FeatureCutoff(
-                range_plans[node].block_seconds, True, "retrospective_effective_time"
+                latest_seconds=range_plans[node].block_seconds,
+                strict=True,
+                knowledge="retrospective_effective_time",
             )
             strategy = "blocked_range_join/retention_occurrences"
             result_table = result.table
@@ -895,7 +903,11 @@ def compile_columns(
                 range_plan=range_plans[node],
             )
             meta = result.columns[output]
-            cutoff = FeatureCutoff(node.window.end.seconds, True, "retrospective_effective_time")
+            cutoff = FeatureCutoff(
+                latest_seconds=node.window.end.seconds,
+                strict=True,
+                knowledge="retrospective_effective_time",
+            )
             strategy = "blocked_range_join/exact_type7"
             result_table = result.table
         elif isinstance(node, ApproxMetricQuantile):
@@ -952,7 +964,11 @@ def compile_columns(
                     error_description="t-digest empirical, no guaranteed bound",
                 ),
             )
-            cutoff = FeatureCutoff(node.window.end.seconds, True, "retrospective_effective_time")
+            cutoff = FeatureCutoff(
+                latest_seconds=node.window.end.seconds,
+                strict=True,
+                knowledge="retrospective_effective_time",
+            )
             strategy = "blocked_range_join/tdigest_sidecar"
             result_table = summary.table.mutate(**{output: ibis.null().cast("float64")})
         elif isinstance(node, ApproxMetricDistinct):
@@ -990,7 +1006,11 @@ def compile_columns(
                     error_description="HLL relative standard error ≈ 1.04/√m",
                 ),
             )
-            cutoff = FeatureCutoff(node.window.end.seconds, True, "retrospective_effective_time")
+            cutoff = FeatureCutoff(
+                latest_seconds=node.window.end.seconds,
+                strict=True,
+                knowledge="retrospective_effective_time",
+            )
             strategy = "blocked_range_join/hll"
             result_table = result.table
         elif (
@@ -1022,7 +1042,9 @@ def compile_columns(
                 if relative is not None
                 else node.window.end.seconds
             )
-            cutoff = FeatureCutoff(cutoff_seconds, True, "retrospective_effective_time")
+            cutoff = FeatureCutoff(
+                latest_seconds=cutoff_seconds, strict=True, knowledge="retrospective_effective_time"
+            )
             strategy = "blocked_range_join/nonadditive"
             result_table = result.table
         elif not isinstance(node, EventTime):
@@ -1041,7 +1063,9 @@ def compile_columns(
                 if relative is not None
                 else node.window.end.seconds
             )
-            cutoff = FeatureCutoff(cutoff_seconds, True, "retrospective_effective_time")
+            cutoff = FeatureCutoff(
+                latest_seconds=cutoff_seconds, strict=True, knowledge="retrospective_effective_time"
+            )
             strategy = lowered.strategy
             result_table = result.table
 
@@ -1393,12 +1417,12 @@ def compile_columns(
         retained,
         audit,
         Roles(
-            "unit",
-            "anchor_id",
-            "t0",
-            "treatment" if design.treatment else None,
-            tuple(design.features),
-            tuple(design.outcomes),
+            unit="unit",
+            anchor="anchor_id",
+            t0="t0",
+            treatment="treatment" if design.treatment else None,
+            features=tuple(design.features),
+            outcomes=tuple(design.outcomes),
         ),
         columns,
         feature_cutoffs,

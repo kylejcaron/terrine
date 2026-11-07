@@ -69,7 +69,7 @@ def test_timestamp_periods_require_cadence_and_preserve_missing_ticks(panel):
     assert error.value.code == "terrine.diff_diff.invalid_panel"
     result = exports.to_diff_diff(panel, period_col="t0", period_seconds=86400)
     assert result.df[result.time_col].tolist() == [1, 2, 4, 1, 2, 4]
-    metadata = replace(panel.provenance, panel=PanelMeta("sequential", period_seconds=86400))
+    metadata = replace(panel.provenance, panel=PanelMeta(shape="sequential", period_seconds=86400))
     inferred = exports.to_diff_diff(replace(panel, provenance=metadata), period_col="t0")
     assert inferred.period_mapping == result.period_mapping
 

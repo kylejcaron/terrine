@@ -200,7 +200,7 @@ def test_published_frame_reader_roundtrips_exact_generation_metadata():
 
     con = duckdb.connect(":memory:")
     clean = MaterializedFrame(
-        pa.table(
+        table=pa.table(
             {
                 "unit": ["u"],
                 "anchor": ["a"],
@@ -212,9 +212,25 @@ def test_published_frame_reader_roundtrips_exact_generation_metadata():
                 "revenue_reason": [None],
             }
         ),
-        Roles("unit", "anchor", "t0", None, (), ("revenue",)),
-        {"revenue": ColumnMeta(None, "outcome", None, None, "revenue_complete", "revenue_reason")},
-        _provenance(),
+        roles=Roles(
+            unit="unit",
+            anchor="anchor",
+            t0="t0",
+            treatment=None,
+            features=(),
+            outcomes=("revenue",),
+        ),
+        columns={
+            "revenue": ColumnMeta(
+                window=None,
+                role="outcome",
+                observed_from_column=None,
+                observed_until_column=None,
+                complete_column="revenue_complete",
+                reason_column="revenue_reason",
+            )
+        },
+        provenance=_provenance(),
     )
 
     class Publisher(_Executor):

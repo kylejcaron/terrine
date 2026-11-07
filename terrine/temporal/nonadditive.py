@@ -438,12 +438,12 @@ def aggregate_nonadditive_window(
             ),
         )
     meta = ColumnMeta(
-        window,
-        role,
-        names["observed_from"],
-        names["observed_until"],
-        complete_name,
-        reason_name,
+        window=window,
+        role=role,
+        observed_from_column=names["observed_from"],
+        observed_until_column=names["observed_until"],
+        complete_column=complete_name,
+        reason_column=reason_name,
         numeric_policy="exact",
         arithmetic="native" if native_arithmetic(measure) else "exact",
     )

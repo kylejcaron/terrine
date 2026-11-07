@@ -289,14 +289,21 @@ def compile_sequential(
         checks.append(check)
     columns = dict(compiled.columns)
     for name, role in zip(TRIAL_PANEL, ("treatment", "trial"), strict=True):
-        columns[name] = ColumnMeta(None, role, None, None, None, None)
+        columns[name] = ColumnMeta(
+            window=None,
+            role=role,
+            observed_from_column=None,
+            observed_until_column=None,
+            complete_column=None,
+            reason_column=None,
+        )
     roles = Roles(
-        "unit",
-        "anchor_id",
-        "t0",
-        "treatment",
-        tuple(design.features),
-        tuple(design.outcomes),
+        unit="unit",
+        anchor="anchor_id",
+        t0="t0",
+        treatment="treatment",
+        features=tuple(design.features),
+        outcomes=tuple(design.outcomes),
         cluster_unit="unit",
         trial="trial_id",
         trial_weight="trial_weight" if design.shape.trial_weight is not None else None,
@@ -304,10 +311,22 @@ def compile_sequential(
         assignment_probability="assignment_probability" if sample is not None else None,
     )
     if design.shape.trial_weight is not None:
-        columns["trial_weight"] = ColumnMeta(None, "trial_weight", None, None, None, None)
+        columns["trial_weight"] = ColumnMeta(
+            window=None,
+            role="trial_weight",
+            observed_from_column=None,
+            observed_until_column=None,
+            complete_column=None,
+            reason_column=None,
+        )
     if sample is not None:
         columns["assignment_probability"] = ColumnMeta(
-            None, "sampling_probability", None, None, None, None
+            window=None,
+            role="sampling_probability",
+            observed_from_column=None,
+            observed_until_column=None,
+            complete_column=None,
+            reason_column=None,
         )
     return replace(
         compiled,

@@ -301,20 +301,20 @@ def _binned(
         )
     state_columns = {
         "from_state": ColumnMeta(
-            Window(Duration(-every), 0),
-            "prior_state",
-            None,
-            None,
-            "from_state_complete",
-            "from_state_reason",
+            window=Window(Duration(-every), 0),
+            role="prior_state",
+            observed_from_column=None,
+            observed_until_column=None,
+            complete_column="from_state_complete",
+            reason_column="from_state_reason",
         ),
         "to_state": ColumnMeta(
-            Window(0, Duration(every)),
-            "outcome",
-            None,
-            None,
-            "to_state_complete",
-            "to_state_reason",
+            window=Window(0, Duration(every)),
+            role="outcome",
+            observed_from_column=None,
+            observed_until_column=None,
+            complete_column="to_state_complete",
+            reason_column="to_state_reason",
         ),
     }
     for state_name in ("from_state", "to_state"):

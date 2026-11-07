@@ -293,6 +293,7 @@ def _feature_definition_hash(design: Design, features: tuple[str, ...], model: M
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
 
+
 def _apply_training_view(compiled: CompiledStudy, view: _TrainingView) -> CompiledStudy:
     table = compiled.table
     roles = compiled.roles
@@ -677,9 +678,7 @@ class Frame:
                     self._scoring_view is not None
                     and self._scoring_view.parent_design_hash == fit.design_hash
                 )
-            feature_hash = _feature_definition_hash(
-                self._design, (transform.column,), self._model
-            )
+            feature_hash = _feature_definition_hash(self._design, (transform.column,), self._model)
             if not compatible or feature_hash != fit.feature_definition_hash:
                 raise transforms.identity_error(transform.column)
         result = Frame(self._design, self._model)
@@ -865,12 +864,12 @@ class Frame:
                     if budget.max_rows is not None and table.num_rows > budget.max_rows:
                         raise _ROWS_EXCEEDED.error(limit=budget.max_rows)
                 roles = Roles(
-                    "unit",
-                    "anchor_id",
-                    "t0",
-                    None,
-                    (*life_table.group_by, "time_bin"),
-                    (
+                    unit="unit",
+                    anchor="anchor_id",
+                    t0="t0",
+                    treatment=None,
+                    features=(*life_table.group_by, "time_bin"),
+                    outcomes=(
                         "at_risk",
                         "events",
                         "censored",
@@ -880,11 +879,23 @@ class Frame:
                     ),
                 )
                 columns = {name: compiled.columns[name] for name in life_table.group_by}
-                columns["time_bin"] = ColumnMeta(None, "feature", None, None, None, None)
+                columns["time_bin"] = ColumnMeta(
+                    window=None,
+                    role="feature",
+                    observed_from_column=None,
+                    observed_until_column=None,
+                    complete_column=None,
+                    reason_column=None,
+                )
                 columns.update(
                     {
                         name: ColumnMeta(
-                            None, "outcome", None, None, f"{name}__complete", f"{name}__reason"
+                            window=None,
+                            role="outcome",
+                            observed_from_column=None,
+                            observed_until_column=None,
+                            complete_column=f"{name}__complete",
+                            reason_column=f"{name}__reason",
                         )
                         for name in (*roles.outcomes, "censored_by_reason")
                     }
@@ -950,9 +961,9 @@ class Frame:
                 panel=panel,
                 sampling=(
                     SamplingMeta(
-                        self._design.sample.strata,
-                        self._design.sample.controls_per_treated,
-                        self._design.sample.seed,
+                        strata=self._design.sample.strata,
+                        controls_per_treated=self._design.sample.controls_per_treated,
+                        seed=self._design.sample.seed,
                     )
                     if self._design.sample is not None
                     else None
@@ -962,7 +973,9 @@ class Frame:
                 cohort_operation=cohort_operation,
             )
             provenance = self._view_provenance(provenance, excluded_counts)
-            result = MaterializedFrame(table, roles, columns, provenance)
+            result = MaterializedFrame(
+                table=table, roles=roles, columns=columns, provenance=provenance
+            )
             if budget is not None and budget.max_output_bytes is not None:
                 if result.table.nbytes > budget.max_output_bytes:
                     raise _OUTPUT_BYTES_EXCEEDED.error(limit=budget.max_output_bytes)
@@ -1230,12 +1243,12 @@ class CohortTable:
             json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest()
         operation = CohortOperationMeta(
-            self.grouping.bucket.seconds,
-            self.grouping.bucket_origin,
-            self.grouping.statistic,
-            self.value_column,
-            parent_design_hash,
-            operation_hash,
+            bucket_seconds=self.grouping.bucket.seconds,
+            bucket_origin=self.grouping.bucket_origin,
+            statistic=self.grouping.statistic,
+            value_column=self.value_column,
+            parent_design_hash=parent_design_hash,
+            derived_operation_hash=operation_hash,
         )
         from terrine.compile.columns import expression_policy
         from terrine.compile.dispatch import compile_cohort_summary

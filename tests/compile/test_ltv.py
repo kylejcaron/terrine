@@ -243,12 +243,12 @@ def test_portable_integer_cumulative_sums_in_its_native_domain(monkeypatch):
         period = 7 * 24 * 60 * 60
         metadata = {
             f"__trajectory_age_{age}": ColumnMeta(
-                Window(f"{age * period}s", f"{(age + 1) * period}s"),
-                "outcome",
-                "observed_from",
-                "observed_until",
-                "complete",
-                "reason",
+                window=Window(f"{age * period}s", f"{(age + 1) * period}s"),
+                role="outcome",
+                observed_from_column="observed_from",
+                observed_until_column="observed_until",
+                complete_column="complete",
+                reason_column="reason",
                 numeric_policy="exact",
                 arithmetic="exact",
             )
@@ -341,12 +341,12 @@ def test_cumulative_float_overflow_refuses(monkeypatch, dialect, value, publishe
         period = 7 * 24 * 60 * 60
         metadata = {
             f"__trajectory_age_{age}": ColumnMeta(
-                Window(f"{age * period}s", f"{(age + 1) * period}s"),
-                "outcome",
-                "observed_from",
-                "observed_until",
-                "complete",
-                "reason",
+                window=Window(f"{age * period}s", f"{(age + 1) * period}s"),
+                role="outcome",
+                observed_from_column="observed_from",
+                observed_until_column="observed_until",
+                complete_column="complete",
+                reason_column="reason",
                 arithmetic="native",
             )
             for age in range(2)
@@ -410,12 +410,12 @@ def test_portable_cumulative_decimal_beyond_the_accumulator_refuses(monkeypatch)
         period = 7 * 24 * 60 * 60
         metadata = {
             f"__trajectory_age_{age}": ColumnMeta(
-                Window(f"{age * period}s", f"{(age + 1) * period}s"),
-                "outcome",
-                "observed_from",
-                "observed_until",
-                "complete",
-                "reason",
+                window=Window(f"{age * period}s", f"{(age + 1) * period}s"),
+                role="outcome",
+                observed_from_column="observed_from",
+                observed_until_column="observed_until",
+                complete_column="complete",
+                reason_column="reason",
                 numeric_policy="exact",
             )
             for age in range(3)

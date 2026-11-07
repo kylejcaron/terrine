@@ -71,29 +71,35 @@ def panel_metadata(design: Design, model: Model) -> PanelMeta | None:
     if isinstance(design.shape, SequentialSpec):
         treatment = design.shape.treatment
         history = TreatmentHistoryMeta(
-            "initiation" if isinstance(treatment, Initiation) else "persistent_adoption",
-            resolve_selector_source(model, treatment.event),
-            treatment.event,
-            treatment.history_start,
-            treatment.knowledge,
-            treatment.adopted_value if isinstance(treatment, PersistentAdoption) else None,
-            treatment.persistence if isinstance(treatment, PersistentAdoption) else None,
+            kind="initiation" if isinstance(treatment, Initiation) else "persistent_adoption",
+            source=resolve_selector_source(model, treatment.event),
+            property=treatment.event,
+            history_start=treatment.history_start,
+            knowledge=treatment.knowledge,
+            adopted_value=treatment.adopted_value
+            if isinstance(treatment, PersistentAdoption)
+            else None,
+            persistence=treatment.persistence
+            if isinstance(treatment, PersistentAdoption)
+            else None,
         )
         assert isinstance(design.anchor, Schedule)
         weight = design.shape.trial_weight
-        trial_weight = None if weight is None else TrialWeightMeta(weight.kind, weight.values)
+        trial_weight = (
+            None if weight is None else TrialWeightMeta(kind=weight.kind, values=weight.values)
+        )
         count = design.anchor.count(model.day_boundary)
         trials = tuple(f"schedule:{index}" for index in range(count))
         return PanelMeta(
-            "sequential",
-            history,
-            trial_weight,
+            shape="sequential",
+            treatment=history,
+            trial_weight=trial_weight,
             trials=trials,
             anticipation_seconds=design.shape.anticipation.seconds,
         )
     if isinstance(design.shape, EventPanelSpec):
         return PanelMeta(
-            "event_panel",
+            shape="event_panel",
             periods=design.shape.periods,
             period_seconds=design.shape.period.seconds,
             reference_period=design.shape.reference_period,
@@ -112,13 +118,13 @@ def calendar_comparison_metadata(design: Design, model: Model) -> CalendarCompar
     assert isinstance(design.anchor.every, Duration)
     cohort = design.shape.cohort
     return CalendarComparisonMeta(
-        design.shape.control,
-        resolve_selector_source(model, cohort.event),
-        cohort.event,
-        cohort.history_start,
-        cohort.knowledge,
-        design.shape.reference_period,
-        design.shape.comparison_periods,
-        design.shape.anticipation_periods,
-        design.anchor.every.seconds,
+        control=design.shape.control,
+        cohort_source=resolve_selector_source(model, cohort.event),
+        cohort_property=cohort.event,
+        history_start=cohort.history_start,
+        knowledge=cohort.knowledge,
+        reference_period=design.shape.reference_period,
+        comparison_periods=design.shape.comparison_periods,
+        anticipation_periods=design.shape.anticipation_periods,
+        period_seconds=design.anchor.every.seconds,
     )

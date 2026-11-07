@@ -1052,7 +1052,14 @@ def test_filter_lowering_parity(column_model):
         },
     )
     measure = column_model.metrics["total"].measures[0]
-    meta = ColumnMeta(None, "feature", "observed_from", "observed_until", "complete", "reason")
+    meta = ColumnMeta(
+        window=None,
+        role="feature",
+        observed_from_column="observed_from",
+        observed_until_column="observed_until",
+        complete_column="complete",
+        reason_column="reason",
+    )
     for column, threshold, expected in (
         ("money", "10.50", [False, True, None]),
         ("score", 11.0, [False, True, None]),
@@ -1067,7 +1074,13 @@ def test_filter_lowering_parity(column_model):
         predicate = compile_predicate(
             table,
             eq(expression, threshold),
-            {expression: CompiledValue(column, meta, FeatureCutoff(0, True, "recorded_at"))},
+            {
+                expression: CompiledValue(
+                    column,
+                    meta,
+                    FeatureCutoff(latest_seconds=0, strict=True, knowledge="recorded_at"),
+                )
+            },
             output="eligible",
             role="eligibility",
         )
