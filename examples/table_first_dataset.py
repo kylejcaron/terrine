@@ -62,7 +62,7 @@ def main() -> None:
                 outcomes=outcomes,
             )
             .build(model)
-            .materialize(budget)
+            .materialize(budget=budget)
         )
         by_unit = {row["unit"]: row for row in scheduled.table.to_pylist()}
         assert set(by_unit) == {"active", "quiet"}
@@ -85,7 +85,7 @@ def main() -> None:
                 outcomes=outcomes,
             )
             .build(model)
-            .materialize(budget)
+            .materialize(budget=budget)
         )
         for row in incomplete.table.to_pylist():
             for name in outcomes:
@@ -101,10 +101,10 @@ def main() -> None:
                 start_event="orders",
                 metric="spend",
                 period="7d",
-                periods=2,
+                max_periods=2,
             )
             .build(model)
-            .materialize(budget)
+            .materialize(budget=budget)
         )
         rows = sorted(ltv.table.to_pylist(), key=lambda row: row["age"])
         assert [row["unit"] for row in rows] == ["active", "active"]

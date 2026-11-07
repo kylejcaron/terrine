@@ -48,7 +48,7 @@ design = recipes.state_panel(
     features=features,
 )
 materialized = design.build(model).materialize(
-    tr.Budget(max_rows=100_000, max_output_bytes=128_000_000)
+    budget=tr.Budget(max_rows=100_000, max_output_bytes=128_000_000)
 )
 ```
 

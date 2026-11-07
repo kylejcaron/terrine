@@ -1,4 +1,5 @@
 import copy
+import inspect
 import pickle
 from datetime import UTC, datetime, timedelta, timezone
 
@@ -21,6 +22,13 @@ from terrine.spec import (
 )
 from terrine.windows import Window
 from tests.fixtures.readme import readme_design, readme_model
+
+
+def test_materialize_budget_is_keyword_only():
+    from terrine.frame import Frame
+
+    parameter = inspect.signature(Frame.materialize).parameters["budget"]
+    assert parameter.kind is inspect.Parameter.KEYWORD_ONLY
 
 
 @pytest.mark.parametrize(
@@ -140,7 +148,7 @@ def test_sequence_materialization_requires_positive_row_and_byte_limits(native_i
         shape=EventSequence("session", Window("0s", "1d"), max_events=2),
     ).build(model)
     with pytest.raises(TerrineError) as error:
-        frame.materialize(budget)
+        frame.materialize(budget=budget)
     assert error.value.code == "terrine.sequence.budget_required"
 
 
@@ -212,7 +220,7 @@ def test_to_polars_values_only_has_the_pandas_columns(readme_con):
 
 def test_values_only_on_shapes_keeps_structural_columns(readme_con, native_inputs):
     ltv = (
-        recipes.ltv(start_event="orders", metric="spend", period="7d", periods=3)
+        recipes.ltv(start_event="orders", metric="spend", period="7d", max_periods=3)
         .build(readme_model(readme_con))
         .to_pandas(values_only=True)
     )
@@ -251,7 +259,7 @@ def test_values_only_on_shapes_keeps_structural_columns(readme_con, native_input
     [
         (readme_design, "period_value", {"reason": "requires_trajectory", "field": "frame"}),
         (
-            lambda: recipes.ltv(start_event="orders", metric="spend", period="7d", periods=2),
+            lambda: recipes.ltv(start_event="orders", metric="spend", period="7d", max_periods=2),
             "total",
             {"reason": "unsupported_value", "field": "value_column"},
         ),

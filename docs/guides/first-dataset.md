@@ -79,13 +79,13 @@ refusal code, then choose a sufficient explicit row and byte budget:
 ```python
 frame = design.build(model)
 try:
-    frame.materialize(tr.Budget(max_rows=1, strict_scan=False))
+    frame.materialize(budget=tr.Budget(max_rows=1, strict_scan=False))
 except tr.TerrineError as error:
     assert error.code == "terrine.budget.rows_exceeded"
 else:
     raise AssertionError("the one-row output cap must refuse two roster users")
 budget = tr.Budget(max_rows=10, max_output_bytes=1_000_000, strict_scan=False)
-result = frame.materialize(budget)
+result = frame.materialize(budget=budget)
 ```
 
 Limits abort rather than return truncated success. They do **not** bound source

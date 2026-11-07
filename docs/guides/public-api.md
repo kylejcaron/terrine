@@ -9,7 +9,7 @@ Dataset. The [first dataset](first-dataset.md) executes that whole path.
 
 Start common dataset types with constructors in `terrine.recipes`. Each returns
 an ordinary `Design`: it describes rows without querying or materializing data.
-Call `design.build(model).materialize(budget)` through the same workflow as any
+Call `design.build(model).materialize(budget=budget)` through the same workflow as any
 other Design. These constructors are not aliases or a second representation.
 
 The low-level **Design API** is the full-flexibility layer they compile to:

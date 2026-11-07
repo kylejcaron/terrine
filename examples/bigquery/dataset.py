@@ -89,7 +89,7 @@ def main() -> None:
                 outcomes={"spend_after": tr.agg("spend", window=("0s", "1d"))},
             )
             budget = tr.Budget(max_rows=10, max_output_bytes=1_000_000, strict_scan=False)
-            result = design.build(model).materialize(budget)
+            result = design.build(model).materialize(budget=budget)
         rows = sorted(
             result.table.select(["unit", "orders_before", "spend_after"]).to_pylist(),
             key=lambda row: row["unit"],

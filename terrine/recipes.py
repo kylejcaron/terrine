@@ -187,7 +187,7 @@ def event_panel(
     period: str | Duration | Literal[0],
     occurrence: Literal["first", "each", "nth"] = "first",
     n: int | None = None,
-    reference_period: int = -1,
+    reference_index: int = -1,
     features: Mapping[str, Expr | Predicate] | None = None,
     outcomes: Mapping[str, Expr | Predicate] | None = None,
     eligibility: Mapping[str, Predicate] | None = None,
@@ -204,7 +204,7 @@ def event_panel(
         period: Positive elapsed duration string (see `terrine.windows`) defining one period.
         occurrence: "first", "each" or "nth"; "first" uses the earliest event as the panel origin.
         n: Positive one-based occurrence index for "nth"; None is required for other rules.
-        reference_period: Integer reference index included in periods; -1 uses the period before the
+        reference_index: Integer reference index included in periods; -1 uses the period before the
             event.
         features: Mapping of output names to expressions or predicates; None declares no features.
         outcomes: Mapping of output names to future expressions or predicates; None declares no
@@ -227,7 +227,7 @@ def event_panel(
         anchor_range=anchor_range,
         gap=gap,
     )
-    return EventPanel(base, periods=periods, period=period, reference_period=reference_period)
+    return EventPanel(base, periods=periods, period=period, reference_period=reference_index)
 
 
 def ltv(
@@ -236,7 +236,7 @@ def ltv(
     start_event: str,
     metric: str,
     period: str | Duration | Literal[0],
-    periods: int,
+    max_periods: int,
     features: Mapping[str, Expr | Predicate] | None = None,
     eligibility: Mapping[str, Predicate] | None = None,
     treatment: Treatment | None = None,
@@ -254,7 +254,7 @@ def ltv(
         start_event: Declared event name whose selected occurrence starts follow-up.
         metric: Name of a metric declared in the model.
         period: Positive elapsed duration string (see `terrine.windows`) defining one period.
-        periods: Positive integer number of periods to produce.
+        max_periods: Positive integer number of periods to produce.
         features: Mapping of output names to expressions or predicates; None declares no features.
         eligibility: Mapping of rule names to predicates; None applies no eligibility rules.
         treatment: Treatment declaration; None produces no treatment column.
@@ -266,11 +266,11 @@ def ltv(
     Returns:
         An ordinary immutable Design; call describe(model) or build(model) to use it.
 
-    Example: tr.recipes.ltv(start_event="orders", metric="spend", period="30d", periods=2)
+    Example: tr.recipes.ltv(start_event="orders", metric="spend", period="30d", max_periods=2)
     """
     with parameter_names(event="start_event"):
         anchor = EventAnchor(start_event)
-    trajectory = Trajectory(metric, period, periods, cumulative=True)
+    trajectory = Trajectory(metric, period, max_periods, cumulative=True)
     with parameter_names(origin="start_event"):
         shape = CohortSpec(start_event, trajectory)
     return Design(
@@ -398,7 +398,7 @@ def state_panel(
     every: str | Duration | Literal[0],
     start: date | str,
     end: date | str,
-    periods: int | None = None,
+    max_periods: int | None = None,
     features: Mapping[str, Expr | Predicate] | None = None,
     eligibility: Mapping[str, Predicate] | None = None,
     anchor_range: AnchorRange | None = None,
@@ -406,7 +406,7 @@ def state_panel(
 ) -> Design:
     """Build repeated unit states over whole elapsed periods from start through end.
 
-    ``periods`` bounds the schedule's period count and defaults to that count.
+    ``max_periods`` bounds the schedule's period count and defaults to that count.
 
 
     Args:
@@ -417,7 +417,8 @@ def state_panel(
             define state periods.
         start: First scheduled calendar day, as a date or ISO YYYY-MM-DD string, included.
         end: Last scheduled calendar day, as a date or ISO YYYY-MM-DD string, included in full.
-        periods: Positive integer bound on schedule periods; None uses the whole finite schedule.
+        max_periods: Positive integer bound on schedule periods; None uses the whole finite
+            schedule.
         features: Mapping of output names to expressions or predicates; None declares no features.
         eligibility: Mapping of rule names to predicates; None applies no eligibility rules.
         anchor_range: AnchorRange restricting row t0 values; None keeps all generated anchors.
@@ -436,9 +437,9 @@ def state_panel(
     """
     schedule = Schedule(every, start, end)
     whole_periods = schedule_periods(schedule)
-    periods = whole_periods if periods is None else periods
+    max_periods = whole_periods if max_periods is None else max_periods
     with parameter_names(state="state_source"):
-        shape = StatePanel(state_source, periods=periods)
+        shape = StatePanel(state_source, periods=max_periods)
     return Design(
         unit,
         schedule,

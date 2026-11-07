@@ -88,7 +88,7 @@ def test_saved_plan_materializes_retained_model_and_design_in_fresh_process(tmp_
     design = Design(
         "user", FixedDate("2025-01-02"), features={"total": agg("total", window=("-1d", "0s"))}
     )
-    expected = design.build(model).materialize(Budget())
+    expected = design.build(model).materialize(budget=Budget())
     expected_path = tmp_path / "expected.arrow"
     with pa.OSFile(str(expected_path), "wb") as sink:
         with pa.ipc.new_file(sink, expected.to_pyarrow().schema) as writer:
@@ -412,7 +412,7 @@ def test_saved_panel_publication_preserves_ordinary_provenance(column_model, tmp
                 period="1h",
             )
         budget = Budget(max_rows=100, max_output_bytes=1_000_000)
-        expected = design.build(model).materialize(budget)
+        expected = design.build(model).materialize(budget=budget)
         assert expected.table.num_rows > 0
         authority = SnapshotAuthority(owner)
         snapshot = authority.capture(

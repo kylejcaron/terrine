@@ -37,7 +37,7 @@ from terrine import recipes
 
 cutoff = datetime(2025, 1, 22, tzinfo=UTC)
 ltv = recipes.ltv(
-    start_event="purchase", metric="net_revenue", period="7d", periods=3,
+    start_event="purchase", metric="net_revenue", period="7d", max_periods=3,
     administrative_cutoff=cutoff,
 )
 ```

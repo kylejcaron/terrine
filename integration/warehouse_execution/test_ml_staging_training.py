@@ -39,7 +39,7 @@ def test_training_split_assigns_support_without_reassigning_overlap(events_world
         incomplete_labels="keep",
         split=TimeSplit(train_until="2025-01-03T12:00:00Z"),
     )
-    ordinary = training.materialize(Budget(strict_scan=False))
+    ordinary = training.materialize(budget=Budget(strict_scan=False))
     assert ordinary.table["__terrine_split"].to_pylist() == ["unassigned"] * 2
     assert ordinary.table["__terrine_split_reason"].to_pylist() == ["label_overlap"] * 2
     assert ordinary.provenance.dataset_view is not None
@@ -60,13 +60,13 @@ def test_group_split_view_matches_typed_reference_and_reconstruction(events_worl
     initial, con = _durable_frame(events_world, tmp_path)
     policy = GroupSplit(seed=17)
     training = initial.training_set(label="churn", incomplete_labels="keep", split=policy)
-    result = training.materialize(Budget(strict_scan=False))
+    result = training.materialize(budget=Budget(strict_scan=False))
     assert result.table["__terrine_split"].to_pylist() == [
         group_bucket(key, policy) for key in result.table["unit"].to_pylist()
     ]
     staged = training.stage("groups", budget=Budget(strict_scan=False))
     rebuilt = staged.manifest.definition.build(initial._model).materialize(
-        Budget(strict_scan=False)
+        budget=Budget(strict_scan=False)
     )
     assert rebuilt.table.sort_by("unit").equals(result.table.sort_by("unit"))
     con.disconnect()
@@ -696,7 +696,7 @@ def test_state_panel_training_view_hashes_baseline_and_prior_state(native_inputs
         label="to_state",
         features=("baseline", "from_state"),
         incomplete_labels="keep",
-    ).materialize(Budget(max_rows=100, max_output_bytes=100_000))
+    ).materialize(budget=Budget(max_rows=100, max_output_bytes=100_000))
     assert result.roles.features == ("baseline", "from_state")
     assert result.provenance.dataset_view is not None
     assert result.provenance.state_panel is not None

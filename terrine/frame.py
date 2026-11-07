@@ -644,7 +644,7 @@ class Frame:
         )
         definition = import_module("terrine.dataset.reference")._definition_for(self)
         return transforms.fit_winsorization(
-            self.materialize(budget),
+            self.materialize(budget=budget),
             column=column,
             lower=probabilities[0],
             upper=probabilities[1],
@@ -710,7 +710,7 @@ class Frame:
         stage_frame = import_module("terrine.dataset.reference").stage_frame
         return stage_frame(self, table, budget=budget)
 
-    def materialize(self, budget: Budget | None = None) -> MaterializedFrame:
+    def materialize(self, *, budget: Budget | None = None) -> MaterializedFrame:
         """Read dataset rows with integrity checks and retain their metadata and completeness.
 
 
@@ -1106,7 +1106,7 @@ class Frame:
 
         Example: frame.to_pyarrow()
         """
-        return self.materialize(budget).to_pyarrow()
+        return self.materialize(budget=budget).to_pyarrow()
 
     def to_pandas(
         self,
@@ -1137,7 +1137,7 @@ class Frame:
             values_only=values_only,
             library="pandas",
         )
-        return self.materialize(budget).to_pandas(
+        return self.materialize(budget=budget).to_pandas(
             include_observation_metadata=include_observation_metadata,
             values_only=values_only,
         )
@@ -1171,7 +1171,7 @@ class Frame:
             values_only=values_only,
             library="polars",
         )
-        return self.materialize(budget).to_polars(
+        return self.materialize(budget=budget).to_polars(
             include_observation_metadata=include_observation_metadata,
             values_only=values_only,
         )
@@ -1190,7 +1190,7 @@ class Frame:
         Example:
             from datetime import datetime, UTC
 
-            tr.recipes.ltv(start_event="orders", metric="spend", period="7d", periods=2).build(
+            tr.recipes.ltv(start_event="orders", metric="spend", period="7d", max_periods=2).build(
                 model
             ).cohorts(
                 grouping=spec.CohortGrouping("30d", datetime(2025, 1, 1, tzinfo=UTC)),

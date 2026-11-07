@@ -115,7 +115,7 @@ def test_materialization_issues_only_reads(snowflake_scratch, tmp_path):  # noqa
     )
     (started,) = scratch.sql("SELECT CURRENT_TIMESTAMP()")[0]
     budget = tr.Budget(max_rows=10, max_output_bytes=1_000_000, strict_scan=False)
-    rows = design.build(model).materialize(budget).table.to_pylist()
+    rows = design.build(model).materialize(budget=budget).table.to_pylist()
     assert {row["unit"]: row["sessions_before"] for row in rows} == {"a": 1, "b": 0}
     assert _query_types_since(scratch, started) <= _READS
 
@@ -276,7 +276,7 @@ def test_resolved_relations_ignore_a_later_session_schema_change(snowflake_scrat
         )
         with pytest.raises(TerrineError) as error:
             design.build(model).materialize(
-                tr.Budget(max_rows=10, max_output_bytes=1_000_000, strict_scan=False)
+                budget=tr.Budget(max_rows=10, max_output_bytes=1_000_000, strict_scan=False)
             )
         assert error.value.code == "terrine.execution.invalid_input_binding"
     finally:

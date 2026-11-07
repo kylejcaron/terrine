@@ -134,7 +134,7 @@ def test_duckdb_typed_dataset_arrow_parquet_and_generation_parity(tmp_path):
             ('a', '2025-01-02 11:59:59+00', 0.02, 0.0, NULL)
         """)
         with pytest.raises(TerrineError) as error:
-            frame.materialize(budget)
+            frame.materialize(budget=budget)
         assert error.value.code == "terrine.temporal.exact_overflow"
         pinned = pa.Table.from_batches(list(dataset.to_arrow_batches(batch_size=2))).sort_by("unit")
         assert pinned.equals(streamed, check_metadata=True)
@@ -419,7 +419,7 @@ def test_calendar_comparison_compiles_quantile_outcome_horizon(native_inputs):
         control="never_treated",
         reference_period=-1,
         comparison_periods=(0,),
-    ).materialize(Budget(max_rows=200, max_output_bytes=1_000_000))
+    ).materialize(budget=Budget(max_rows=200, max_output_bytes=1_000_000))
 
     assert frame.table.num_rows > 0
     assert "p50" in frame.roles.outcomes
@@ -446,7 +446,7 @@ def test_all_shapes_build_materialize_and_arrow_round_trip(native_inputs):
     assert from_json(to_json(sequential)) == sequential
     for design in (sequential, event_panel):
         materialized = design.build(model).materialize(
-            Budget(max_rows=20, max_output_bytes=100_000)
+            budget=Budget(max_rows=20, max_output_bytes=100_000)
         )
         restored = MaterializedFrame.from_arrow(materialized.to_pyarrow())
         assert restored.table.equals(materialized.table)

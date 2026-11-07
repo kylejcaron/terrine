@@ -444,7 +444,7 @@ CASES = [
     ),
     (
         "terrine.design.invalid",
-        lambda: recipes.ltv(start_event="", metric="spend", period="7d", periods=2),
+        lambda: recipes.ltv(start_event="", metric="spend", period="7d", max_periods=2),
         {"reason": "empty_name", "field": "start_event"},
     ),
     (
