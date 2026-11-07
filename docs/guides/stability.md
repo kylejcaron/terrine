@@ -93,6 +93,17 @@ uv run python scripts/api_check.py
 uv run python scripts/api_check.py --against v1.2.0
 ```
 
+Stable-surface snapshots live at `tests/artifacts/surface/<version>.txt`. Create
+one for every `v0.Y.0`, release-candidate and final release tag with
+`uv run python scripts/api_check.py --snapshot <path>`. Each sorted line records
+a stable callable's qualified name and signature. CI compares the working
+surface with the newest snapshot by version order; an absent snapshot is
+reported and skipped until the first release snapshot is added. During 0.x,
+differences are printed for review and recorded as changelog additions or
+breaking changes. From `1.0.0rc1`, differences fail CI unless the snapshot is
+updated in the same change. `--enforce` enables this failure manually before
+that version.
+
 It resolves the stable surface from exports: every name in a stable facade's
 `__all__`, followed through re-exports to its definition, with that definition's
 members. Provisional names are excluded after that resolution, including a

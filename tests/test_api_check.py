@@ -365,3 +365,55 @@ def test_imported_handwritten_pydantic_constructor_is_not_exempt(tmp_path, monke
     assert api_check.check_signature_types({"terrine.api.Public": public}) == [
         "terrine.api.Public.__init__: terrine.helpers.Hidden"
     ]
+
+
+def test_snapshot_round_trip(tmp_path, monkeypatch):
+    package = tmp_path / "terrine"
+    package.mkdir()
+    (package / "__init__.py").write_text(
+        '__all__ = ["public"]\n\ndef public(value: int) -> str:\n    return str(value)\n'
+    )
+    module = griffe.load("terrine", search_paths=[tmp_path])
+    assert isinstance(module, griffe.Module)
+    (tmp_path / "pyproject.toml").write_text('[project]\nversion = "0.1.0"\n')
+    monkeypatch.setattr(api_check, "_git", lambda root, *args: str(tmp_path).encode())
+    monkeypatch.setattr(api_check, "_load", lambda root: module)
+    snapshot_path = tmp_path / "surface.txt"
+
+    assert api_check.main(["--snapshot", str(snapshot_path)]) == 0
+    assert snapshot_path.read_text().splitlines() == ["terrine.public: (value: int) -> str"]
+    assert api_check.main(["--compare", str(snapshot_path)]) == 0
+
+
+def test_compare_detects_added_export():
+    old = ["terrine.public: (value: int) -> str"]
+    current = [*old, "terrine.new_public: () -> None"]
+
+    difference = api_check.compare_snapshots(old, current)
+
+    assert "+terrine.new_public: () -> None" in difference
+
+
+def test_snapshot_enforcement_starts_at_first_release_candidate():
+    assert not api_check._enforce_snapshot("0.9.0", False)
+    assert not api_check._enforce_snapshot("1.0.0.dev1", False)
+    assert api_check._enforce_snapshot("1.0.0rc1", False)
+    assert api_check._enforce_snapshot("0.9.0", True)
+
+
+def test_compare_without_snapshot_skips_with_message(tmp_path, monkeypatch, capsys):
+    package = tmp_path / "terrine"
+    package.mkdir()
+    (package / "__init__.py").write_text(
+        '__all__ = ["public"]\n\ndef public(value: int) -> str:\n    return str(value)\n'
+    )
+    module = griffe.load("terrine", search_paths=[tmp_path])
+    assert isinstance(module, griffe.Module)
+    (tmp_path / "pyproject.toml").write_text('[project]\nversion = "0.1.0"\n')
+    monkeypatch.setattr(api_check, "_git", lambda root, *args: str(tmp_path).encode())
+    monkeypatch.setattr(api_check, "_load", lambda root: module)
+
+    result = api_check.main(["--compare", str(tmp_path / "missing.txt")])
+
+    assert result == 0
+    assert "comparison skipped" in capsys.readouterr().out

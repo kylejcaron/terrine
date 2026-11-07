@@ -67,8 +67,19 @@ Before tagging a release:
    ```sh
    uv run python scripts/api_check.py
    ```
+3. Write the stable-surface snapshot for each release tag (`v0.Y.0`, a
+   release candidate, or a final 1.x release), and include it in the tagged
+   commit:
 
-3. Run the release-upgrade test when `tests/artifacts/RELEASES` lists earlier 1.x
+   ```sh
+   uv run python scripts/api_check.py --snapshot tests/artifacts/surface/<version>.txt
+   ```
+
+   Keep earlier snapshots; CI compares against the newest version. Snapshot
+   differences are informational during 0.x and enforced from `1.0.0rc1`.
+   Confirm CI is green for the release commit after adding the snapshot, before
+   tagging.
+4. Run the release-upgrade test when `tests/artifacts/RELEASES` lists earlier 1.x
    releases:
 
    ```sh
@@ -81,15 +92,15 @@ Before tagging a release:
    `tests/artifacts/RELEASES`, run the command above, then empty `RELEASES`
    again.
 
-4. If a saved format changed, add a generation to the artifact corpus:
+5. If a saved format changed, add a generation to the artifact corpus:
 
    ```sh
    uv run python scripts/write_artifact_corpus.py --generation <name>
    ```
 
-5. Tag the release as `v0.Y.0` for a 0.x release, or with its 1.x version after
+6. Tag the release as `v0.Y.0` for a 0.x release, or with its 1.x version after
    the 1.0 stability policy takes effect.
-6. After publishing, append the released version to `tests/artifacts/RELEASES`
+7. After publishing, append the released version to `tests/artifacts/RELEASES`
    so later upgrade checks include it.
 
 ## License and the CLA

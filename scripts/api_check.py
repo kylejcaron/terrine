@@ -13,6 +13,7 @@ Exit status: 0 when the stable API is compatible or no 1.x release is tagged,
 from __future__ import annotations
 
 import argparse
+import difflib
 import io
 import re
 import subprocess
@@ -362,6 +363,89 @@ def check_signature_types(surface: Mapping[str, griffe.Object]) -> list[str]:
     return violations
 
 
+def _signature_text(obj: griffe.Function | griffe.Class) -> str:
+    signature = str(obj.signature())
+    return signature.removeprefix(obj.name)
+
+
+def snapshot_lines(surface: Mapping[str, griffe.Object]) -> list[str]:
+    """Return sorted stable callable signatures for a release snapshot."""
+    lines = set()
+    for qualified, obj in surface.items():
+        target = _resolved(obj)
+        if isinstance(target, griffe.Function):
+            lines.add(f"{qualified}: {_signature_text(target)}")
+            continue
+        if not isinstance(target, griffe.Class):
+            continue
+        lines.add(f"{qualified}: {_signature_text(target)}")
+        for name, member in target.members.items():
+            if (
+                (name.startswith("_") and name not in {"__init__", "__new__"})
+                or f"{qualified}.{name}" in PROVISIONAL_NAMES
+                or f"{target.path}.{name}" in PROVISIONAL_NAMES
+            ):
+                continue
+            method = _resolved(member)
+            if isinstance(method, griffe.Function):
+                lines.add(f"{qualified}.{name}: {_signature_text(method)}")
+    return sorted(lines)
+
+
+def write_snapshot(path: Path, lines: Sequence[str]) -> None:
+    """Write a deterministic, newline-terminated stable API snapshot."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("".join(f"{line}\n" for line in sorted(lines)))
+
+
+def compare_snapshots(expected: Sequence[str], current: Sequence[str]) -> str:
+    """Return a unified diff between two stable API snapshots."""
+    return "".join(
+        difflib.unified_diff(
+            [f"{line}\n" for line in expected],
+            [f"{line}\n" for line in current],
+            fromfile="snapshot",
+            tofile="current",
+        )
+    )
+
+
+def _enforce_snapshot(version: str, requested: bool) -> bool:
+    return requested or (
+        Version is not None and Version(version) >= Version(_FIRST_STABLE_LINE_VERSION)
+    )
+
+
+def _snapshot_command(root: Path, current_version: str, args: argparse.Namespace) -> int:
+    current = _load(root)
+    try:
+        stable_surface(current)
+    except LookupError as error:
+        print(f"stable API cannot be checked: {error}")
+        return 1
+    type_leaks = check_signature_types(_stable_objects(current))
+    if type_leaks:
+        print("stable API signature types are not stable or provisional:")
+        for line in type_leaks:
+            print(f"  {line}")
+        return 1
+    surface = snapshot_lines(_stable_objects(current))
+    if args.snapshot is not None:
+        write_snapshot(args.snapshot, surface)
+        print(f"wrote stable API snapshot: {args.snapshot}")
+        return 0
+    snapshot = args.compare
+    if not snapshot.exists():
+        print(f"no stable API snapshot found at {snapshot}; comparison skipped")
+        return 0
+    difference = compare_snapshots(snapshot.read_text().splitlines(), surface)
+    if difference:
+        print(difference, end="")
+        return int(_enforce_snapshot(current_version, args.enforce))
+    print(f"stable API snapshot matches {snapshot}")
+    return 0
+
+
 def _git(root: Path, *args: str) -> bytes:
     return subprocess.run(["git", *args], cwd=root, check=True, capture_output=True).stdout
 
@@ -474,13 +558,27 @@ def _reason(error: Exception) -> str:
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Check terrine's stable API signatures.")
+    comparison = parser.add_mutually_exclusive_group()
+    comparison.add_argument(
+        "--snapshot", type=Path, metavar="PATH", help="write the stable API snapshot"
+    )
+    comparison.add_argument(
+        "--compare", type=Path, metavar="PATH", help="compare with a stable API snapshot"
+    )
     parser.add_argument(
-        "--against", metavar="TAG", help="release to compare with (default: newest tag on the current release line)"
+        "--enforce", action="store_true", help="fail when the snapshot differs"
+    )
+    parser.add_argument(
+        "--against",
+        metavar="TAG",
+        help="release to compare with (default: newest tag on the current release line)",
     )
     args = parser.parse_args(argv)
     try:
         root = Path(_git(Path.cwd(), "rev-parse", "--show-toplevel").decode().strip())
         current_version = tomllib.loads((root / "pyproject.toml").read_text())["project"]["version"]
+        if args.snapshot is not None or args.compare is not None:
+            return _snapshot_command(root, current_version, args)
         current_major, current_minor = _release_minor(current_version)
         tag = args.against or release_tag(root, current_version)
         informational_tag = None
