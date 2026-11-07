@@ -25,7 +25,8 @@ FLOAT64_PRECISION = RefusalSpec(
 )
 _EXACT_UNSUPPORTED = RefusalSpec(
     "terrine.temporal.exact_unsupported",
-    "Backend {backend!r} lacks exact sparse BIGNUM state. Use the supported DuckDB backend.",
+    "Backend {backend!r} lacks exact sparse BIGNUM state (minimum DuckDB {minimum}). "
+    "Use DuckDB 1.5 or later.",
 )
 # Invalid float inputs or a published result beyond binary64's range.
 type Float64Failure = Literal["nonfinite_input", "out_of_range", "bound_overflow"]
@@ -43,7 +44,7 @@ def _require_backend(table: ibis.Table) -> None:
         backend = "unbound"
     policy = current_dialect(*(table[name] for name in table.columns))
     if not policy.supports_exact_prefix(backend):
-        raise _EXACT_UNSUPPORTED.error(backend=backend)
+        raise _EXACT_UNSUPPORTED.error(backend=backend, minimum="1.5")
 
 
 _COUNT_FIELDS = ("event_count", "nonnull_count")

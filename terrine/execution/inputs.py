@@ -683,6 +683,7 @@ def _open_native_execution(
                 _execution_snapshot(catalog, units, binding=input_binding),
                 resolver,
                 _session=_DuckDBSession(raw),
+                _admit=_native.exact_arithmetic_admission(raw),
                 _revalidate=validate,
                 owner_con=con,
             )
@@ -710,6 +711,7 @@ def _open_native_execution(
             _execution_snapshot(catalog, units),
             resolver,
             _session=_DuckDBSession(raw),
+            _admit=_native.exact_arithmetic_admission(raw),
             owner_con=con,
         )
         yield context

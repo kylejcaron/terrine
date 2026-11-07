@@ -8,15 +8,17 @@ import re
 import threading
 import weakref
 from collections import OrderedDict
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from decimal import Decimal
 from types import MappingProxyType
 from typing import Any
 
 import ibis
+import ibis.expr.operations as ops
 from sqlglot import exp
 
-from terrine.backends.capabilities import _SNAPSHOT_UNAVAILABLE
+from terrine.backends.capabilities import _CAPABILITY_UNAVAILABLE, _SNAPSHOT_UNAVAILABLE
 from terrine.backends.registry import ENGINES
 from terrine.errors import TerrineError
 from terrine.execution._metadata import invalidate_metadata, metadata_fact
@@ -37,6 +39,61 @@ _NATIVE_FUNCTION_NAMES_LOCK = threading.Lock()
 _FUNCTION_NAME = re.compile(
     r'"(?i:function_name|function|operator_name)"\s*:\s*("(?:[^"\\]|\\.)*")'
 )
+
+_KNOWN_ANSWERS = (
+    ("SELECT CAST(CAST(0.1 AS DOUBLE) AS DECIMAL(38, 9))", Decimal("0.100000000")),
+    (
+        "SELECT SUM(value) FROM (VALUES "
+        "(CAST('9999999999999999999999999999999999999' AS BIGNUM)), "
+        "(CAST(1 AS BIGNUM))) AS witness(value)",
+        "10000000000000000000000000000000000000",
+    ),
+    ("SELECT divide(CAST(7 AS BIGINT), CAST(2 AS BIGINT))", 3),
+)
+
+
+def verify_exact_arithmetic(con: Any) -> None:
+    """Refuse exact aggregation if DuckDB fails its arithmetic known answers."""
+    raw = raw_connection(con)
+    try:
+        answers = tuple(raw.execute(sql).fetchone()[0] for sql, _ in _KNOWN_ANSWERS)
+    except Exception as exc:
+        raise _CAPABILITY_UNAVAILABLE.error(
+            backend="duckdb",
+            operation="exact_arithmetic",
+            status="witness_failed",
+            route="Use a DuckDB version with correct exact arithmetic.",
+        ) from exc
+    if answers != tuple(answer for _, answer in _KNOWN_ANSWERS):
+        raise _CAPABILITY_UNAVAILABLE.error(
+            backend="duckdb",
+            operation="exact_arithmetic",
+            status="witness_failed",
+            route="Use a DuckDB version with correct exact arithmetic.",
+        )
+
+
+def _needs_exact_arithmetic(queries: tuple[Any, ...]) -> bool:
+    for query in queries:
+        if any(
+            value.dtype.is_decimal() or str(value.dtype).upper() == "BIGNUM"
+            for value in query.op().find(ops.Value)
+        ):
+            return True
+    return False
+
+
+def exact_arithmetic_admission(raw: Any) -> Callable[..., None]:
+    """Return an admission callback that witnesses exact arithmetic once."""
+    verified = False
+
+    def admit(*queries: Any) -> None:
+        nonlocal verified
+        if not verified and _needs_exact_arithmetic(queries):
+            verify_exact_arithmetic(raw)
+            verified = True
+
+    return admit
 
 _CONNECTION_LOCKS: weakref.WeakKeyDictionary[Any, threading.RLock] = weakref.WeakKeyDictionary()
 _CONNECTION_LOCKS_GUARD = threading.Lock()

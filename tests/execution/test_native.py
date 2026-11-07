@@ -1,0 +1,50 @@
+from __future__ import annotations
+
+from decimal import Decimal
+
+import ibis
+import pytest
+
+from terrine.errors import TerrineError
+from terrine.execution import _native
+
+
+def test_exact_witness_runs_once_per_execution_context(monkeypatch, native_inputs):
+    from terrine.execution.inputs import open_execution
+
+    catalog, con = native_inputs
+    calls = []
+    monkeypatch.setattr(_native, "verify_exact_arithmetic", lambda _: calls.append(None))
+
+    with open_execution(catalog, con) as context:
+        context.admit(ibis.literal(1).as_table())
+        assert calls == []
+
+        exact_query = ibis.literal(Decimal("1.0")).as_table()
+        context.admit(exact_query)
+        context.admit(exact_query)
+
+    assert calls == [None]
+
+
+
+def test_exact_witness_accepts_known_answers():
+    con = ibis.duckdb.connect()
+    try:
+        assert _native.verify_exact_arithmetic(con) is None
+    finally:
+        con.disconnect()
+
+
+def test_exact_witness_refuses_on_wrong_known_answer(monkeypatch):
+    con = ibis.duckdb.connect()
+    try:
+        monkeypatch.setattr(_native, "_KNOWN_ANSWERS", (("SELECT 1", 2),))
+
+        with pytest.raises(TerrineError) as caught:
+            _native.verify_exact_arithmetic(con)
+
+        assert caught.value.code == "terrine.backend.capability_unavailable"
+        assert caught.value.context["status"] == "witness_failed"
+    finally:
+        con.disconnect()
