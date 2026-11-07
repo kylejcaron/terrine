@@ -49,8 +49,8 @@ def _source(*, properties=None, dimensions=(), boundary="UTC", fact="amount"):
     )
 
 
-def _measure(*, filters=(), aggregation="sum"):
-    return BoundMeasure("revenue", "postings", aggregation, filters, None, None)
+def _measure(*, filters=(), aggregation="sum", exact=True):
+    return BoundMeasure("revenue", "postings", aggregation, filters, None, None, exact=exact)
 
 
 def _events(connection, amounts, *, dtype="float64", times=None, units=None, **columns):
@@ -89,11 +89,11 @@ def _rows(connection, table):
     return result.to_pylist()
 
 
-def _daily(connection, amounts, *, dtype="float64", times=None, units=None):
+def _daily(connection, amounts, *, dtype="float64", times=None, units=None, exact=True):
     source = _source()
     raw = _events(connection, amounts, dtype=dtype, times=times, units=units)
     events = normalize_events(raw, source, "user_id")
-    measure = resolve_measure(events, _measure(), source=source)
+    measure = resolve_measure(events, _measure(exact=exact), source=source)
     return sparse_daily(events, measure, "UTC", "user_id", source=source), measure
 
 
@@ -280,6 +280,29 @@ def test_nonfinite_float_leaves_are_counted_not_summed(connection):
         for row in rows
     ] == [("0", 9, "1", "1"), ("2500000000", 9, "1", "2"), ("2500000000", 9, "2", "3")]
     assert all(row["float64_unrepresentable_count"] == "0" for row in rows)
+
+
+def test_native_float_state_is_a_binary64_running_sum(connection):
+    from tests._float_bound import native_window_bound
+
+    values = [0.1, math.inf, 0.2, math.nan, -0.3, 1e300]
+    days = [1, 1, 2, 3, 3, 3]
+    times = [datetime(2025, 3, day, tzinfo=UTC) for day in days]
+    daily, measure = _daily(connection, values, times=times, exact=False)
+    prefix = sparse_prefix(daily, measure, resolution="day")
+    assert prefix.schema()["sum_value"].is_float64()
+    assert "float64_unrepresentable_count" not in prefix.columns
+    rows = _rows(connection, prefix.order_by("local_day"))
+    assert len(rows) == 3
+    for row in rows:
+        leaves = [x for x, day in zip(values, days, strict=True) if day <= row["local_day"].day]
+        # Non-finite inputs are counted, never added, so the running sum stays finite.
+        finite = [x for x in leaves if math.isfinite(x)]
+        exact = sum(map(Fraction, finite), Fraction())
+        assert abs(Fraction(row["sum_value"]) - exact) <= native_window_bound(finite)
+        assert row["float64_nonfinite_count"] == str(len(leaves) - len(finite))
+        assert row["nonnull_count"] == str(len(leaves))
+        assert row["numeric_policy"] == "native"
 
 
 def test_construction_never_executes_queries(connection, monkeypatch):

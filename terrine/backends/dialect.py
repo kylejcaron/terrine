@@ -174,7 +174,7 @@ class Dialect:
         return cast(ir.FloatingValue, text.cast(dt.float64))
 
     def quantize_float(self, value: ir.FloatingValue) -> ir.DecimalValue:
-        """Round once at scale 9 without overflowing a float-scaled cast.
+        """Round an exact measure's float once at scale 9 without overflowing a float-scaled cast.
 
         Cast the integral part separately so a binary64 multiplication by
         10**9 cannot push an admitted boundary value out of the decimal type.

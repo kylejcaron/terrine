@@ -187,6 +187,7 @@ def compile_ltv(design: Design, model: Model) -> CompiledStudy:
         "period_value_complete",
         "period_value_reason",
         numeric_policy=compiled.columns[names[0]].numeric_policy,
+        arithmetic=compiled.columns[names[0]].arithmetic,
     )
     outcome_names = ["period_value"]
     checks = list(compiled._checks)

@@ -1,8 +1,8 @@
 """Exact coefficient arithmetic and one-time float quantization.
 
-Float inputs round once to DECIMAL(38, 9), then share declared-decimal
-coefficients: DuckDB BIGNUM, PostgreSQL NUMERIC, BigQuery BIGNUMERIC and
-Snowflake NUMBER(38, 0). Counts retain their native exact domains.
+Float inputs of exact measures round once to DECIMAL(38, 9), then share
+declared-decimal coefficients: DuckDB BIGNUM, PostgreSQL NUMERIC, BigQuery
+BIGNUMERIC and Snowflake NUMBER(38, 0). Counts retain their native exact domains.
 """
 
 from __future__ import annotations

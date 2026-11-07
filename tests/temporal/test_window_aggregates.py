@@ -28,7 +28,7 @@ from terrine.temporal.daily import _sparse_group, resolve_measure, sparse_daily
 from terrine.temporal.prefix import sparse_prefix
 from terrine.temporal.readiness import Readiness
 from terrine.windows import Window
-from tests._float_bound import ratio_bound, window_sum_bound
+from tests._float_bound import native_window_bound, ratio_bound, window_sum_bound
 
 _DEFAULT_WINDOW = Window(0, "1d")
 _REFUSAL = RefusalSpec("terrine.test.failed_rows", "{failed_count} rows failed")
@@ -55,6 +55,7 @@ def _state(
     resolution="event",
     boundary="UTC",
     active=None,
+    exact=True,
 ):
     n = len(values)
     fields = {"user_id": "string", "occurred_at": "timestamp('UTC')", "amount": dtype}
@@ -85,7 +86,9 @@ def _state(
     )
     events = normalize_events(raw, source, "user_id")
     measure = resolve_measure(
-        events, BoundMeasure("revenue", name, aggregation, filters, None, None), source=source
+        events,
+        BoundMeasure("revenue", name, aggregation, filters, None, None, exact=exact),
+        source=source,
     )
     grouped = (
         sparse_daily(events, measure, boundary, "user_id", source=source)
@@ -210,17 +213,37 @@ def test_tiny_value_does_not_change_other_units(con):
         assert abs(Fraction(row["requested"]) - _exact_sum(values)) <= window_sum_bound(values)
 
 
-def test_nonfinite_history_refuses(con):
+@pytest.mark.parametrize("exact", [True, False])
+def test_nonfinite_history_refuses(con, exact):
     pair = _state(
         con,
         [float("nan"), 2.0],
         times=[datetime(2025, 1, d, 12, tzinfo=UTC) for d in (1, 2)],
+        exact=exact,
     )
     with pytest.raises(TerrineError) as error:
         _rows(con, _result(_anchors(con), [pair]))
     assert error.value.code == "terrine.temporal.float64_precision"
     assert error.value.context["reason"] == "nonfinite_input"
     assert set(error.value.context) == {"reason", "failed_count", "source", "measure", "output"}
+
+
+def test_native_prefix_overflow_refuses_instead_of_publishing(con):
+    pair = _state(
+        con,
+        [1.0, 1.7e308, 1.7e308, 1.0],
+        times=[datetime(2025, 1, d, 12, tzinfo=UTC) for d in (2, 3, 3, 4)],
+        exact=False,
+    )
+    # A window ending before the binary64 running sum overflows is unaffected.
+    assert _rows(con, _result(_anchors(con), [pair]))[0]["requested"] == 1.0
+    # Every later window is a difference of non-finite prefixes, even one that
+    # excludes the large values.
+    for time in ("2025-01-03 00:00:00+00", "2025-01-04 00:00:00+00"):
+        with pytest.raises(TerrineError) as error:
+            _rows(con, _result(_anchors(con, time=time), [pair]))
+        assert error.value.code == "terrine.temporal.float64_precision"
+        assert error.value.context["reason"] == "bound_overflow"
 
 
 def _recording(con):
@@ -265,17 +288,24 @@ def test_row_check_columns_are_true_only_on_failing_rows(con):
 
 
 @pytest.mark.parametrize(
-    "aggregation,kind,expected,reasons",
+    "aggregation,kind,expected,reasons,exact",
     [
-        ("sum", "mean", [0, None], [None, "all_values_null"]),
-        ("count", "mean", [0, 1], [None, None]),
-        ("sum", "conversion", [False, True], [None, None]),
-        ("avg_event", "mean", [None, None], ["no_observations", "all_values_null"]),
-        ("avg_calendar_day", "mean", [0.0, None], [None, "all_values_null"]),
+        ("sum", "mean", [0, None], [None, "all_values_null"], True),
+        ("sum", "mean", [0, None], [None, "all_values_null"], False),
+        ("count", "mean", [0, 1], [None, None], True),
+        ("sum", "conversion", [False, True], [None, None], True),
+        ("avg_event", "mean", [None, None], ["no_observations", "all_values_null"], True),
+        ("avg_event", "mean", [None, None], ["no_observations", "all_values_null"], False),
+        ("avg_calendar_day", "mean", [0.0, None], [None, "all_values_null"], True),
+        ("avg_calendar_day", "mean", [0.0, None], [None, "all_values_null"], False),
     ],
 )
-def test_complete_empty_and_all_null_remain_distinct(con, aggregation, kind, expected, reasons):
-    pair = _state(con, [None], dtype="float64", aggregation=aggregation, units=["null"])
+def test_complete_empty_and_all_null_remain_distinct(
+    con, aggregation, kind, expected, reasons, exact
+):
+    pair = _state(
+        con, [None], dtype="float64", aggregation=aggregation, units=["null"], exact=exact
+    )
     result = _result(_anchors(con, units=("empty", "null")), [pair], kind=kind)
     rows = sorted(_rows(con, result), key=lambda r: r["unit"])
     meta = result.columns["requested"]
@@ -509,17 +539,22 @@ def test_day_prefixes_cannot_answer_an_intraday_request(con):
     assert error.value.code == "terrine.temporal.unaligned_day_resolution"
 
 
-def test_small_window_after_large_history_meets_quantized_bound(con):
-    window = [0.01, 0.01, 0.01]
+@pytest.mark.parametrize("exact", [True, False])
+def test_small_window_after_large_history_meets_its_mode_bound(con, exact):
+    history, window = [1e12] * 1000, [0.01, 0.01, 0.01]
     pair = _state(
         con,
-        [1e12] * 1000 + window,
+        history + window,
         times=[datetime(2025, 1, 1, 12, tzinfo=UTC)] * 1000
         + [datetime(2025, 1, 2, 12, tzinfo=UTC)] * 3,
+        exact=exact,
     )
     value = _rows(con, _result(_anchors(con), [pair]))[0]["requested"]
-    assert value != 0
-    assert abs(Fraction(value) - sum(map(Fraction, window))) <= window_sum_bound(window)
+    # Native arithmetic is bounded by the history total; exact by the window alone.
+    bound = window_sum_bound(window) if exact else native_window_bound(history + window)
+    assert abs(Fraction(value) - sum(map(Fraction, window))) <= bound
+    if exact:
+        assert value != 0
 
 
 @pytest.mark.parametrize(
@@ -565,8 +600,9 @@ def test_per_day_mean_bound_uses_actual_count(con):
     assert abs(Fraction(value) - sum(map(Fraction, values)) / 3) <= window_sum_bound(values) / 3
 
 
-def test_mean_of_float_measure_is_not_rescaled(con):
-    pair = _state(con, [1.0], aggregation="avg_event")
+@pytest.mark.parametrize("exact", [True, False])
+def test_mean_of_float_measure_is_not_rescaled(con, exact):
+    pair = _state(con, [1.0], aggregation="avg_event", exact=exact)
     assert _rows(con, _result(_anchors(con), [pair]))[0]["requested"] == pytest.approx(1.0)
 
 

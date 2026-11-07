@@ -757,6 +757,80 @@ def test_refresh_after_mode_change_rebuilds_layers_and_matches_fresh_build(tmp_p
     con.disconnect()
 
 
+def test_native_and_exact_measures_on_same_column_stage_and_refresh(tmp_path):
+    """Native and exact sums of one float column keep distinct persisted layers.
+
+    Staging composes the frame from both prefix layers and a refresh after an insert rebuilds
+    them; both generations equal fresh builds and keep each column's arithmetic.
+    """
+    import ibis
+
+    import terrine as tr
+    from terrine.compile.layers import plan_layers
+    from terrine.data import MaterializedFrame
+
+    con = ibis.duckdb.connect(str(tmp_path / "owner.duckdb"))
+    con.create_table("customers", pa.table({"customer_id": ["alice", "bob"]}))
+    ordered_at = [datetime(2025, 1, day, 9, tzinfo=UTC) for day in (3, 12, 20)]
+    con.create_table(
+        "orders",
+        pa.table(
+            {
+                "customer_id": ["alice", "alice", "bob"],
+                "ordered_at": pa.array(ordered_at, pa.timestamp("us", tz="UTC")),
+                "amount": [30.25, 45.5, 80.125],
+            }
+        ),
+    )
+    model = tr.Model.from_tables(
+        con,
+        units={"customer": tr.UnitSource("customers", "customer_id")},
+        events={
+            "orders": tr.Events(
+                "orders",
+                time="ordered_at",
+                key="customer_id",
+                metrics={"native": tr.sum("amount"), "exact": tr.sum("amount", exact=True)},
+                complete=("2025-01-01", "2025-01-31"),
+            )
+        },
+    )
+    design = Design(
+        "customer",
+        FixedDate("2025-01-31"),
+        features={name: agg(name, window=("-30d", "0s")) for name in ("native", "exact")},
+    )
+    prefixes = [key for key in plan_layers(design, model).keys if key.layer == "prefix"]
+    assert len({key.measure for key in prefixes}) == 2
+    budget = Budget(strict_scan=False)
+    order = [("unit", "ascending"), ("anchor_id", "ascending")]
+
+    def staged_rows(dataset):
+        staged = MaterializedFrame.from_arrow(
+            pa.Table.from_batches(list(dataset.to_arrow_batches()))
+        )
+        fresh = design.build(model).materialize(budget)
+        assert {name: staged.columns[name].arithmetic for name in ("native", "exact")} == {
+            "native": "native",
+            "exact": "exact",
+        }
+        assert staged.columns == fresh.columns
+        table = staged.table.select(fresh.table.column_names).replace_schema_metadata(None)
+        assert table.sort_by(order).equals(fresh.table.replace_schema_metadata(None).sort_by(order))
+        return {row["unit"]: row for row in table.to_pylist()}
+
+    dataset = design.build(model).stage("spend", budget=budget)
+    staged_rows(dataset)
+    # Below the exact path's resolution, only the native sum retains the insert, so the
+    # refreshed columns differ only if each kept its own layer.
+    con.raw_sql("INSERT INTO orders VALUES ('bob', TIMESTAMPTZ '2025-01-21 09:00:00+00', 4e-10)")
+    changes = ChangeSet((Change("insert", "orders"),), "operator")
+    refreshed = dataset.refresh(model, changes=changes, budget=budget)
+    bob = staged_rows(refreshed)["bob"]
+    assert bob["native"] != bob["exact"]
+    con.disconnect()
+
+
 def test_saved_stage_replays_exact_generation_and_refuses_changed_view(events_world, tmp_path):
     frame, con = _durable_frame(events_world, tmp_path)
     training = frame.training_set(label="churn", incomplete_labels="keep")

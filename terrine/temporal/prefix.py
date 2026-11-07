@@ -1,4 +1,4 @@
-"""Sparse exact coefficient prefixes over grouped sufficient state."""
+"""Sparse prefixes over grouped sufficient state: exact coefficients or native binary64 sums."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from terrine.errors import RefusalSpec
 from terrine.semantic.bind import _SCHEMA
 from terrine.semantic.models import BoundMeasure
 
-__all__ = ["sparse_prefix"]
+__all__ = ["native_arithmetic", "sparse_prefix"]
 
 FLOAT64_PRECISION = RefusalSpec(
     "terrine.temporal.float64_precision",
@@ -59,6 +59,22 @@ _UNKNOWN_FIELDS = (
 )
 # Invalid inputs refused before quantized decimal accumulation.
 _EXACT_FLOAT_COUNTS = ("float64_nonfinite_count", "float64_unrepresentable_count")
+# Non-finite inputs a native binary64 sum counts instead of adding.
+_NATIVE_FLOAT_COUNTS = ("float64_nonfinite_count",)
+
+
+def native_arithmetic(measure: BoundMeasure) -> bool:
+    """Whether a resolved measure accumulates its float values in native binary64.
+
+    Only a float sum or average declared ``exact=False`` does; counts and
+    integer or decimal values keep exact state.
+    """
+    return (
+        not measure.exact
+        and measure.aggregation != "count"
+        and measure.value_type is not None
+        and dt.dtype(measure.value_type).is_floating()
+    )
 
 
 def _running_sum(value: ir.Value, window: WindowBuilder, *, admitted: bool = False) -> ir.Value:
@@ -81,6 +97,8 @@ def sparse_prefix(
     Day states are usable only at aligned local-midnight endpoints. Event states
     must first group equal timestamps with daily._sparse_group. A row represents
     state through its group; a strict lookup uses group timestamp < cutoff.
+    A native measure's prefix is the binary64 running sum of its group sums and
+    needs no exact backend state.
     """
     if resolution not in {"day", "event"}:
         raise ValueError("resolution must be day or event")
@@ -88,14 +106,18 @@ def sparse_prefix(
     required = ("_unit", "_timestamp", *counts, "sum_value")
     if resolution == "day":
         required += ("local_day",)
+    native = native_arithmetic(measure)
     # Float state carries counts of inputs outside the quantized domain.
     exact_floats = (
-        measure.value_type is not None
+        not native
+        and measure.value_type is not None
         and dt.dtype(measure.value_type).is_floating()
         and measure.aggregation != "count"
     )
-    if exact_floats:
-        required += _EXACT_FLOAT_COUNTS
+    float_counts: tuple[str, ...] = (
+        _EXACT_FLOAT_COUNTS if exact_floats else _NATIVE_FLOAT_COUNTS if native else ()
+    )
+    required += float_counts
     # A fixed-precision policy's state carries the group's accumulated
     # magnitude bound and its count of withheld rows.
     bounded = "sum_withheld" in state.columns
@@ -104,16 +126,20 @@ def sparse_prefix(
     for column in required:
         if column not in state.columns:
             raise _SCHEMA.error(field="sufficient state", column=column)
-    _require_backend(state)
+    if native and not state.sum_value.type().is_floating():
+        raise _SCHEMA.error(field="native float state", column="sum_value")
+    if not native:
+        _require_backend(state)
     window = ibis.window(group_by=state._unit, order_by=state._timestamp, rows=(None, 0))
     fields = {name: exact_sum(state[name]).over(window) for name in counts}
     if bounded:
         fields["sum_bound"] = state.sum_bound.sum().over(window).fill_null(ibis.literal(0.0))
+    elif native:
+        fields["sum_value"] = state.sum_value.sum().over(window).fill_null(ibis.literal(0.0))
     else:
         fields["sum_value"] = _running_sum(state.sum_value, window)
-    if exact_floats:
-        for name in _EXACT_FLOAT_COUNTS:
-            fields[name] = _running_sum(state[name], window)
+    for name in float_counts:
+        fields[name] = _running_sum(state[name], window)
     cumulative = state.mutate(**fields)
     if bounded:
         # A state is withheld when the magnitudes accumulated through it may

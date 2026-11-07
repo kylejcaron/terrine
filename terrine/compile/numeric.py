@@ -14,6 +14,7 @@ from terrine.semantic.models import BoundMeasure, BoundMetric
 from terrine.semantic.rules import calendar_average_alignment
 from terrine.temporal.aggregate import TemporalResult, aggregate_window
 from terrine.temporal.daily import resolve_measure
+from terrine.temporal.prefix import native_arithmetic
 from terrine.windows import Window
 
 if TYPE_CHECKING:
@@ -80,6 +81,8 @@ def lower_aggregate(
 
     Each measure reads the prefix state of its identity and resolution, building
     it once per compilation unless a persisted substitution already supplies it.
+    The measure's declaration decides that state's arithmetic: a native float
+    measure reads binary64 running sums, any other exact coefficients.
     ``relative`` windows start from a selected event time, so they read event
     states.
     """
@@ -110,4 +113,8 @@ def lower_aggregate(
         role="feature",
         resolution=resolution,
     )
-    return LoweredAggregate(result, f"sparse_{resolution}_prefix/native")
+    # Native float windows record their arithmetic in the strategy.
+    native = any(native_arithmetic(measure) for measure in resolved)
+    return LoweredAggregate(
+        result, f"sparse_{resolution}_prefix/{'native_float' if native else 'native'}"
+    )

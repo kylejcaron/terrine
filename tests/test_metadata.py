@@ -314,6 +314,7 @@ def test_materialized_frame_metadata_json_roundtrip_preserves_arrow_values(stamp
                 "spend_observed_until",
                 "spend_complete",
                 "spend_reason",
+                arithmetic="native",
             ),
         },
         provenance=_provenance(stamp),
@@ -337,6 +338,7 @@ def test_materialized_frame_metadata_json_roundtrip_preserves_arrow_values(stamp
     # A float window column is published rounded once, with no precision policy
     # and no companion error column in the saved metadata.
     assert restored.columns["spend"].numeric_policy is None
+    assert restored.columns["spend"].arithmetic == "native"
     assert set(payload["columns"]["spend"]) == {
         "window",
         "role",
@@ -348,7 +350,12 @@ def test_materialized_frame_metadata_json_roundtrip_preserves_arrow_values(stamp
         "approximation",
         "transformation",
         "measure",
+        "arithmetic",
     }
+    # Metadata written before columns recorded their arithmetic decodes without it.
+    legacy = json.loads(frame.to_json())
+    del legacy["columns"]["spend"]["arithmetic"]
+    assert MaterializedFrame.from_json(json.dumps(legacy)).columns["spend"].arithmetic is None
     payload["provenance"]["unknown_policy"] = True
     with pytest.raises(ValueError):
         MaterializedFrame.from_json(json.dumps(payload))

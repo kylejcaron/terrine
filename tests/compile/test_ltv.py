@@ -195,6 +195,8 @@ def test_cutoff_nulls_immature_float_period_value():
         young = next(row for row in table if row["unit"] == "u3" and row["age"] == 1)
         meta = frame.columns["period_value"]
         assert meta.numeric_policy is None
+        # A period value keeps the arithmetic its metric declares.
+        assert meta.arithmetic == "exact"
         assert young["period_value"] is None
         assert young[meta.reason_column] == "administrative_cutoff"
     finally:

@@ -44,9 +44,11 @@ from terrine.semantic.time import boundary_timezone
 from terrine.temporal.lookup import lookup_prefix
 from terrine.temporal.prefix import (
     _EXACT_FLOAT_COUNTS,
+    _NATIVE_FLOAT_COUNTS,
     _UNKNOWN_FIELDS,
     FLOAT64_PRECISION,
     Float64Failure,
+    native_arithmetic,
 )
 from terrine.temporal.readiness import Readiness
 from terrine.windows import Window
@@ -237,6 +239,8 @@ class _Quantity:
     count: bool = False
     # Published as binary64, either a scaled exact coefficient or a quotient.
     binary64: bool = False
+    # A native binary64 sum, already checked finite, publishes unconverted.
+    native: bool = False
 
 
 def narrow_exact(coefficient, scale: int, target: str | dt.DataType):
@@ -256,7 +260,10 @@ def _aligned(timestamp, minutes: int):
 def _quotient(
     builder: _Builder, numerator: _Quantity, denominator: _Quantity, reason: str, context
 ) -> _Quantity:
-    """Convert each exact operand at its own scale, then divide once in float64."""
+    """Convert each exact operand at its own scale, then divide once in float64.
+
+    A native binary64 operand enters the division as it is.
+    """
     known_zero = builder.put(
         "quotient_zero",
         builder.col(numerator.known_zero) & ~builder.col(denominator.known_zero),
@@ -292,13 +299,46 @@ def _state_fields(measure: BoundMeasure, state: ibis.Table, *, counting: bool) -
     if not counting:
         fields += ["nonnull_count", "sum_value"]
         assert measure.value_type is not None  # callers pass resolved measures
-        if dt.dtype(measure.value_type).is_floating():
+        if native_arithmetic(measure):
+            fields += _NATIVE_FLOAT_COUNTS
+        elif dt.dtype(measure.value_type).is_floating():
             fields += _EXACT_FLOAT_COUNTS
         if "sum_withheld" in state.columns:
             fields.append("sum_withheld")
     if measure.filters:
         fields += _UNKNOWN_FIELDS
     return tuple(fields)
+
+
+def _native_window_sum(
+    builder: _Builder,
+    start: Mapping[str, str],
+    end: Mapping[str, str],
+    *,
+    empty: str,
+    reason: str,
+    context,
+) -> _Quantity:
+    """The binary64 difference of two running sums, checked finite.
+
+    Its rounding error is bounded by the history prefix through the window end,
+    not by the window alone. Non-finite inputs are counted instead of summed, so
+    one at or before the window end refuses a non-empty window; a running sum
+    that overflowed leaves no finite difference and refuses as ``bound_overflow``.
+    """
+    zero = ibis.literal(0.0)
+    difference = builder.col(end["sum_value"]) - builder.col(start["sum_value"])
+    # Empty windows remain zero, even after invalid input history.
+    value = builder.put("sum", builder.col(empty).ifelse(zero, difference))
+    held = builder.col(end["float64_nonfinite_count"])
+    nonfinite = ~builder.col(empty) & (
+        held.fill_null(exact_literal(0, held)) > exact_literal(0, held)
+    )
+    builder.flag(nonfinite, "nonfinite_input", context)
+    builder.flag(~float_is_finite(builder.col(value)), "bound_overflow", context)
+    # As for exact sums, dropped inputs never make a known zero denominator.
+    known_zero = builder.put("sum_zero", (builder.col(value) == zero) & ~nonfinite)
+    return _Quantity(value, reason, known_zero, binary64=True, native=True)
 
 
 def _component(
@@ -340,6 +380,42 @@ def _component(
             ),
         ),
     )
+    if native_arithmetic(measure):
+        quantity = _native_window_sum(
+            builder, start, end, empty=empty, reason=reason, context=context
+        )
+    else:
+        quantity = _exact_window_sum(
+            builder, measure, start, end, empty=empty, zero=zero, reason=reason, context=context
+        )
+    if measure.aggregation in {"avg_event", "avg_calendar_day"}:
+        divisor = (
+            nonnull_count
+            if measure.aggregation == "avg_event"
+            else builder.put("days", exact_literal(days, builder.col(event_count)))
+        )
+        divisor_zero = builder.put("divisor_zero", builder.col(divisor) == zero)
+        denominator = _Quantity(divisor, reason, divisor_zero, count=True)
+        quantity = _quotient(builder, quantity, denominator, reason, context)
+    return quantity
+
+
+def _exact_window_sum(
+    builder: _Builder,
+    measure: BoundMeasure,
+    start: Mapping[str, str],
+    end: Mapping[str, str],
+    *,
+    empty: str,
+    zero: ir.Scalar,
+    reason: str,
+    context,
+) -> _Quantity:
+    """The exact difference of two coefficient prefixes.
+
+    A float fact's window also refuses when its state could not hold an input at
+    or before the window end.
+    """
     sums = []
     for endpoint in (start, end):
         # A matched all-null prefix has the mathematical sum zero, not a missing state.
@@ -402,15 +478,6 @@ def _component(
             assert dtype.scale is not None
             scale = dtype.scale
         quantity = _Quantity(value, reason, known_zero, scale=scale)
-    if measure.aggregation in {"avg_event", "avg_calendar_day"}:
-        divisor = (
-            nonnull_count
-            if measure.aggregation == "avg_event"
-            else builder.put("days", exact_literal(days, builder.col(event_count)))
-        )
-        divisor_zero = builder.put("divisor_zero", builder.col(divisor) == zero)
-        denominator = _Quantity(divisor, reason, divisor_zero, count=True)
-        quantity = _quotient(builder, quantity, denominator, reason, context)
     return quantity
 
 
@@ -428,11 +495,12 @@ def aggregate_window(
     resolution: Literal["day", "event"] = "event",
     strategy: Literal["native", "union_window"] = "native",
 ) -> TemporalResult:
-    """Build exact endpoint differences and defer every data-dependent refusal.
+    """Build endpoint differences and defer every data-dependent refusal.
 
-    At s=t0+start and e=t0+end, P(e)-P(s) measures exactly [s,e). Floats
-    difference exact scale-9 coefficients and convert to float64; averages
-    and ratios convert each exact operand once, then divide once in float64.
+    At s=t0+start and e=t0+end, P(e)-P(s) measures [s,e). Exact floats
+    difference exact scale-9 coefficients and convert to float64; native floats
+    difference binary64 running sums. Averages and ratios convert each exact
+    operand once, then divide once in float64.
     """
     if not isinstance(window, Window):
         raise TypeError("window must be a Window")
@@ -660,7 +728,7 @@ def aggregate_window(
                 active=builder.col(evaluated),
             )
         )
-    elif quantity.binary64:
+    elif quantity.binary64 and not quantity.native:
         rounded, nonfinite, out_of_range = exact_to_float(
             builder.col(quantity.value), quantity.scale
         )
@@ -691,5 +759,6 @@ def aggregate_window(
         complete_column=available,
         reason_column=final_reason,
         numeric_policy=None if metric.kind == "conversion" or quantity.binary64 else "exact",
+        arithmetic="native" if any(native_arithmetic(m) for m in metric.measures) else "exact",
     )
     return TemporalResult(result, {output: meta}, row_checks=tuple(row_checks))

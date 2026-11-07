@@ -103,8 +103,9 @@ def _model(con, events):
                 key="user_id",
                 metrics={
                     "events": tr.count(),
+                    # The float known answers state the exact arithmetic contract.
                     **{
-                        name: tr.sum(name)
+                        name: tr.sum(name, exact=True)
                         for name in ("amount", "weight")
                         if name in events.column_names
                     },

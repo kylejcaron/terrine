@@ -30,7 +30,7 @@ from terrine.semantic.rules import (
 )
 from terrine.semantic.time import boundary_timezone
 from terrine.temporal.attributes import _enriched_property_columns
-from terrine.temporal.prefix import _UNKNOWN_FIELDS, _require_backend
+from terrine.temporal.prefix import _UNKNOWN_FIELDS, _require_backend, native_arithmetic
 
 __all__ = ["sparse_daily"]
 
@@ -153,6 +153,8 @@ def _sparse_group(
     Event-resolution callers pass {"_timestamp": events._timestamp}. This groups
     duplicates before prefix accumulation, without mixing another entity key
     into the selected analysis unit. No exposure is inferred from Property.as_of.
+    A native measure sums its finite float values in binary64 and counts the
+    non-finite ones; other measures accumulate exact coefficients.
     """
     measure = resolve_measure(events, measure, source=source)
     if unit_column not in source.units.values() and unit_column != "_unit":
@@ -161,9 +163,11 @@ def _sparse_group(
         raise _SCHEMA.error(field="selected unit", column=unit_column)
     assert measure.value_type is not None  # resolve_measure always binds it
     dtype = dt.dtype(measure.value_type)
-    # Floats quantize once at scale 9, then share declared-decimal coefficients.
-    exact_floats = dtype.is_floating() and measure.aggregation != "count"
-    _require_backend(events)
+    native = native_arithmetic(measure)
+    # Exact floats quantize once at scale 9, then share declared-decimal coefficients.
+    exact_floats = dtype.is_floating() and measure.aggregation != "count" and not native
+    if not native:
+        _require_backend(events)
     predicate, observed_null, missing, literal_null, nonfinite = _predicate(events, measure, source)
     selected = predicate.fill_null(False)
     unknown = predicate.isnull()
@@ -200,6 +204,16 @@ def _sparse_group(
     aggregates = {name: exact_sum(leaf[name]) for name in fields}
     if measure.aggregation == "count":
         aggregates["sum_value"] = exact_sum(leaf.event_count)
+    elif native:
+        floating = leaf.__terrine_value.cast(dt.float64)
+        finite = float_is_finite(floating)
+        selected_value = leaf.__terrine_selected & floating.notnull()
+        aggregates["sum_value"] = (
+            (selected_value & finite).ifelse(floating, ibis.null(dt.float64)).sum()
+        )
+        aggregates["float64_nonfinite_count"] = exact_sum(
+            (selected_value & ~finite).ifelse(one, zero)
+        )
     else:
         source_value = leaf.__terrine_value
         if exact_floats:
@@ -243,7 +257,7 @@ def _sparse_group(
                 else 0
             )
         ),
-        numeric_policy=ibis.literal("exact"),
+        numeric_policy=ibis.literal("native" if native else "exact"),
         observed_null_count=exact_subtract(grouped.event_count, grouped.nonnull_count),
     )
 

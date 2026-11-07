@@ -20,6 +20,7 @@ from terrine.semantic.models import BoundMeasure, BoundSource
 from terrine.semantic.rules import UNKNOWN_FILTER
 from terrine.temporal.aggregate import TemporalResult, _Check
 from terrine.temporal.daily import _predicate
+from terrine.temporal.prefix import native_arithmetic
 from terrine.temporal.ranges import RangePlan, blocked_range_join
 from terrine.temporal.readiness import Readiness
 from terrine.windows import Window
@@ -427,6 +428,7 @@ def aggregate_nonadditive_window(
         complete_name,
         reason_name,
         numeric_policy="exact",
+        arithmetic="native" if native_arithmetic(measure) else "exact",
     )
     return TemporalResult(result, {output: meta}, checks)
 
