@@ -3,7 +3,7 @@ name = "terrine"
 version = "0.1.0a1"
 description = "Typed dataset construction and analytical workflows"
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 3 - Alpha",
     "Operating System :: MacOS",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3.12",
