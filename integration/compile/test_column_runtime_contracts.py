@@ -70,6 +70,24 @@ def test_named_windows_asof_treatment_and_independent_completeness(column_model_
     assert all(r[missing_meta.reason_column] == "incomplete_coverage" for r in rows)
 
 
+def test_declared_names_shaped_like_intermediates_keep_their_own_columns(column_model_fixture):
+    """A declared name resembling a generated intermediate publishes its own value
+    and leaves a predicate's completeness to the predicate."""
+    total = agg("total", window=("-1s", "0s"))
+    name = "__w4_predicate_complete"
+    compiled = _compile(column_model_fixture, features={name: total, "flag": eq(total, 0)})
+    assert set(compiled.roles.features) == {name, "flag"}
+    table = column_model_fixture.con.to_pyarrow(compiled.table.order_by("unit"))
+    for feature in (name, "flag"):
+        assert table.schema.field(f"{feature}__complete").type == pa.bool_()
+        assert table.schema.field(f"{feature}__reason").type == pa.string()
+    columns = ["unit", name, f"{name}__complete", "flag", "flag__complete"]
+    assert table.select(columns).to_pylist() == [
+        {"unit": "a", name: 3, f"{name}__complete": True, "flag": False, "flag__complete": True},
+        {"unit": "b", name: None, f"{name}__complete": True, "flag": None, "flag__complete": False},
+    ]
+
+
 def test_float_predicates_compare_the_rounded_value_and_empty_zero_is_singleton(
     column_model_fixture,
 ):

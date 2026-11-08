@@ -324,6 +324,7 @@ class OwnerPlanner:
                 if definition is None
                 else definition.build(execution_model)._active_compiled()
             )
+            context.admit(*snapshot_compiled.reads())
             validate_compiled_output(snapshot_compiled, execution_model.con.to_pyarrow)
         finally:
             context.close()

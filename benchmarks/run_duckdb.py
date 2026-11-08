@@ -107,7 +107,9 @@ def _runtime(con, model, design, config: ScaleConfig, directory: Path) -> dict[s
             execution_model = model._for_execution(
                 context, source_names={"events"}, unit_name="user"
             )
-            compiled = compose_runtime_frame(design, execution_model, persisted={}, budget=budget)
+            compiled = compose_runtime_frame(
+                design, execution_model, persisted={}, budget=budget, admit=context.admit
+            )
             return context.execute(compiled.table)
 
         def publish(self, plan, outputs, lease, run_id):

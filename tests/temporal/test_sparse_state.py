@@ -305,6 +305,22 @@ def test_native_float_state_is_a_binary64_running_sum(connection):
         assert row["numeric_policy"] == "native"
 
 
+def test_only_exact_state_needs_the_backends_exact_prefix(connection, monkeypatch):
+    from terrine.backends.engines.duckdb import DuckDBDialect
+
+    exact_daily, exact = _daily(connection, [1.5])
+    monkeypatch.setattr(DuckDBDialect, "supports_exact_prefix", lambda self, backend: False)
+    native_daily, native = _daily(connection, [1.5], exact=False)
+    assert sparse_prefix(native_daily, native, resolution="day").schema()["sum_value"].is_float64()
+    for build in (
+        lambda: _daily(connection, [1.5]),
+        lambda: sparse_prefix(exact_daily, exact, resolution="day"),
+    ):
+        with pytest.raises(TerrineError) as error:
+            build()
+        assert error.value.code == "terrine.temporal.exact_unsupported"
+
+
 def test_construction_never_executes_queries(connection, monkeypatch):
     raw = _events(connection, [1.25, 2.5])
     source = _source()

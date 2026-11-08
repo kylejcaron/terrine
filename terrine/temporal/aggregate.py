@@ -190,8 +190,12 @@ class _Builder:
         self._table = table
 
     def name(self, label: str) -> str:
+        # Intermediates share the relation with declared outputs, so they stay in
+        # the reserved namespace; the label's initials keep the name short, since
+        # it is listed at every level of the statement.
+        initials = "".join(word[0] for word in label.split("_") if word)
         while True:
-            name = f"__w{self.counter}_{label}"
+            name = f"__terrine_w{self.counter}_{initials}"
             self.counter += 1
             if name.casefold() not in self.used:
                 self.used.add(name.casefold())

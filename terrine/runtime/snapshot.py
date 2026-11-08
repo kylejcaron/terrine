@@ -451,14 +451,9 @@ class _SnapshotContext(ExecutionContext):
     __slots__ = ("_manager", "_published")
 
     def __init__(self, context: ExecutionContext, manager: Any, published: PublishedInputs) -> None:
-        super().__init__(
-            con=context.con,
-            snapshot=context.snapshot,
-            _resolver=context._resolver,
-            _session=context._session,
-            owner_con=context.owner_con,
-            _revalidate=context._revalidate,
-        )
+        # Every field carries over, admission and preflight included, so a
+        # retained read is admitted exactly as a direct one.
+        super().__init__(**{item.name: getattr(context, item.name) for item in fields(context)})
         self._manager = manager
         self._published = published
 

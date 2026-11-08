@@ -11,7 +11,6 @@ import pyarrow as pa
 import pytest
 
 import terrine as tr
-from terrine.errors import TerrineError
 from terrine.spec import Design, FixedDate, agg
 from tests._float_bound import native_window_bound
 from tests.fixtures.readme import readme_design, readme_model
@@ -159,21 +158,3 @@ def test_native_readme_sql_has_no_decimal_cast_and_is_smaller(readme_con):
     assert "DECIMAL(38, 9)" not in sql[False]
     assert "DECIMAL(38, 9)" in sql[True]
     assert len(sql[False]) < len(sql[True])
-
-
-def test_native_no_refusal_without_bignum(con, monkeypatch):
-    from terrine.backends.engines.duckdb import DuckDBDialect
-
-    monkeypatch.setattr(DuckDBDialect, "supports_exact_prefix", lambda self, backend: False)
-    amounts = [1.5, 2.25, 4.0]
-    times = [_T0 - timedelta(days=day) for day in (1, 2, 9)]
-    design = Design(
-        "customer", FixedDate(_T0), features={"spend": agg("spend", window=("-7d", "0s"))}
-    )
-    native = design.build(_model(con, ["a"] * 3, times, amounts)).to_pyarrow()
-    total = Fraction(amounts[0]) + Fraction(amounts[1])
-    assert abs(Fraction(native["spend"][0].as_py()) - total) <= native_window_bound(amounts)
-    # Only the exact declaration needs the backend's exact prefix state.
-    with pytest.raises(TerrineError) as error:
-        design.build(_model(con, ["a"] * 3, times, amounts, exact=True)).to_pyarrow()
-    assert error.value.code == "terrine.temporal.exact_unsupported"
