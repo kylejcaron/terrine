@@ -15,6 +15,19 @@ from terrine.runtime.saved_plan import DestinationRef, ModelReference
 from terrine.runtime.snapshot import SnapshotAuthority
 from tests.fixtures.readme import readme_model, readme_tables
 
+_ORDERS = tr.recipes.time_series(
+    every="1mo",
+    start="2025-02-01",
+    end="2025-03-01",
+    features={"n": tr.agg("orders", window=("-30d", "0s"))},
+)
+_SPEND = tr.recipes.time_series(
+    every="1mo",
+    start="2025-02-01",
+    end="2025-03-01",
+    features={"spend": tr.agg("spend", window=("-30d", "0s"))},
+)
+
 
 @pytest.fixture
 def readme_backend():
@@ -32,14 +45,8 @@ def test_count_only_design_runs_on_duckdb_above_minimum(monkeypatch, readme_back
     witnesses = []
     monkeypatch.setattr(duckdb_engine, "version", lambda _: "1.6.0")
     monkeypatch.setattr(_native, "verify_exact_arithmetic", lambda raw: witnesses.append(raw))
-    design = tr.recipes.time_series(
-        every="1mo",
-        start="2025-02-01",
-        end="2025-03-01",
-        features={"n": tr.agg("orders", window=("-30d", "0s"))},
-    )
 
-    frame = design.build(model)
+    frame = _ORDERS.build(model)
 
     assert len(frame.to_pandas()) == 6
     assert witnesses == []
@@ -57,14 +64,8 @@ def test_exact_measure_runs_arithmetic_witness(readme_backend, monkeypatch):
     con, _ = readme_backend
     model = readme_model(con, exact=True)
     monkeypatch.setattr(_native, "verify_exact_arithmetic", record_and_verify)
-    design = tr.recipes.time_series(
-        every="1mo",
-        start="2025-02-01",
-        end="2025-03-01",
-        features={"spend": tr.agg("spend", window=("-30d", "0s"))},
-    )
 
-    design.build(model).to_pandas()
+    _SPEND.build(model).to_pandas()
 
     assert len(witnesses) == 1
 
@@ -79,14 +80,6 @@ def exact_owner(tmp_path):
         yield path, con, readme_model(con, exact=True)
     finally:
         con.disconnect()
-
-
-_SPEND = tr.recipes.time_series(
-    every="1mo",
-    start="2025-02-01",
-    end="2025-03-01",
-    features={"spend": tr.agg("spend", window=("-30d", "0s"))},
-)
 
 
 def test_native_design_runs_on_duckdb_without_exact_prefix_state(monkeypatch, readme_backend):
@@ -113,7 +106,7 @@ def _assert_witness_refusal(error: TerrineError) -> None:
     assert error.context["status"] == "witness_failed"
 
 
-def test_failing_witness_refuses_staging_before_publication(exact_owner, monkeypatch):
+def test_failing_witness_refuses_exact_staging_but_not_count_staging(exact_owner, monkeypatch):
     _, con, model = exact_owner
     _fail_witness(monkeypatch)
 
@@ -122,6 +115,9 @@ def test_failing_witness_refuses_staging_before_publication(exact_owner, monkeyp
 
     _assert_witness_refusal(error.value)
     assert DuckDBBackend(con.con, namespace="terrine_runtime").current_generation("spend") is None
+    # Counts are native integer state on every path, persisted layers included.
+    staged = _ORDERS.build(model).stage("orders")
+    assert sorted(staged.to_pyarrow()["n"].to_pylist()) == [0, 0, 0, 1, 1, 2]
 
 
 def test_failing_witness_refuses_a_saved_plan_run_before_publication(
