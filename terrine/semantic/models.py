@@ -6,7 +6,7 @@ import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Annotated, Any, Literal, Self, get_args, get_origin
+from typing import TYPE_CHECKING, Annotated, Any, Literal, Self, TypeAlias, get_args, get_origin
 
 from pydantic import (
     BaseModel,
@@ -176,7 +176,9 @@ class Dimension(_Record):
 
 
 # Comparison operators shared by Catalog filters, where= keys and Design comparisons.
-type FilterOp = Literal["equals", "not_equals", "in", "not_in", "gt", "gte", "lt", "lte", "between"]
+FilterOp: TypeAlias = Literal[  # noqa: UP040 - pydantic 2.8 lacks PEP 695 alias support.
+    "equals", "not_equals", "in", "not_in", "gt", "gte", "lt", "lte", "between"
+]
 
 
 class Filter(_Record):

@@ -279,6 +279,7 @@
 - Warehouse exports retain scoring rows when there are no outcome windows.
 ### Fixed
 
+- Catalog filter operators load with the minimum supported Pydantic version.
 - PostgreSQL address keys (`macaddr`, `macaddr8`, `inet` and `cidr`) are read as
   text consistently across table and SQL relations, including event-panel results.
 - Temporal union/window lookups refuse incompatible unit-key types with

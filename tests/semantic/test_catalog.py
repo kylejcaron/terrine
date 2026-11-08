@@ -11,7 +11,7 @@ from terrine.errors import TerrineError
 from terrine.model import Model
 from terrine.runtime.saved_plan import ModelReference
 from terrine.semantic.io import catalog_payload, dump_catalog, load_catalog, validate_catalog
-from terrine.semantic.models import Catalog
+from terrine.semantic.models import Catalog, Filter
 
 CATALOG = {
     "schema_version": 3,
@@ -41,6 +41,18 @@ CATALOG = {
     "measures": {"count": {"event": "session", "aggregation": "count"}},
     "metrics": {"sessions": {"kind": "mean", "unit": "user", "measure": "count"}},
 }
+
+
+def test_filter_model_accepts_declared_operator():
+    filter_ = Filter(property="tier", op="not_equals", values=("enterprise",))
+
+    assert filter_.model_dump() == {
+        "property": "tier",
+        "op": "not_equals",
+        "values": ("enterprise",),
+    }
+
+
 # A version 2 document with a float sum; version 2 measures declare no arithmetic mode.
 FLOAT_CATALOG = {
     "schema_version": 2,
