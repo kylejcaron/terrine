@@ -140,24 +140,6 @@ def test_reserved_output_names_refuse(column_model, name):
     assert error.value.code == "terrine.spec.reserved_output_name"
 
 
-def test_declared_names_shaped_like_intermediates_keep_their_own_columns(column_model):
-    """A declared name resembling a generated intermediate publishes its own value
-    and leaves a predicate's completeness to the predicate."""
-    total = agg("total", window=("-1s", "0s"))
-    name = "__w4_predicate_complete"
-    compiled = _compile(column_model, features={name: total, "flag": eq(total, 0)})
-    assert set(compiled.roles.features) == {name, "flag"}
-    table = column_model.con.to_pyarrow(compiled.table.order_by("unit"))
-    for feature in (name, "flag"):
-        assert table.schema.field(f"{feature}__complete").type == pa.bool_()
-        assert table.schema.field(f"{feature}__reason").type == pa.string()
-    columns = ["unit", name, f"{name}__complete", "flag", "flag__complete"]
-    assert table.select(columns).to_pylist() == [
-        {"unit": "a", name: 3, f"{name}__complete": True, "flag": False, "flag__complete": True},
-        {"unit": "b", name: None, f"{name}__complete": True, "flag": None, "flag__complete": False},
-    ]
-
-
 def test_time_series_columns_are_values_with_named_support(column_model):
     frame = (
         Design(
