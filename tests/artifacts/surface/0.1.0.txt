@@ -1,0 +1,546 @@
+terrine.AnchorRange.__init__: (start: date | datetime | str | None = None, end: date | datetime | str | None = None) -> None
+terrine.AnchorRange.end: date | datetime | None
+terrine.AnchorRange.end_exclusive: date | datetime | None
+terrine.AnchorRange.start: date | datetime | None
+terrine.AnchorRange: (start: date | datetime | str | None = None, end: date | datetime | str | None = None)
+terrine.Budget.__init__: (max_rows: int | None = None, max_output_bytes: int | None = None, max_scan_bytes: int | None = None, strict_scan: bool = True) -> None
+terrine.Budget.max_output_bytes: int | None
+terrine.Budget.max_rows: int | None
+terrine.Budget.max_scan_bytes: int | None
+terrine.Budget.strict_scan: bool
+terrine.Budget: (max_rows: int | None = None, max_output_bytes: int | None = None, max_scan_bytes: int | None = None, strict_scan: bool = True)
+terrine.Coverage.__init__: (start: date | str, end: date | str) -> None
+terrine.Coverage.bind: (day_boundary: Callable[[date], datetime]) -> BoundCoverage
+terrine.Coverage.end: date
+terrine.Coverage.start: date
+terrine.Coverage: (start: date | str, end: date | str)
+terrine.Design.__init__: (unit: str | None = None, anchor: FixedDate | EventAnchor | Schedule | None = None, *, features: Mapping[str, Expr | Predicate] | None = None, outcomes: Mapping[str, Expr | Predicate] | None = None, eligibility: Mapping[str, Predicate] | None = None, treatment: Treatment | None = None, gap: str | Duration | Literal[0] = '0d', shape: Literal['cross_section'] | StatePanel | EventSequence | SequentialSpec | EventPanelSpec | CalendarComparisonSpec | CohortSpec | TimeToEvent | LifeTable = 'cross_section', anchor_range: AnchorRange | None = None, sample: MatchedT0Sample | None = None, administrative_cutoff: datetime | None = None) -> None
+terrine.Design.administrative_cutoff: datetime | None
+terrine.Design.anchor: FixedDate | EventAnchor | Schedule
+terrine.Design.anchor_range: AnchorRange | None
+terrine.Design.build: (model: Model) -> Frame
+terrine.Design.describe: (model: Model) -> str
+terrine.Design.eligibility: Mapping[str, Predicate]
+terrine.Design.features: Mapping[str, Expr | Predicate]
+terrine.Design.gap: Duration
+terrine.Design.outcomes: Mapping[str, Expr | Predicate]
+terrine.Design.sample: MatchedT0Sample | None
+terrine.Design.shape: Literal['cross_section'] | StatePanel | EventSequence | SequentialSpec | EventPanelSpec | CalendarComparisonSpec | CohortSpec | TimeToEvent | LifeTable
+terrine.Design.snapshot: (model: Model, *, as_of: date | datetime | str, eligibility: Mapping[str, Predicate], features: tuple[str, ...] | None = None) -> Frame
+terrine.Design.spec_hash: str
+terrine.Design.treatment: Treatment | None
+terrine.Design.unit: str | None
+terrine.Design.validate: (model: Model) -> None
+terrine.Design: (unit: str | None = None, anchor: FixedDate | EventAnchor | Schedule | None = None, *, features: Mapping[str, Expr | Predicate] | None = None, outcomes: Mapping[str, Expr | Predicate] | None = None, eligibility: Mapping[str, Predicate] | None = None, treatment: Treatment | None = None, gap: str | Duration | Literal[0] = '0d', shape: Literal['cross_section'] | StatePanel | EventSequence | SequentialSpec | EventPanelSpec | CalendarComparisonSpec | CohortSpec | TimeToEvent | LifeTable = 'cross_section', anchor_range: AnchorRange | None = None, sample: MatchedT0Sample | None = None, administrative_cutoff: datetime | None = None)
+terrine.EventAnchor.__init__: (event: str, occurrence: Literal['first', 'each', 'nth'] = 'first', n: int | None = None, offset: str | Duration | Literal[0] = '0s') -> None
+terrine.EventAnchor.event: str
+terrine.EventAnchor.n: int | None
+terrine.EventAnchor.occurrence: Literal['first', 'each', 'nth']
+terrine.EventAnchor.offset: Duration
+terrine.EventAnchor: (event: str, occurrence: Literal['first', 'each', 'nth'] = 'first', n: int | None = None, offset: str | Duration | Literal[0] = '0s')
+terrine.Events.__init__: (table: str | DataFrameLike, *, time: str, key: str, unit: str | None = None, metrics: Mapping[str, EventMetric | Ratio] | None = None, labels: Sequence[str] = (), where: Where | None = None, complete: tuple[date | str, date | str] | None = None) -> None
+terrine.Events.complete: tuple[date, date] | None
+terrine.Events.key: str
+terrine.Events.labels: tuple[str, ...]
+terrine.Events.metrics: Mapping[str, EventMetric | Ratio]
+terrine.Events.table: str | pa.Table
+terrine.Events.time: str
+terrine.Events.unit: str | None
+terrine.Events.where: Mapping[str, JsonScalar | tuple[JsonScalar, ...] | frozenset[JsonScalar]]
+terrine.Events: (table: str | DataFrameLike, *, time: str, key: str, unit: str | None = None, metrics: Mapping[str, EventMetric | Ratio] | None = None, labels: Sequence[str] = (), where: Where | None = None, complete: tuple[date | str, date | str] | None = None)
+terrine.FixedDate.__init__: (date: date | datetime | str) -> None
+terrine.FixedDate.date: date | datetime
+terrine.FixedDate: (date: date | datetime | str)
+terrine.History.__init__: (table: str | DataFrameLike, *, key: str, column: str, unit: str | None = None, valid_from: str | None = None, valid_to: str | None = None, changed_at: str | None = None, complete: tuple[date | str, date | str] | None = None) -> None
+terrine.History.changed_at: str | None
+terrine.History.column: str
+terrine.History.complete: tuple[date, date] | None
+terrine.History.key: str
+terrine.History.table: str | pa.Table
+terrine.History.unit: str | None
+terrine.History.valid_from: str | None
+terrine.History.valid_to: str | None
+terrine.History: (table: str | DataFrameLike, *, key: str, column: str, unit: str | None = None, valid_from: str | None = None, valid_to: str | None = None, changed_at: str | None = None, complete: tuple[date | str, date | str] | None = None)
+terrine.Model.__init__: (*args: Any, **kwargs: Any) -> None
+terrine.Model.catalog: Catalog
+terrine.Model.con: Any
+terrine.Model.day_boundary: Callable[[date], datetime]
+terrine.Model.event_ids: Mapping[str, str]
+terrine.Model.from_catalog: (path_or_catalog: str | Path | Catalog | Mapping[str, Any], *, con: Any, readiness: Readiness | Mapping[str, Coverage | BoundCoverage], units: Mapping[str, UnitSource] | None = None, event_ids: Mapping[str, str] | None = None, input_binding: VerifiedInputBinding | None = None, allow_unverified: bool = False) -> Model
+terrine.Model.from_tables: (con: Any | None = None, *, units: Mapping[str, UnitSource], events: Mapping[str, Events], history: Mapping[str, History] | None = None, dialect: str | None = None, day_boundary: str = 'UTC', event_ids: Mapping[str, str] | None = None, allow_unverified: bool = False) -> Model
+terrine.Model.input_binding: VerifiedInputBinding | None
+terrine.Model.metrics: Mapping[str, BoundMetric]
+terrine.Model.model_hash: str
+terrine.Model.readiness: Readiness
+terrine.Model.sources: Mapping[str, BoundSource]
+terrine.Model.to_catalog: () -> str
+terrine.Model.units: Mapping[str, UnitSource]
+terrine.Model: (*args: Any, **kwargs: Any)
+terrine.Schedule.__init__: (every: str | Duration | Months | Literal[0], start: date | str, end: date | str) -> None
+terrine.Schedule.count: (day_boundary: Callable[[date], datetime]) -> int
+terrine.Schedule.end: date
+terrine.Schedule.end_exclusive: date
+terrine.Schedule.every: Duration | Months
+terrine.Schedule.instant: (k: int, day_boundary: Callable[[date], datetime]) -> datetime
+terrine.Schedule.instants: (day_boundary: Callable[[date], datetime]) -> tuple[datetime, ...]
+terrine.Schedule.start: date
+terrine.Schedule: (every: str | Duration | Months | Literal[0], start: date | str, end: date | str)
+terrine.TerrineError.__init__: (message: str, *, code: str, context: Mapping[str, Any]) -> None
+terrine.TerrineError.code: str
+terrine.TerrineError.context: Mapping[str, Any]
+terrine.TerrineError: (message: str, *, code: str, context: Mapping[str, Any])
+terrine.UnitSource.__init__: (table: str | DataFrameLike, key: str, entered_at: str | None = None, exited_at: str | None = None, observed_from: str | None = None, observed_until: str | None = None, attributes: Sequence[str] = ()) -> None
+terrine.UnitSource.attributes: tuple[str, ...]
+terrine.UnitSource.entered_at: str | None
+terrine.UnitSource.exited_at: str | None
+terrine.UnitSource.key: str
+terrine.UnitSource.observed_from: str | None
+terrine.UnitSource.observed_until: str | None
+terrine.UnitSource.table: str | pa.Table
+terrine.UnitSource: (table: str | DataFrameLike, key: str, entered_at: str | None = None, exited_at: str | None = None, observed_from: str | None = None, observed_until: str | None = None, attributes: Sequence[str] = ())
+terrine.UnverifiedBackendWarning: 
+terrine.agg: (metric: str, *, window: tuple[str | Duration | Literal[0], str | Duration | Literal[0]], relative_to: EventTime | None = None) -> MetricAgg
+terrine.all_of: (*terms: Predicate) -> And
+terrine.any_of: (*terms: Predicate) -> Or
+terrine.asof: (attribute: str, *, before: str | Duration | Literal[0] = '0s', relative_to: EventTime | None = None) -> AttributeAsOf
+terrine.between: (expr: Expr, low: JsonScalar, high: JsonScalar) -> Between
+terrine.count: (*, where: Where | None = None) -> EventMetric
+terrine.count_distinct: (column: str, *, where: Where | None = None) -> EventMetric
+terrine.data.BoundCoverage.__init__: (start: datetime, end_exclusive: datetime) -> None
+terrine.data.BoundCoverage.end_exclusive: datetime
+terrine.data.BoundCoverage.start: datetime
+terrine.data.BoundCoverage: (start: datetime, end_exclusive: datetime)
+terrine.data.Budget.__init__: (max_rows: int | None = None, max_output_bytes: int | None = None, max_scan_bytes: int | None = None, strict_scan: bool = True) -> None
+terrine.data.Budget.max_output_bytes: int | None
+terrine.data.Budget.max_rows: int | None
+terrine.data.Budget.max_scan_bytes: int | None
+terrine.data.Budget.strict_scan: bool
+terrine.data.Budget: (max_rows: int | None = None, max_output_bytes: int | None = None, max_scan_bytes: int | None = None, strict_scan: bool = True)
+terrine.data.Coverage.__init__: (start: date | str, end: date | str) -> None
+terrine.data.Coverage.bind: (day_boundary: Callable[[date], datetime]) -> BoundCoverage
+terrine.data.Coverage.end: date
+terrine.data.Coverage.start: date
+terrine.data.Coverage: (start: date | str, end: date | str)
+terrine.data.EventMetric.__init__: (aggregation: Literal['count', 'sum', 'avg_event', 'avg_calendar_day', 'min', 'max', 'count_distinct'], column: str | None, filters: tuple[Filter, ...], exact: bool = False) -> None
+terrine.data.EventMetric.aggregation: Literal['count', 'sum', 'avg_event', 'avg_calendar_day', 'min', 'max', 'count_distinct']
+terrine.data.EventMetric.column: str | None
+terrine.data.EventMetric.exact: bool
+terrine.data.EventMetric.filters: tuple[Filter, ...]
+terrine.data.EventMetric: (aggregation: Literal['count', 'sum', 'avg_event', 'avg_calendar_day', 'min', 'max', 'count_distinct'], column: str | None, filters: tuple[Filter, ...], exact: bool = False)
+terrine.data.Events.__init__: (table: str | DataFrameLike, *, time: str, key: str, unit: str | None = None, metrics: Mapping[str, EventMetric | Ratio] | None = None, labels: Sequence[str] = (), where: Where | None = None, complete: tuple[date | str, date | str] | None = None) -> None
+terrine.data.Events.complete: tuple[date, date] | None
+terrine.data.Events.key: str
+terrine.data.Events.labels: tuple[str, ...]
+terrine.data.Events.metrics: Mapping[str, EventMetric | Ratio]
+terrine.data.Events.table: str | pa.Table
+terrine.data.Events.time: str
+terrine.data.Events.unit: str | None
+terrine.data.Events.where: Mapping[str, JsonScalar | tuple[JsonScalar, ...] | frozenset[JsonScalar]]
+terrine.data.Events: (table: str | DataFrameLike, *, time: str, key: str, unit: str | None = None, metrics: Mapping[str, EventMetric | Ratio] | None = None, labels: Sequence[str] = (), where: Where | None = None, complete: tuple[date | str, date | str] | None = None)
+terrine.data.History.__init__: (table: str | DataFrameLike, *, key: str, column: str, unit: str | None = None, valid_from: str | None = None, valid_to: str | None = None, changed_at: str | None = None, complete: tuple[date | str, date | str] | None = None) -> None
+terrine.data.History.changed_at: str | None
+terrine.data.History.column: str
+terrine.data.History.complete: tuple[date, date] | None
+terrine.data.History.key: str
+terrine.data.History.table: str | pa.Table
+terrine.data.History.unit: str | None
+terrine.data.History.valid_from: str | None
+terrine.data.History.valid_to: str | None
+terrine.data.History: (table: str | DataFrameLike, *, key: str, column: str, unit: str | None = None, valid_from: str | None = None, valid_to: str | None = None, changed_at: str | None = None, complete: tuple[date | str, date | str] | None = None)
+terrine.data.Ratio.__init__: (numerator: str, denominator: str) -> None
+terrine.data.Ratio.denominator: str
+terrine.data.Ratio.numerator: str
+terrine.data.Ratio: (numerator: str, denominator: str)
+terrine.data.UnitSource.__init__: (table: str | DataFrameLike, key: str, entered_at: str | None = None, exited_at: str | None = None, observed_from: str | None = None, observed_until: str | None = None, attributes: Sequence[str] = ()) -> None
+terrine.data.UnitSource.attributes: tuple[str, ...]
+terrine.data.UnitSource.entered_at: str | None
+terrine.data.UnitSource.exited_at: str | None
+terrine.data.UnitSource.key: str
+terrine.data.UnitSource.observed_from: str | None
+terrine.data.UnitSource.observed_until: str | None
+terrine.data.UnitSource.table: str | pa.Table
+terrine.data.UnitSource: (table: str | DataFrameLike, key: str, entered_at: str | None = None, exited_at: str | None = None, observed_from: str | None = None, observed_until: str | None = None, attributes: Sequence[str] = ())
+terrine.dataset.GroupSplit.__init__: (*, group: str = 'unit', train_fraction: float = 0.8, validation_fraction: float = 0.1, seed: int = 0) -> None
+terrine.dataset.GroupSplit.group: str
+terrine.dataset.GroupSplit.seed: int
+terrine.dataset.GroupSplit.to_record: () -> dict[str, Any]
+terrine.dataset.GroupSplit.train_fraction: float
+terrine.dataset.GroupSplit.validation_fraction: float
+terrine.dataset.GroupSplit: (*, group: str = 'unit', train_fraction: float = 0.8, validation_fraction: float = 0.1, seed: int = 0)
+terrine.dataset.TimeSplit.__init__: (*, train_until: date | datetime | str, validation_until: date | datetime | str | None = None, embargo: str | Duration | timedelta = '0d', groups: GroupSplit | None = None) -> None
+terrine.dataset.TimeSplit.bind: (catalog_timezone: tzinfo) -> TimeSplit
+terrine.dataset.TimeSplit.embargo: timedelta
+terrine.dataset.TimeSplit.groups: GroupSplit | None
+terrine.dataset.TimeSplit.to_record: () -> dict[str, Any]
+terrine.dataset.TimeSplit.train_until: date | datetime
+terrine.dataset.TimeSplit.validation_until: date | datetime | None
+terrine.dataset.TimeSplit: (*, train_until: date | datetime | str, validation_until: date | datetime | str | None = None, embargo: str | Duration | timedelta = '0d', groups: GroupSplit | None = None)
+terrine.eq: (expr: Expr, value: JsonScalar) -> Eq
+terrine.errors.REFUSAL_CODES: <attribute>
+terrine.errors.RefusalSpec.__init__: (code: str, template: str) -> None
+terrine.errors.RefusalSpec.code: str
+terrine.errors.RefusalSpec.error: (**context: Any) -> TerrineError
+terrine.errors.RefusalSpec.template: str
+terrine.errors.RefusalSpec: (code: str, template: str)
+terrine.errors.TerrineError.__init__: (message: str, *, code: str, context: Mapping[str, Any]) -> None
+terrine.errors.TerrineError.code: str
+terrine.errors.TerrineError.context: Mapping[str, Any]
+terrine.errors.TerrineError: (message: str, *, code: str, context: Mapping[str, Any])
+terrine.errors.UnverifiedBackendWarning: 
+terrine.event_time: (event: str, *, window: tuple[str | Duration | Literal[0], str | Duration | Literal[0]], label_property: str | None = None, equals: JsonScalar = None, occurrence: Literal['first', 'last', 'nth'] = 'first', n: int | None = None, relative_to: EventTime | None = None) -> EventTime
+terrine.frame.CohortTable.__init__: (parent_frame: Frame, grouping: CohortGrouping, value_column: str) -> None
+terrine.frame.CohortTable.grouping: CohortGrouping
+terrine.frame.CohortTable.materialize: (*, budget: Budget | None = None) -> MaterializedFrame
+terrine.frame.CohortTable.parent_frame: Frame
+terrine.frame.CohortTable.to_pyarrow: (*, budget: Budget | None = None) -> pa.Table
+terrine.frame.CohortTable.value_column: str
+terrine.frame.CohortTable: (parent_frame: Frame, grouping: CohortGrouping, value_column: str)
+terrine.frame.Frame.__init__: (design: Design, model: Model) -> None
+terrine.frame.Frame.cohorts: (*, grouping: CohortGrouping, value_column: str) -> CohortTable
+terrine.frame.Frame.columns: <attribute>
+terrine.frame.Frame.fit_winsorization: (column: str, *, lower: Decimal | str | int, upper: Decimal | str | int, budget: Budget | None = None) -> Winsorization
+terrine.frame.Frame.materialize: (*, budget: Budget | None = None) -> MaterializedFrame
+terrine.frame.Frame.roles: <attribute>
+terrine.frame.Frame.to_pandas: (*, budget: Budget | None = None, include_observation_metadata: bool = False, values_only: bool = False)
+terrine.frame.Frame.to_polars: (*, budget: Budget | None = None, include_observation_metadata: bool = False, values_only: bool = False)
+terrine.frame.Frame.to_pyarrow: (*, budget: Budget | None = None) -> pa.Table
+terrine.frame.Frame.training_set: (*, label: str | tuple[str, ...], features: tuple[str, ...] | None = None, incomplete_labels: Literal['drop', 'keep'] = 'drop', split: object | None = None) -> Frame
+terrine.frame.Frame.winsorize: (transform: Winsorization) -> Frame
+terrine.frame.Frame: (design: Design, model: Model)
+terrine.from_yaml: (value: str | bytes) -> Design
+terrine.gt: (expr: Expr, value: JsonScalar) -> Gt
+terrine.gte: (expr: Expr, value: JsonScalar) -> Gte
+terrine.is_null: (expr: Expr, *, negate: bool = False) -> IsNull
+terrine.isin: (expr: Expr, values: Sequence[JsonScalar] | AbstractSet[JsonScalar]) -> IsIn
+terrine.lt: (expr: Expr, value: JsonScalar) -> Lt
+terrine.lte: (expr: Expr, value: JsonScalar) -> Lte
+terrine.max: (column: str, *, where: Where | None = None, exact: bool = False) -> EventMetric
+terrine.mean: (column: str, *, per: Literal['event', 'day'] = 'event', where: Where | None = None, exact: bool = False) -> EventMetric
+terrine.metrics.count: (*, where: Where | None = None) -> EventMetric
+terrine.metrics.count_distinct: (column: str, *, where: Where | None = None) -> EventMetric
+terrine.metrics.max: (column: str, *, where: Where | None = None, exact: bool = False) -> EventMetric
+terrine.metrics.mean: (column: str, *, per: Literal['event', 'day'] = 'event', where: Where | None = None, exact: bool = False) -> EventMetric
+terrine.metrics.min: (column: str, *, where: Where | None = None, exact: bool = False) -> EventMetric
+terrine.metrics.ratio: (numerator: str, denominator: str) -> Ratio
+terrine.metrics.sum: (column: str, *, where: Where | None = None, exact: bool = False) -> EventMetric
+terrine.min: (column: str, *, where: Where | None = None, exact: bool = False) -> EventMetric
+terrine.model.Catalog.day_boundary: StrictStr
+terrine.model.Catalog.dialect: StrictStr
+terrine.model.Catalog.dimensions: Mapping[StrictStr, Dimension]
+terrine.model.Catalog.events: Mapping[StrictStr, Event]
+terrine.model.Catalog.measures: Mapping[StrictStr, Measure]
+terrine.model.Catalog.metrics: Mapping[StrictStr, Metric]
+terrine.model.Catalog.properties: Mapping[StrictStr, Property]
+terrine.model.Catalog.required_relations: (con: Any, *, units: Mapping[str, UnitSource] | None = None) -> tuple[PhysicalRelationId, ...]
+terrine.model.Catalog.schema_version: Literal[3]
+terrine.model.Catalog.sources: Mapping[StrictStr, Source]
+terrine.model.Catalog.validate_boundary: (value: str) -> str
+terrine.model.Catalog.verify_immutable_inputs: (con: Any, *, units: Mapping[str, UnitSource] | None = None, relations: Mapping[PhysicalRelationId, RelationHandle]) -> VerifiedInputBinding
+terrine.model.Catalog: 
+terrine.model.EventMetric.__init__: (aggregation: Literal['count', 'sum', 'avg_event', 'avg_calendar_day', 'min', 'max', 'count_distinct'], column: str | None, filters: tuple[Filter, ...], exact: bool = False) -> None
+terrine.model.EventMetric.aggregation: Literal['count', 'sum', 'avg_event', 'avg_calendar_day', 'min', 'max', 'count_distinct']
+terrine.model.EventMetric.column: str | None
+terrine.model.EventMetric.exact: bool
+terrine.model.EventMetric.filters: tuple[Filter, ...]
+terrine.model.EventMetric: (aggregation: Literal['count', 'sum', 'avg_event', 'avg_calendar_day', 'min', 'max', 'count_distinct'], column: str | None, filters: tuple[Filter, ...], exact: bool = False)
+terrine.model.Model.__init__: (*args: Any, **kwargs: Any) -> None
+terrine.model.Model.catalog: Catalog
+terrine.model.Model.con: Any
+terrine.model.Model.day_boundary: Callable[[date], datetime]
+terrine.model.Model.event_ids: Mapping[str, str]
+terrine.model.Model.from_catalog: (path_or_catalog: str | Path | Catalog | Mapping[str, Any], *, con: Any, readiness: Readiness | Mapping[str, Coverage | BoundCoverage], units: Mapping[str, UnitSource] | None = None, event_ids: Mapping[str, str] | None = None, input_binding: VerifiedInputBinding | None = None, allow_unverified: bool = False) -> Model
+terrine.model.Model.from_tables: (con: Any | None = None, *, units: Mapping[str, UnitSource], events: Mapping[str, Events], history: Mapping[str, History] | None = None, dialect: str | None = None, day_boundary: str = 'UTC', event_ids: Mapping[str, str] | None = None, allow_unverified: bool = False) -> Model
+terrine.model.Model.input_binding: VerifiedInputBinding | None
+terrine.model.Model.metrics: Mapping[str, BoundMetric]
+terrine.model.Model.model_hash: str
+terrine.model.Model.readiness: Readiness
+terrine.model.Model.sources: Mapping[str, BoundSource]
+terrine.model.Model.to_catalog: () -> str
+terrine.model.Model.units: Mapping[str, UnitSource]
+terrine.model.Model: (*args: Any, **kwargs: Any)
+terrine.model.Ratio.__init__: (numerator: str, denominator: str) -> None
+terrine.model.Ratio.denominator: str
+terrine.model.Ratio.numerator: str
+terrine.model.Ratio: (numerator: str, denominator: str)
+terrine.model.Readiness.__init__: (sources: Mapping[str, BoundCoverage]) -> None
+terrine.model.Readiness.for_fact: (source_name: str) -> BoundCoverage
+terrine.model.Readiness.sources: Mapping[str, BoundCoverage]
+terrine.model.Readiness: (sources: Mapping[str, BoundCoverage])
+terrine.ne: (expr: Expr, value: JsonScalar) -> Ne
+terrine.not_: (term: Predicate) -> Not
+terrine.preview: (design: Design, model: Model, budget: Budget | None = None, *, bounded_count: int = 0) -> Preview
+terrine.ratio: (numerator: str, denominator: str) -> Ratio
+terrine.reasons.REASONS: Mapping[str, str]
+terrine.recipes.event_panel: (unit: str | None = None, *, event: str, periods: tuple[int, ...], period: str | Duration | Literal[0], occurrence: Literal['first', 'each', 'nth'] = 'first', n: int | None = None, reference_index: int = -1, features: Mapping[str, Expr | Predicate] | None = None, outcomes: Mapping[str, Expr | Predicate] | None = None, eligibility: Mapping[str, Predicate] | None = None, anchor_range: AnchorRange | None = None, gap: str | Duration | Literal[0] = '0d') -> Design
+terrine.recipes.event_sequence: (unit: str | None = None, *, event: str, horizon: str | Duration | Literal[0], max_events: int, occurrence: Literal['first', 'each', 'nth'] = 'first', n: int | None = None, session_gap: str | Duration | Literal[0] | None = None, features: Mapping[str, Expr | Predicate] | None = None, outcomes: Mapping[str, Expr | Predicate] | None = None, eligibility: Mapping[str, Predicate] | None = None, anchor_range: AnchorRange | None = None, gap: str | Duration | Literal[0] = '0d') -> Design
+terrine.recipes.life_table: (unit: str | None = None, *, start_event: str, end_event: str, bin: str | Duration | Literal[0], group_by: Mapping[str, Expr | Predicate] | None = None, occurrence: Literal['first', 'nth'] = 'first', n: int | None = None, eligibility: Mapping[str, Predicate] | None = None, anchor_range: AnchorRange | None = None, gap: str | Duration | Literal[0] = '0d', administrative_cutoff: datetime | None = None) -> Design
+terrine.recipes.ltv: (unit: str | None = None, *, start_event: str, metric: str, period: str | Duration | Literal[0], max_periods: int, features: Mapping[str, Expr | Predicate] | None = None, eligibility: Mapping[str, Predicate] | None = None, treatment: Treatment | None = None, anchor_range: AnchorRange | None = None, gap: str | Duration | Literal[0] = '0d', administrative_cutoff: datetime | None = None) -> Design
+terrine.recipes.state_panel: (unit: str | None = None, *, state_source: StateObservations | BinnedMetricState, every: str | Duration | Literal[0], start: date | str, end: date | str, max_periods: int | None = None, features: Mapping[str, Expr | Predicate] | None = None, eligibility: Mapping[str, Predicate] | None = None, anchor_range: AnchorRange | None = None, gap: str | Duration | Literal[0] = '0d') -> Design
+terrine.recipes.survival: (unit: str | None = None, *, start_event: str, end_event: str, occurrence: Literal['first', 'nth'] = 'first', n: int | None = None, features: Mapping[str, Expr | Predicate] | None = None, eligibility: Mapping[str, Predicate] | None = None, treatment: Treatment | None = None, anchor_range: AnchorRange | None = None, gap: str | Duration | Literal[0] = '0d', administrative_cutoff: datetime | None = None) -> Design
+terrine.recipes.time_series: (unit: str | None = None, *, every: str | Duration | Months | Literal[0], start: date | str, end: date | str, features: Mapping[str, Expr | Predicate] | None = None, outcomes: Mapping[str, Expr | Predicate] | None = None, eligibility: Mapping[str, Predicate] | None = None, treatment: Treatment | None = None, anchor_range: AnchorRange | None = None, gap: str | Duration | Literal[0] = '0d') -> Design
+terrine.recipes.trial_panel: (unit: str | None = None, *, every: str | Duration | Months | Literal[0], start: date | str, end: date | str, treatment: Initiation | PersistentAdoption, trial_weight: TrialWeight | None = None, anticipation: str | Duration | Literal[0] = '0d', reference_period: str | Duration | Literal[0] = '-1d', features: Mapping[str, Expr | Predicate] | None = None, outcomes: Mapping[str, Expr | Predicate] | None = None, eligibility: Mapping[str, Predicate] | None = None, anchor_range: AnchorRange | None = None, gap: str | Duration | Literal[0] = '0d') -> Design
+terrine.recipes: <module>
+terrine.since: (event: str, *, window: tuple[str | Duration | Literal[0], str | Duration | Literal[0]], label_property: str | None = None, equals: JsonScalar = None, occurrence: Literal['first', 'last', 'nth'] = 'last', n: int | None = None) -> EventTime
+terrine.spec.AnchorRange.__init__: (start: date | datetime | str | None = None, end: date | datetime | str | None = None) -> None
+terrine.spec.AnchorRange.end: date | datetime | None
+terrine.spec.AnchorRange.end_exclusive: date | datetime | None
+terrine.spec.AnchorRange.start: date | datetime | None
+terrine.spec.AnchorRange: (start: date | datetime | str | None = None, end: date | datetime | str | None = None)
+terrine.spec.And.__init__: (terms: tuple[Predicate, ...]) -> None
+terrine.spec.And.terms: tuple[Predicate, ...]
+terrine.spec.And: (terms: tuple[Predicate, ...])
+terrine.spec.Between.__init__: (expr: Expr, low: JsonScalar, high: JsonScalar) -> None
+terrine.spec.Between.expr: Expr
+terrine.spec.Between.high: JsonScalar
+terrine.spec.Between.low: JsonScalar
+terrine.spec.Between.op: Literal['between']
+terrine.spec.Between.values: tuple[JsonScalar, JsonScalar]
+terrine.spec.Between: (expr: Expr, low: JsonScalar, high: JsonScalar)
+terrine.spec.BinnedMetricState.__init__: (metric: str, cutpoints: tuple[int | float | Decimal, ...], levels: tuple[str, ...]) -> None
+terrine.spec.BinnedMetricState.cutpoints: tuple[int | float | Decimal, ...]
+terrine.spec.BinnedMetricState.levels: tuple[str, ...]
+terrine.spec.BinnedMetricState.metric: str
+terrine.spec.BinnedMetricState: (metric: str, cutpoints: tuple[int | float | Decimal, ...], levels: tuple[str, ...])
+terrine.spec.CohortGrouping.__init__: (bucket: str | Duration | Literal[0], bucket_origin: datetime, statistic: Literal['total', 'mean'] = 'mean') -> None
+terrine.spec.CohortGrouping.bucket: Duration
+terrine.spec.CohortGrouping.bucket_origin: datetime
+terrine.spec.CohortGrouping.statistic: Literal['total', 'mean']
+terrine.spec.CohortGrouping: (bucket: str | Duration | Literal[0], bucket_origin: datetime, statistic: Literal['total', 'mean'] = 'mean')
+terrine.spec.CohortSpec.__init__: (origin: str, trajectory: Trajectory) -> None
+terrine.spec.CohortSpec.origin: str
+terrine.spec.CohortSpec.trajectory: Trajectory
+terrine.spec.CohortSpec: (origin: str, trajectory: Trajectory)
+terrine.spec.DatasetDefinition.__init__: (*, base_design: Design, view: Any = None, transforms: tuple[Winsorization, ...] = ()) -> None
+terrine.spec.DatasetDefinition.base_design: Design
+terrine.spec.DatasetDefinition.build: (model: Any)
+terrine.spec.DatasetDefinition.canonical_json: () -> bytes
+terrine.spec.DatasetDefinition.digest: str
+terrine.spec.DatasetDefinition.from_json: (value: str | bytes) -> DatasetDefinition
+terrine.spec.DatasetDefinition.resolve_unit: (model: Any) -> DatasetDefinition
+terrine.spec.DatasetDefinition.schema_version: int
+terrine.spec.DatasetDefinition.transforms: tuple[Winsorization, ...]
+terrine.spec.DatasetDefinition.view: Any
+terrine.spec.DatasetDefinition: (*, base_design: Design, view: Any = None, transforms: tuple[Winsorization, ...] = ())
+terrine.spec.DatasetDefinitionReference.__init__: (owner: str, digest: str) -> None
+terrine.spec.DatasetDefinitionReference.digest: str
+terrine.spec.DatasetDefinitionReference.owner: str
+terrine.spec.DatasetDefinitionReference: (owner: str, digest: str)
+terrine.spec.DatasetDefinitionStore.__init__: (root: Path, owner: str) -> None
+terrine.spec.DatasetDefinitionStore.owner: str
+terrine.spec.DatasetDefinitionStore.put: (definition: DatasetDefinition) -> DatasetDefinitionReference
+terrine.spec.DatasetDefinitionStore.resolve: (reference: DatasetDefinitionReference) -> DatasetDefinition
+terrine.spec.DatasetDefinitionStore.root: Path
+terrine.spec.DatasetDefinitionStore: (root: Path, owner: str)
+terrine.spec.Design.__init__: (unit: str | None = None, anchor: FixedDate | EventAnchor | Schedule | None = None, *, features: Mapping[str, Expr | Predicate] | None = None, outcomes: Mapping[str, Expr | Predicate] | None = None, eligibility: Mapping[str, Predicate] | None = None, treatment: Treatment | None = None, gap: str | Duration | Literal[0] = '0d', shape: Literal['cross_section'] | StatePanel | EventSequence | SequentialSpec | EventPanelSpec | CalendarComparisonSpec | CohortSpec | TimeToEvent | LifeTable = 'cross_section', anchor_range: AnchorRange | None = None, sample: MatchedT0Sample | None = None, administrative_cutoff: datetime | None = None) -> None
+terrine.spec.Design.administrative_cutoff: datetime | None
+terrine.spec.Design.anchor: FixedDate | EventAnchor | Schedule
+terrine.spec.Design.anchor_range: AnchorRange | None
+terrine.spec.Design.build: (model: Model) -> Frame
+terrine.spec.Design.describe: (model: Model) -> str
+terrine.spec.Design.eligibility: Mapping[str, Predicate]
+terrine.spec.Design.features: Mapping[str, Expr | Predicate]
+terrine.spec.Design.gap: Duration
+terrine.spec.Design.outcomes: Mapping[str, Expr | Predicate]
+terrine.spec.Design.sample: MatchedT0Sample | None
+terrine.spec.Design.shape: Literal['cross_section'] | StatePanel | EventSequence | SequentialSpec | EventPanelSpec | CalendarComparisonSpec | CohortSpec | TimeToEvent | LifeTable
+terrine.spec.Design.snapshot: (model: Model, *, as_of: date | datetime | str, eligibility: Mapping[str, Predicate], features: tuple[str, ...] | None = None) -> Frame
+terrine.spec.Design.spec_hash: str
+terrine.spec.Design.treatment: Treatment | None
+terrine.spec.Design.unit: str | None
+terrine.spec.Design.validate: (model: Model) -> None
+terrine.spec.Design: (unit: str | None = None, anchor: FixedDate | EventAnchor | Schedule | None = None, *, features: Mapping[str, Expr | Predicate] | None = None, outcomes: Mapping[str, Expr | Predicate] | None = None, eligibility: Mapping[str, Predicate] | None = None, treatment: Treatment | None = None, gap: str | Duration | Literal[0] = '0d', shape: Literal['cross_section'] | StatePanel | EventSequence | SequentialSpec | EventPanelSpec | CalendarComparisonSpec | CohortSpec | TimeToEvent | LifeTable = 'cross_section', anchor_range: AnchorRange | None = None, sample: MatchedT0Sample | None = None, administrative_cutoff: datetime | None = None)
+terrine.spec.Eq.__init__: (expr: Expr, value: JsonScalar) -> None
+terrine.spec.Eq.op: Literal['equals']
+terrine.spec.Eq: (expr: Expr, value: JsonScalar)
+terrine.spec.EventAnchor.__init__: (event: str, occurrence: Literal['first', 'each', 'nth'] = 'first', n: int | None = None, offset: str | Duration | Literal[0] = '0s') -> None
+terrine.spec.EventAnchor.event: str
+terrine.spec.EventAnchor.n: int | None
+terrine.spec.EventAnchor.occurrence: Literal['first', 'each', 'nth']
+terrine.spec.EventAnchor.offset: Duration
+terrine.spec.EventAnchor: (event: str, occurrence: Literal['first', 'each', 'nth'] = 'first', n: int | None = None, offset: str | Duration | Literal[0] = '0s')
+terrine.spec.EventPanelSpec.__init__: (periods: tuple[int, ...], period: str | Duration | Literal[0], reference_period: int) -> None
+terrine.spec.EventPanelSpec.period: Duration
+terrine.spec.EventPanelSpec.periods: tuple[int, ...]
+terrine.spec.EventPanelSpec.reference_period: int
+terrine.spec.EventPanelSpec: (periods: tuple[int, ...], period: str | Duration | Literal[0], reference_period: int)
+terrine.spec.EventSequence.__init__: (event: str, window: Window, *, max_events: int, representation: Literal['positions', 'arrays'] = 'positions', properties: tuple[str, ...] = (), label_property: str | None = None, sessions: SessionSpec | None = None, funnel: FunnelSpec | None = None) -> None
+terrine.spec.EventSequence.event: str
+terrine.spec.EventSequence.funnel: FunnelSpec | None
+terrine.spec.EventSequence.label_property: str | None
+terrine.spec.EventSequence.max_events: int
+terrine.spec.EventSequence.properties: tuple[str, ...]
+terrine.spec.EventSequence.representation: Literal['positions', 'arrays']
+terrine.spec.EventSequence.sessions: SessionSpec | None
+terrine.spec.EventSequence.window: Window
+terrine.spec.EventSequence: (event: str, window: Window, *, max_events: int, representation: Literal['positions', 'arrays'] = 'positions', properties: tuple[str, ...] = (), label_property: str | None = None, sessions: SessionSpec | None = None, funnel: FunnelSpec | None = None)
+terrine.spec.EventTime.__init__: (event: str, window: Window, label_property: str | None = None, equals: JsonScalar = None, occurrence: Literal['first', 'last', 'nth'] = 'first', n: int | None = None, relative_to: EventTime | None = None, measure: Literal['time', 'elapsed'] = 'time') -> None
+terrine.spec.EventTime.equals: JsonScalar
+terrine.spec.EventTime.event: str
+terrine.spec.EventTime.label_property: str | None
+terrine.spec.EventTime.measure: Literal['time', 'elapsed']
+terrine.spec.EventTime.n: int | None
+terrine.spec.EventTime.occurrence: Literal['first', 'last', 'nth']
+terrine.spec.EventTime.relative_to: EventTime | None
+terrine.spec.EventTime.window: Window
+terrine.spec.EventTime: (event: str, window: Window, label_property: str | None = None, equals: JsonScalar = None, occurrence: Literal['first', 'last', 'nth'] = 'first', n: int | None = None, relative_to: EventTime | None = None, measure: Literal['time', 'elapsed'] = 'time')
+terrine.spec.Expr: <non-callable>
+terrine.spec.FixedDate.__init__: (date: date | datetime | str) -> None
+terrine.spec.FixedDate.date: date | datetime
+terrine.spec.FixedDate: (date: date | datetime | str)
+terrine.spec.FunnelSpec.__init__: (event_property: str, steps: tuple[str, ...], within: str | Duration | Literal[0] | None = None) -> None
+terrine.spec.FunnelSpec.event_property: str
+terrine.spec.FunnelSpec.steps: tuple[str, ...]
+terrine.spec.FunnelSpec.within: Duration | None
+terrine.spec.FunnelSpec: (event_property: str, steps: tuple[str, ...], within: str | Duration | Literal[0] | None = None)
+terrine.spec.Gt.__init__: (expr: Expr, value: JsonScalar) -> None
+terrine.spec.Gt.op: Literal['gt']
+terrine.spec.Gt: (expr: Expr, value: JsonScalar)
+terrine.spec.Gte.__init__: (expr: Expr, value: JsonScalar) -> None
+terrine.spec.Gte.op: Literal['gte']
+terrine.spec.Gte: (expr: Expr, value: JsonScalar)
+terrine.spec.Initiation.__init__: (event: str, *, history_start: datetime, knowledge: Literal['recorded_at', 'retrospective_effective_time'] = 'recorded_at') -> None
+terrine.spec.Initiation.event: str
+terrine.spec.Initiation.history_start: datetime
+terrine.spec.Initiation.knowledge: Literal['recorded_at', 'retrospective_effective_time']
+terrine.spec.Initiation: (event: str, *, history_start: datetime, knowledge: Literal['recorded_at', 'retrospective_effective_time'] = 'recorded_at')
+terrine.spec.IsIn.__init__: (expr: Expr, values: Sequence[JsonScalar] | AbstractSet[JsonScalar]) -> None
+terrine.spec.IsIn.expr: Expr
+terrine.spec.IsIn.op: Literal['in']
+terrine.spec.IsIn.values: tuple[JsonScalar, ...]
+terrine.spec.IsIn: (expr: Expr, values: Sequence[JsonScalar] | AbstractSet[JsonScalar])
+terrine.spec.IsNull.__init__: (expr: Expr, negate: bool = False) -> None
+terrine.spec.IsNull.expr: Expr
+terrine.spec.IsNull.negate: bool
+terrine.spec.IsNull: (expr: Expr, negate: bool = False)
+terrine.spec.LifeTable.__init__: (time_to_event: TimeToEvent, bin: str | Duration | Literal[0], group_by: tuple[str, ...] = ()) -> None
+terrine.spec.LifeTable.bin: Duration
+terrine.spec.LifeTable.group_by: tuple[str, ...]
+terrine.spec.LifeTable.time_to_event: TimeToEvent
+terrine.spec.LifeTable: (time_to_event: TimeToEvent, bin: str | Duration | Literal[0], group_by: tuple[str, ...] = ())
+terrine.spec.Lt.__init__: (expr: Expr, value: JsonScalar) -> None
+terrine.spec.Lt.op: Literal['lt']
+terrine.spec.Lt: (expr: Expr, value: JsonScalar)
+terrine.spec.Lte.__init__: (expr: Expr, value: JsonScalar) -> None
+terrine.spec.Lte.op: Literal['lte']
+terrine.spec.Lte: (expr: Expr, value: JsonScalar)
+terrine.spec.MatchedT0Sample.__init__: (strata: tuple[str, ...], controls_per_treated: int, seed: int) -> None
+terrine.spec.MatchedT0Sample.controls_per_treated: int
+terrine.spec.MatchedT0Sample.seed: int
+terrine.spec.MatchedT0Sample.strata: tuple[str, ...]
+terrine.spec.MatchedT0Sample: (strata: tuple[str, ...], controls_per_treated: int, seed: int)
+terrine.spec.Ne.__init__: (expr: Expr, value: JsonScalar) -> None
+terrine.spec.Ne.op: Literal['not_equals']
+terrine.spec.Ne: (expr: Expr, value: JsonScalar)
+terrine.spec.Not.__init__: (term: Predicate) -> None
+terrine.spec.Not.term: Predicate
+terrine.spec.Not: (term: Predicate)
+terrine.spec.Or.__init__: (terms: tuple[Predicate, ...]) -> None
+terrine.spec.Or.terms: tuple[Predicate, ...]
+terrine.spec.Or: (terms: tuple[Predicate, ...])
+terrine.spec.PersistentAdoption.__init__: (event: str, *, adopted_value: str, history_start: datetime, persistence: Literal['absorbing'] = 'absorbing', knowledge: Literal['recorded_at', 'retrospective_effective_time'] = 'recorded_at') -> None
+terrine.spec.PersistentAdoption.adopted_value: str
+terrine.spec.PersistentAdoption.event: str
+terrine.spec.PersistentAdoption.history_start: datetime
+terrine.spec.PersistentAdoption.knowledge: Literal['recorded_at', 'retrospective_effective_time']
+terrine.spec.PersistentAdoption.persistence: Literal['absorbing']
+terrine.spec.PersistentAdoption: (event: str, *, adopted_value: str, history_start: datetime, persistence: Literal['absorbing'] = 'absorbing', knowledge: Literal['recorded_at', 'retrospective_effective_time'] = 'recorded_at')
+terrine.spec.Predicate: <non-callable>
+terrine.spec.Schedule.__init__: (every: str | Duration | Months | Literal[0], start: date | str, end: date | str) -> None
+terrine.spec.Schedule.count: (day_boundary: Callable[[date], datetime]) -> int
+terrine.spec.Schedule.end: date
+terrine.spec.Schedule.end_exclusive: date
+terrine.spec.Schedule.every: Duration | Months
+terrine.spec.Schedule.instant: (k: int, day_boundary: Callable[[date], datetime]) -> datetime
+terrine.spec.Schedule.instants: (day_boundary: Callable[[date], datetime]) -> tuple[datetime, ...]
+terrine.spec.Schedule.start: date
+terrine.spec.Schedule: (every: str | Duration | Months | Literal[0], start: date | str, end: date | str)
+terrine.spec.SequentialSpec.__init__: (treatment: Initiation | PersistentAdoption, trial_weight: TrialWeight | None = None, anticipation: str | Duration | Literal[0] = '0d', reference_period: str | Duration | Literal[0] = '-1d') -> None
+terrine.spec.SequentialSpec.anticipation: Duration
+terrine.spec.SequentialSpec.reference_period: Duration
+terrine.spec.SequentialSpec.treatment: Initiation | PersistentAdoption
+terrine.spec.SequentialSpec.trial_weight: TrialWeight | None
+terrine.spec.SequentialSpec: (treatment: Initiation | PersistentAdoption, trial_weight: TrialWeight | None = None, anticipation: str | Duration | Literal[0] = '0d', reference_period: str | Duration | Literal[0] = '-1d')
+terrine.spec.SessionSpec.__init__: (gap: str | Duration | Literal[0]) -> None
+terrine.spec.SessionSpec.gap: Duration
+terrine.spec.SessionSpec: (gap: str | Duration | Literal[0])
+terrine.spec.StateObservations.__init__: (property: str, levels: tuple[str, ...], ordered: bool = True, absorbing: tuple[str, ...] = ()) -> None
+terrine.spec.StateObservations.absorbing: tuple[str, ...]
+terrine.spec.StateObservations.levels: tuple[str, ...]
+terrine.spec.StateObservations.ordered: bool
+terrine.spec.StateObservations.property: str
+terrine.spec.StateObservations: (property: str, levels: tuple[str, ...], ordered: bool = True, absorbing: tuple[str, ...] = ())
+terrine.spec.StatePanel.__init__: (state: StateObservations | BinnedMetricState, *, periods: int, baseline_features: Mapping[str, Expr] | None = None) -> None
+terrine.spec.StatePanel.baseline_features: Mapping[str, Expr]
+terrine.spec.StatePanel.periods: int
+terrine.spec.StatePanel.state: StateObservations | BinnedMetricState
+terrine.spec.StatePanel: (state: StateObservations | BinnedMetricState, *, periods: int, baseline_features: Mapping[str, Expr] | None = None)
+terrine.spec.TimeToEvent.__init__: (end_event: str, *, exit_event: str | None = None, entry_event: str | None = None, delayed_entry: bool = False) -> None
+terrine.spec.TimeToEvent.delayed_entry: bool
+terrine.spec.TimeToEvent.end_event: str
+terrine.spec.TimeToEvent.entry_event: str | None
+terrine.spec.TimeToEvent.exit_event: str | None
+terrine.spec.TimeToEvent: (end_event: str, *, exit_event: str | None = None, entry_event: str | None = None, delayed_entry: bool = False)
+terrine.spec.Trajectory.__init__: (metric: str, period: str | Duration | Literal[0], periods: int, cumulative: bool = False) -> None
+terrine.spec.Trajectory.cumulative: bool
+terrine.spec.Trajectory.metric: str
+terrine.spec.Trajectory.period: Duration
+terrine.spec.Trajectory.periods: int
+terrine.spec.Trajectory: (metric: str, period: str | Duration | Literal[0], periods: int, cumulative: bool = False)
+terrine.spec.Treatment.__init__: (attribute: str, at: str | Duration | Literal[0] = '0d', known_at_t0: bool = False) -> None
+terrine.spec.Treatment.at: Duration
+terrine.spec.Treatment.attribute: str
+terrine.spec.Treatment.known_at_t0: bool
+terrine.spec.Treatment: (attribute: str, at: str | Duration | Literal[0] = '0d', known_at_t0: bool = False)
+terrine.spec.TrialWeight.__init__: (kind: Literal['equal_trial', 'explicit'], values: Mapping[str, float] | None = None)
+terrine.spec.TrialWeight.kind: Literal['equal_trial', 'explicit']
+terrine.spec.TrialWeight.values: Mapping[str, float] | None
+terrine.spec.TrialWeight: (kind: Literal['equal_trial', 'explicit'], values: Mapping[str, float] | None = None)
+terrine.spec.Winsorization.__init__: (column: str, lower: Decimal | str | int, upper: Decimal | str | int, stage: Literal['post_aggregation'] = 'post_aggregation', source_type: str | None = None, output_precision: int | None = None, output_scale: int | None = None, fit: WinsorizationFit | None = None) -> None
+terrine.spec.Winsorization.column: str
+terrine.spec.Winsorization.digest: str
+terrine.spec.Winsorization.fit: WinsorizationFit | None
+terrine.spec.Winsorization.from_json: (value: str | bytes) -> Winsorization
+terrine.spec.Winsorization.from_record: (value: Any) -> Winsorization
+terrine.spec.Winsorization.lower: Decimal | str | int
+terrine.spec.Winsorization.output_precision: int | None
+terrine.spec.Winsorization.output_scale: int | None
+terrine.spec.Winsorization.source_type: str | None
+terrine.spec.Winsorization.stage: Literal['post_aggregation']
+terrine.spec.Winsorization.to_json: () -> bytes
+terrine.spec.Winsorization.to_record: () -> dict[str, Any]
+terrine.spec.Winsorization.upper: Decimal | str | int
+terrine.spec.Winsorization: (column: str, lower: Decimal | str | int, upper: Decimal | str | int, stage: Literal['post_aggregation'] = 'post_aggregation', source_type: str | None = None, output_precision: int | None = None, output_scale: int | None = None, fit: WinsorizationFit | None = None)
+terrine.spec.agg: (metric: str, *, window: tuple[str | Duration | Literal[0], str | Duration | Literal[0]], relative_to: EventTime | None = None) -> MetricAgg
+terrine.spec.all_of: (*terms: Predicate) -> And
+terrine.spec.any_of: (*terms: Predicate) -> Or
+terrine.spec.asof: (attribute: str, *, before: str | Duration | Literal[0] = '0s', relative_to: EventTime | None = None) -> AttributeAsOf
+terrine.spec.between: (expr: Expr, low: JsonScalar, high: JsonScalar) -> Between
+terrine.spec.eq: (expr: Expr, value: JsonScalar) -> Eq
+terrine.spec.event_time: (event: str, *, window: tuple[str | Duration | Literal[0], str | Duration | Literal[0]], label_property: str | None = None, equals: JsonScalar = None, occurrence: Literal['first', 'last', 'nth'] = 'first', n: int | None = None, relative_to: EventTime | None = None) -> EventTime
+terrine.spec.from_json: (value: str | bytes) -> Design
+terrine.spec.from_yaml: (value: str | bytes) -> Design
+terrine.spec.gt: (expr: Expr, value: JsonScalar) -> Gt
+terrine.spec.gte: (expr: Expr, value: JsonScalar) -> Gte
+terrine.spec.is_null: (expr: Expr, *, negate: bool = False) -> IsNull
+terrine.spec.isin: (expr: Expr, values: Sequence[JsonScalar] | AbstractSet[JsonScalar]) -> IsIn
+terrine.spec.lt: (expr: Expr, value: JsonScalar) -> Lt
+terrine.spec.lte: (expr: Expr, value: JsonScalar) -> Lte
+terrine.spec.ne: (expr: Expr, value: JsonScalar) -> Ne
+terrine.spec.not_: (term: Predicate) -> Not
+terrine.spec.quantile: (metric: str, probability: Decimal | str, *, window: tuple[str | Duration | Literal[0], str | Duration | Literal[0]], interpolation: Literal['linear_type7'] = 'linear_type7') -> MetricQuantile
+terrine.spec.retention: (event: str, *, label_property: str, target_event: str, thresholds: tuple[int, ...], horizon: str | Duration | Literal[0, 'open_ended']) -> RetentionMetric
+terrine.spec.since: (event: str, *, window: tuple[str | Duration | Literal[0], str | Duration | Literal[0]], label_property: str | None = None, equals: JsonScalar = None, occurrence: Literal['first', 'last', 'nth'] = 'last', n: int | None = None) -> EventTime
+terrine.spec.to_json: (design: Design) -> str
+terrine.spec.to_yaml: (design: Design) -> str
+terrine.sum: (column: str, *, where: Where | None = None, exact: bool = False) -> EventMetric
+terrine.to_yaml: (design: Design) -> str
+terrine.windows.Duration.__init__: (seconds: int) -> None
+terrine.windows.Duration.seconds: int
+terrine.windows.Duration: (seconds: int)
+terrine.windows.Months.__init__: (months: int) -> None
+terrine.windows.Months.months: int
+terrine.windows.Months: (months: int)
+terrine.windows.Window.__init__: (start: str | Duration | Literal[0], end: str | Duration | Literal[0]) -> None
+terrine.windows.Window.end: Duration
+terrine.windows.Window.start: Duration
+terrine.windows.Window: (start: str | Duration | Literal[0], end: str | Duration | Literal[0])

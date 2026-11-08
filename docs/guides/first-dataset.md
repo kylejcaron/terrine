@@ -1,6 +1,6 @@
 # Your first dataset
 
-Requires CPython 3.12 to 3.14 and the `duckdb,pandas` extras for this example.
+Requires CPython 3.12 or later (tested on 3.12–3.14) and the `duckdb,pandas` extras for this example.
 Dataset staging is currently DuckDB-only. `Dataset` and `Frame.stage` are provisional and may change in a minor release.
 For an installed distribution:
 
