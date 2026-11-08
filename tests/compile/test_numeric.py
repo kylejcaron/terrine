@@ -4,13 +4,8 @@ from __future__ import annotations
 
 
 import ibis
-import pytest
 
 from tests.fixtures.readme import readme_design, readme_model
-
-
-
-
 
 
 def test_native_readme_sql_has_no_decimal_cast_and_is_smaller(readme_con):
