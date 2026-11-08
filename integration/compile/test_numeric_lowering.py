@@ -9,6 +9,7 @@ from fractions import Fraction
 import ibis
 import pyarrow as pa
 import pytest
+
 import terrine as tr
 from terrine.spec import Design, FixedDate, agg
 from tests._float_bound import native_window_bound

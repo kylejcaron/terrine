@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-
 import ibis
 
 from tests.fixtures.readme import readme_design, readme_model
