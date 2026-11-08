@@ -349,22 +349,18 @@ def resolve(con: Any, relation: RelationSpec, catalog_dialect: str = DIALECT) ->
     raw = raw_connection(con)
     if isinstance(relation, TableRef):
         item = _relation(raw, _lookup(raw, relation.name))
-        from psycopg import sql as pg_sql
-
-        table = con.table(item.name, database=item.schema)
-        source = pg_sql.SQL("SELECT * FROM {}").format(
-            pg_sql.Identifier(item.schema, item.name)
-        ).as_string(raw)
-        query, address_columns = _textual_network_query(raw, source)
-        if not address_columns:
-            return table
-        schema = ibis.schema(
-            {
-                name: "string" if name in address_columns else dtype
-                for name, dtype in table.schema().items()
-            }
+        columns = _rows(
+            raw,
+            "SELECT a.attname, t.typname FROM pg_catalog.pg_attribute a "
+            "JOIN pg_catalog.pg_type t ON t.oid = a.atttypid "
+            "WHERE a.attrelid = %s AND a.attnum > 0 AND NOT a.attisdropped "
+            "AND t.typname = ANY(%s)",
+            (item.oid, ["cidr", "inet", "macaddr", "macaddr8"]),
         )
-        return con.sql(query, schema=schema)
+        if not columns:
+            return con.table(item.name, database=item.schema)
+        table = con.table(item.name, database=item.schema)
+        return table.mutate(**{name: table[name].cast("string") for name, _ in columns})
     sql = _normalized(admit_read_query(relation.sql, catalog_dialect, DIALECT))
     sql, _ = _textual_network_query(raw, sql)
     return con.sql(sql, schema=query_schema(raw, sql, con.compiler.type_mapper))
