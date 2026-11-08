@@ -308,38 +308,65 @@ def query_schema(raw: Any, sql: str, type_mapper: Any) -> Any:
     )
 
 
+def _textual_network_query(raw: Any, query: str) -> tuple[str, frozenset[str]]:
+    """Cast PostgreSQL address-type outputs to the strings Ibis exposes."""
+    with raw.cursor() as cursor:
+        cursor.execute(f"SELECT * FROM ({query}) AS terrine_probe LIMIT 0")
+        result = cursor.pgresult
+        names = [column.name for column in cursor.description or ()]
+        oids = [result.ftype(index) for index in range(len(names))]
+    types = dict(
+        _rows(raw, "SELECT oid, typname FROM pg_catalog.pg_type WHERE oid = ANY(%s)", (oids,))
+    )
+    text_types = {"cidr", "inet", "macaddr", "macaddr8"}
+    address_columns = frozenset(
+        name for name, oid in zip(names, oids, strict=True) if types.get(oid) in text_types
+    )
+    if not address_columns:
+        return query, address_columns
+
+    from psycopg import sql as pg_sql
+
+    projections = []
+    for name, oid in zip(names, oids, strict=True):
+        column = pg_sql.Identifier(name)
+        projections.append(
+            pg_sql.SQL("{}::text AS {}").format(column, column)
+            if types.get(oid) in text_types
+            else column
+        )
+    # The SQL has already passed the dialect parser/admission gate.
+    admitted_query = pg_sql.SQL(query)  # ty: ignore[invalid-argument-type]
+    return (
+        pg_sql.SQL("SELECT {} FROM ({}) AS terrine_address_source").format(
+            pg_sql.SQL(", ").join(projections), admitted_query
+        ).as_string(raw),
+        address_columns,
+    )
+
+
 def resolve(con: Any, relation: RelationSpec, catalog_dialect: str = DIALECT) -> Any:
     raw = raw_connection(con)
     if isinstance(relation, TableRef):
         item = _relation(raw, _lookup(raw, relation.name))
-        columns = _rows(
-            raw,
-            "SELECT a.attname, t.typname FROM pg_catalog.pg_attribute a "
-            "JOIN pg_catalog.pg_type t ON t.oid = a.atttypid "
-            "WHERE a.attrelid = %s AND a.attnum > 0 AND NOT a.attisdropped ORDER BY a.attnum",
-            (item.oid,),
-        )
-        # Ibis models these as strings, so normalize them before generated UNIONs
-        # combine the source key with other string-typed branches.
-        text_types = {"cidr", "inet", "macaddr", "macaddr8"}
-        if not any(type_name in text_types for _, type_name in columns):
-            return con.table(item.name, database=item.schema)
         from psycopg import sql as pg_sql
 
-        projections = []
-        for name, type_name in columns:
-            column = pg_sql.Identifier(name)
-            projections.append(
-                pg_sql.SQL("{}::text AS {}").format(column, column)
-                if type_name in text_types
-                else column
-            )
-        query = pg_sql.SQL("SELECT {} FROM {}").format(
-            pg_sql.SQL(", ").join(projections),
-            pg_sql.Identifier(item.schema, item.name),
+        table = con.table(item.name, database=item.schema)
+        source = pg_sql.SQL("SELECT * FROM {}").format(
+            pg_sql.Identifier(item.schema, item.name)
         ).as_string(raw)
-        return con.sql(query, schema=query_schema(raw, query, con.compiler.type_mapper))
+        query, address_columns = _textual_network_query(raw, source)
+        if not address_columns:
+            return table
+        schema = ibis.schema(
+            {
+                name: "string" if name in address_columns else dtype
+                for name, dtype in table.schema().items()
+            }
+        )
+        return con.sql(query, schema=schema)
     sql = _normalized(admit_read_query(relation.sql, catalog_dialect, DIALECT))
+    sql, _ = _textual_network_query(raw, sql)
     return con.sql(sql, schema=query_schema(raw, sql, con.compiler.type_mapper))
 
 
