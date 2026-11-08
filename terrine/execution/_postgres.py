@@ -312,7 +312,33 @@ def resolve(con: Any, relation: RelationSpec, catalog_dialect: str = DIALECT) ->
     raw = raw_connection(con)
     if isinstance(relation, TableRef):
         item = _relation(raw, _lookup(raw, relation.name))
-        return con.table(item.name, database=item.schema)
+        columns = _rows(
+            raw,
+            "SELECT a.attname, t.typname FROM pg_catalog.pg_attribute a "
+            "JOIN pg_catalog.pg_type t ON t.oid = a.atttypid "
+            "WHERE a.attrelid = %s AND a.attnum > 0 AND NOT a.attisdropped ORDER BY a.attnum",
+            (item.oid,),
+        )
+        # Ibis models these as strings, so normalize them before generated UNIONs
+        # combine the source key with other string-typed branches.
+        text_types = {"cidr", "inet", "macaddr", "macaddr8"}
+        if not any(type_name in text_types for _, type_name in columns):
+            return con.table(item.name, database=item.schema)
+        from psycopg import sql as pg_sql
+
+        projections = []
+        for name, type_name in columns:
+            column = pg_sql.Identifier(name)
+            projections.append(
+                pg_sql.SQL("{}::text AS {}").format(column, column)
+                if type_name in text_types
+                else column
+            )
+        query = pg_sql.SQL("SELECT {} FROM {}").format(
+            pg_sql.SQL(", ").join(projections),
+            pg_sql.Identifier(item.schema, item.name),
+        ).as_string(raw)
+        return con.sql(query, schema=query_schema(raw, query, con.compiler.type_mapper))
     sql = _normalized(admit_read_query(relation.sql, catalog_dialect, DIALECT))
     return con.sql(sql, schema=query_schema(raw, sql, con.compiler.type_mapper))
 
@@ -355,6 +381,19 @@ class PostgresSession:
 
     def __init__(self, raw: Any) -> None:
         self.raw = raw
+        if not hasattr(raw, "adapters"):
+            return
+        from psycopg.adapt import Loader
+        from psycopg.pq import Format
+
+        class MacaddrBinaryLoader(Loader):
+            format = Format.BINARY
+
+            def load(self, data: Any) -> str:
+                return ":".join(f"{byte:02x}" for byte in data)
+
+        raw.adapters.register_loader("macaddr", MacaddrBinaryLoader)
+        raw.adapters.register_loader("macaddr8", MacaddrBinaryLoader)
 
     def check_query(self, sql: str) -> None:
         _parse_read_query_ast(sql, DIALECT)
@@ -362,8 +401,7 @@ class PostgresSession:
 
     def _rows(self, sql: str, schema: pa.Schema, chunk_size: int):
         struct = pa.struct(list(schema))
-        # Only binary results carry an anonymous record's field types. Other
-        # results stay text, which loads types without a binary loader (macaddr).
+        # Binary results preserve anonymous record field types.
         binary = any(pa.types.is_struct(field.type) for field in schema)
         with self.raw.cursor(name="terrine_cursor", binary=binary) as cursor:
             cursor.execute(sql)
@@ -372,8 +410,8 @@ class PostgresSession:
                     array = pa.array(batch, type=struct)
                 except (pa.ArrowInvalid, pa.ArrowTypeError):
                     _raise_nonfinite(batch, schema)
-                    # psycopg returns uuid.UUID where Ibis expects Arrow strings.
-                    array = pa.array(_uuids_as_text(batch), type=struct)
+                    # Psycopg returns UUIDs and address objects where Ibis expects strings.
+                    array = pa.array(_values_as_text(batch), type=struct)
                 yield pa.RecordBatch.from_struct_array(array)
 
     def execute(self, con: Any, query: Any, sql: str) -> pa.Table:
@@ -409,11 +447,22 @@ def _raise_nonfinite(rows: list[tuple[Any, ...]], schema: pa.Schema) -> None:
                 raise _NONFINITE.error(column=field.name, value=str(value))
 
 
-def _uuids_as_text(rows: list[tuple[Any, ...]]) -> list[tuple[Any, ...]]:
+def _values_as_text(rows: list[tuple[Any, ...]]) -> list[tuple[Any, ...]]:
+    import ipaddress
     from uuid import UUID
 
+    text_types = (
+        UUID,
+        ipaddress.IPv4Address,
+        ipaddress.IPv6Address,
+        ipaddress.IPv4Interface,
+        ipaddress.IPv6Interface,
+        ipaddress.IPv4Network,
+        ipaddress.IPv6Network,
+    )
     return [
-        tuple(str(value) if isinstance(value, UUID) else value for value in row) for row in rows
+        tuple(str(value) if isinstance(value, text_types) else value for value in row)
+        for row in rows
     ]
 
 

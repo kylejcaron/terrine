@@ -243,6 +243,52 @@ def test_event_panel_struct_anchor_ids_match_duckdb(postgres_scratch, tmp_path):
     assert actual.schema == expected.schema
     assert ordered(actual) == ordered(expected)
 
+def test_event_panel_macaddr_unit_matches_text_read(postgres_scratch, tmp_path):  # noqa: F811
+    """A macaddr event-panel unit matches its text-keyed DuckDB reference."""
+    con = postgres_scratch.con
+    con.raw_sql("CREATE TABLE users(user_id macaddr)")
+    con.raw_sql("INSERT INTO users VALUES ('80:00:00:00:00:01')")
+    con.raw_sql(
+        "CREATE TABLE events(user_id macaddr, occurred_at timestamptz, amount numeric(10, 2), "
+        "tier text, event_id uuid)"
+    )
+    con.raw_sql(
+        "INSERT INTO events VALUES ('80:00:00:00:00:01', '2025-01-01 08:00:00+00', "
+        "5.00, 'gold', '00000000-0000-0000-0000-000000000001')"
+    )
+    con.raw_sql("CREATE TABLE states(user_id macaddr, observed_at timestamptz, state text)")
+
+    duckdb = ibis.duckdb.connect()
+    duckdb.raw_sql("CREATE TABLE users(user_id VARCHAR)")
+    duckdb.raw_sql("INSERT INTO users VALUES ('80:00:00:00:00:01')")
+    duckdb.raw_sql(
+        "CREATE TABLE events(user_id VARCHAR, occurred_at TIMESTAMPTZ, amount DECIMAL(10, 2), "
+        "tier VARCHAR, event_id UUID)"
+    )
+    duckdb.raw_sql(
+        "INSERT INTO events VALUES ('80:00:00:00:00:01', '2025-01-01 08:00:00+00', "
+        "5.00, 'gold', '00000000-0000-0000-0000-000000000001')"
+    )
+    duckdb.raw_sql("CREATE TABLE states(user_id VARCHAR, observed_at TIMESTAMPTZ, state VARCHAR)")
+
+    models = (_model(duckdb, tmp_path, "duckdb"), _model(con, tmp_path, "postgres"))
+    design = tr.recipes.event_panel(
+        event="order",
+        periods=(0, 1),
+        period="1d",
+        reference_index=0,
+        features={"spend": tr.agg("spend", window=("-2d", "0s"))},
+    )
+    expected, result = (
+        design.build(model).materialize(budget=_BUDGET).table for model in models
+    )
+    text_read = con.raw_sql("SELECT user_id::text FROM users").fetchall()[0][0]
+
+    assert result.num_rows
+    assert result.schema == expected.schema
+    assert result.to_pylist() == expected.to_pylist()
+    assert {row["unit"] for row in result.to_pylist()} == {text_read}
+
 
 @pytest.mark.parametrize("naive", [False, True])
 def test_landmark_nth_anchor_matches_original_time_oracle(postgres_scratch, tmp_path, naive):  # noqa: F811
