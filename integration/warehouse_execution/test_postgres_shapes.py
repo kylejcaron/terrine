@@ -255,8 +255,10 @@ def test_event_panel_macaddr_unit_matches_text_read(
     if enum_property:
         con.raw_sql("CREATE TYPE tier_enum AS ENUM ('gold')")
     tier_type = "tier_enum" if enum_property else "text"
-    con.raw_sql("CREATE TABLE users(user_id macaddr)")
-    con.raw_sql("INSERT INTO users VALUES ('80:00:00:00:00:01')")
+    con.raw_sql("CREATE TABLE users(user_id macaddr, self macaddr8)")
+    con.raw_sql(
+        "INSERT INTO users VALUES ('80:00:00:00:00:01', '08:00:2b:01:02:03:04:05')"
+    )
     con.raw_sql(
         f"CREATE TABLE events(user_id macaddr, occurred_at timestamptz, amount numeric(10, 2), "
         f"tier {tier_type}, event_id uuid)"

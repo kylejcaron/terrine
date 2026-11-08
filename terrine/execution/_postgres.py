@@ -360,7 +360,9 @@ def resolve(con: Any, relation: RelationSpec, catalog_dialect: str = DIALECT) ->
         if not columns:
             return con.table(item.name, database=item.schema)
         table = con.table(item.name, database=item.schema)
-        return table.mutate(**{name: table[name].cast("string") for name, _ in columns})
+        return table.mutate(
+            *(table[name].cast("string").name(name) for name, _ in columns)
+        )
     sql = _normalized(admit_read_query(relation.sql, catalog_dialect, DIALECT))
     sql, _ = _textual_network_query(raw, sql)
     return con.sql(sql, schema=query_schema(raw, sql, con.compiler.type_mapper))
