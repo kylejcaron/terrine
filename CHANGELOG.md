@@ -244,7 +244,9 @@
 - On PostgreSQL and the portable expression policy, whose float arithmetic
   raises on overflow and underflow, native sums are withheld by a magnitude
   bound once a unit's accumulated history could leave half of binary64's range,
-  and means and ratios divide only where the quotient stays within `2**±1020`.
+  and means and ratios are withheld when their divisor-dependent guard allows
+  a quotient to round to zero (below `2**-1020` with divisor magnitude at least
+  one) or overflow (above `2**1020` with a divisor below one).
   Cohort totals and cumulative trajectory values of native metrics are bounded
   the same way. Affected windows and summaries refuse
   `terrine.temporal.float64_precision` (`bound_overflow`) instead of failing
