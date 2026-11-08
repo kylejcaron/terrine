@@ -5,7 +5,7 @@ Dataset staging is currently DuckDB-only. `Dataset` and `Frame.stage` are provis
 For an installed distribution:
 
 ```sh
-uv pip install 'terrine[duckdb,pandas]'
+uv pip install --prerelease=allow 'terrine[duckdb,pandas]'
 ```
 
 No sibling project, warehouse account or semantic adapter is required. The

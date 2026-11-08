@@ -1,6 +1,9 @@
 # terrine
 
-0.x: the API may change between minor releases; each change is listed in the changelog.
+> [!WARNING]
+> Terrine is experimental. This is an early alpha (0.1.0a1): the API can change between releases without a
+> deprecation period, it has not been used in production, and some backends and dataset shapes are still being
+> verified. Each change is listed in the [changelog](https://github.com/kylejcaron/terrine/blob/main/CHANGELOG.md).
 
 **Build datasets directly from event logs.**
 
@@ -24,7 +27,7 @@ Because Terrine knows each row's snapshot time, features can only look backwards
 Requires Python 3.12 or later (tested on 3.12–3.14).
 
 ```sh
-pip install "terrine[duckdb,pandas]"
+pip install --pre "terrine[duckdb,pandas]"
 ```
 
 <!-- --8<-- [start:first-dataset] -->

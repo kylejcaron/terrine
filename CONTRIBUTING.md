@@ -86,7 +86,7 @@ Before tagging a release:
    uv run pytest -n 0 -m scale integration/test_release_upgrade.py
    ```
 
-   `RELEASES` records every published release starting with `0.1.0`. Validate
+   `RELEASES` records every published release starting with `0.1.0a1`. Validate
    the producer once against the locally built wheel as well: run `uv build`,
    add the wheel's absolute path as one line in `tests/artifacts/RELEASES`, and
    run the command above. After validation, remove only that temporary wheel

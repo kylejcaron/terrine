@@ -1,7 +1,9 @@
 # API stability
 
-From `0.1.0`, minor releases may break the API with a changelog entry; patch
-releases do not. From `1.0`, the stable API follows
+Terrine is in alpha. Pre-releases (`0.1.0a1` and later alphas, betas and release
+candidates before a final `0.Y.0`) may change anything, with a changelog entry.
+From the first final `0.Y.0` release, minor releases may break the API with a
+changelog entry; patch releases do not. From `1.0`, the stable API follows
 [Semantic Versioning](https://semver.org/): breaking changes happen only in a
 major release. Every module and name is stable, provisional or internal; which
 backends verify an operation is a separate question, answered by the capability
@@ -137,7 +139,7 @@ conformance known answers.
 
 ## Saved artifacts
 
-From `0.1.0`:
+From `0.1.0a1`:
 
 | Artifact | Promise |
 | --- | --- |
@@ -187,7 +189,7 @@ measure exact; manifest and saved-plan envelopes are version 1.
 ### How the promises are checked
 
 - `tests/artifacts/<generation>/` keeps one set of path-independent documents
-  for each format generation since `0.1.0`, written by
+  for each format generation since `0.1.0a1`, written by
   `scripts/write_artifact_corpus.py`: Design, definition and Catalog documents,
   a manifest, Arrow/Parquet metadata, a receipt and the expected output schema
   and roles of each stored Design. A [unit test](../../tests/test_artifact_corpus.py)
@@ -204,7 +206,7 @@ measure exact; manifest and saved-plan envelopes are version 1.
   table](backend-compatibility.md#operation-regression-environment).
 - An [upgrade test](../../integration/test_release_upgrade.py) installs each
   published release listed in `tests/artifacts/RELEASES`, starting with
-  `0.1.0`, into an isolated interpreter, stages a dataset with it and reopens
+  `0.1.0a1`, into an isolated interpreter, stages a dataset with it and reopens
   that dataset in place with the current code. It runs in the weekly scale tier.
 - Adding a format generation, and adding a release to `RELEASES`, are release
   checklist steps.
