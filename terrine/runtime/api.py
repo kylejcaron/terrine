@@ -507,14 +507,16 @@ class DesignExecutor:
                 for key in layer_keys
                 if key.layer == "prefix" and key.source == task.source
             ]
-            results = {
-                key: self._stream_layer(
-                    build_layer(
-                        self.design, execution_model, key, relation_resolver=context.resolve
-                    ),
-                    context,
+            relations = {
+                key: build_layer(
+                    self.design, execution_model, key, relation_resolver=context.resolve
                 )
                 for key in keys
+            }
+            # Every layer's arithmetic is admitted before the first of them is read.
+            context.admit(*relations.values())
+            results = {
+                key: self._stream_layer(relation, context) for key, relation in relations.items()
             }
             with self._lock:
                 self._layers.setdefault(task.partition, {}).update(results)
@@ -525,10 +527,11 @@ class DesignExecutor:
             )
         if task.layer == "anchor":
             key = self._with_snapshot(layer_keys[0], self._plan.snapshot_id)
-            result = self._stream_layer(
-                build_layer(self.design, execution_model, key, relation_resolver=context.resolve),
-                context,
+            relation = build_layer(
+                self.design, execution_model, key, relation_resolver=context.resolve
             )
+            context.admit(relation)
+            result = self._stream_layer(relation, context)
             with self._lock:
                 self._layers.setdefault(task.partition, {})[key] = result
             return result
@@ -549,7 +552,11 @@ class DesignExecutor:
         spooled = None
         try:
             compiled = compose_runtime_frame(
-                self.design, execution_model, persisted=persisted, budget=self._plan.budget
+                self.design,
+                execution_model,
+                persisted=persisted,
+                budget=self._plan.budget,
+                admit=context.admit,
             )
             import terrine.compile.provenance as _provenance
             from terrine.compile.columns import expression_policy
@@ -569,6 +576,7 @@ class DesignExecutor:
                         compiled, self._frame._training_view, context.execute
                     )
             compiled = self._frame._active_compiled(compiled)
+            context.admit(*compiled.reads())
             # Composition ran the whole check schedule; the output statement carries
             # only the eligibility summary, read before any row leaves.
             reader = GatedStream(
