@@ -18,6 +18,7 @@ from terrine.spec import Design, FixedDate, agg
 from tests.compile.test_columns import column_model  # noqa: F401,F811
 
 _BIGNUM = dt.Unknown(raw_type=sge.DataType.build("BIGNUM", dialect="duckdb"))
+_HUGEINT = dt.Unknown(raw_type=sge.DataType.build("HUGEINT", dialect="duckdb"))
 
 
 def _lease(con):
@@ -132,6 +133,8 @@ def test_exact_prefix_layers_roundtrip_through_arrow_storage(column_model, persi
         # Counts travel as DuckDB's Arrow type for HUGEINT, not as text.
         assert "event_count" not in exact_columns
         assert arrow.schema.field("event_count").type == pa.decimal128(38, 0)
+        count_columns = json.loads(arrow.schema.metadata[b"terrine.runtime.count_layer_columns"])
+        assert "event_count" in count_columns
     restored = {
         replace(key, snapshot_id="snapshot"): _restore_persisted_layer(
             SimpleNamespace(con=column_model.con), layer, f"{persist}_{index}"
@@ -140,13 +143,47 @@ def test_exact_prefix_layers_roundtrip_through_arrow_storage(column_model, persi
     }
     schema = restored[replace(prefix, snapshot_id="snapshot")].schema()
     assert schema["sum_value"].is_unknown()
-    assert schema["event_count"] == (dt.Decimal(38, 0) if persist == "current" else _BIGNUM)
+    assert schema["event_count"] == (_HUGEINT if persist == "current" else _BIGNUM)
     actual = compose_materialized_frame(design, column_model, persisted=restored)
     expected = compile_columns(design, column_model)
     assert column_model.con.to_pyarrow(actual.table.order_by("unit")).equals(
         column_model.con.to_pyarrow(expected.table.order_by("unit"))
     )
 
+
+def test_restored_counts_need_no_witness_while_stored_decimals_do(monkeypatch):
+    """Counts restore as the native count state direct compilation reads; a
+    decimal(38, 0) value of the same physical type still needs the witness."""
+    from types import SimpleNamespace
+
+    import ibis
+
+    from terrine.errors import TerrineError
+    from terrine.execution import _native
+    from terrine.runtime.api import _persistable_layer, _restore_persisted_layer
+
+    con = ibis.duckdb.connect()
+    try:
+        layer = (
+            ibis.literal(0)
+            .as_table()
+            .select(
+                event_count=ibis.literal(3).cast(_HUGEINT),
+                amount=ibis.literal(5).cast("decimal(38, 0)"),
+            )
+        )
+        arrow = _persistable_layer(layer, con.to_pyarrow)
+        restored = _restore_persisted_layer(SimpleNamespace(con=con), arrow, "layer")
+        assert restored.schema()["event_count"] == _HUGEINT
+        assert restored.schema()["amount"] == dt.Decimal(38, 0)
+        monkeypatch.setattr(_native, "_exact_arithmetic_answer", lambda _: ("SELECT 1", (2,)))
+        admit = _native.exact_arithmetic_admission(con)
+        admit(restored.select("event_count"))
+        with pytest.raises(TerrineError) as error:
+            admit(restored.select("amount"))
+        assert error.value.context["status"] == "witness_failed"
+    finally:
+        con.disconnect()
 
 
 def test_streamed_exact_prefix_layer_keeps_metadata_for_arrow_storage(column_model, tmp_path):

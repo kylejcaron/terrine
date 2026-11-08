@@ -671,8 +671,10 @@ wrapping, so no genuine count or difference leaves the type. The published
 written outside the bound (an external relation, a damaged persisted layer)
 refuses `terrine.temporal.exact_overflow`, never a wrapped integer. A stored
 `HUGEINT` reads back as `DECIMAL(38, 0)`, which holds every count exactly;
-persisted prefix layers carry counts as Arrow `decimal128(38, 0)`, and
-layers written in the earlier text form restore and compose identically.
+persisted prefix layers carry counts as Arrow `decimal128(38, 0)` and restore
+them as `HUGEINT` by name, so a frame composed from layers runs the
+exact-arithmetic known answers only where direct compilation does. Layers
+written in the earlier text form restore and compose identically.
 The other engines count in their coefficient type.
 
 Raw BIGNUM is **not** an Arrow numeric export. Diagnostic projections must

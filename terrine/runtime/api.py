@@ -380,6 +380,7 @@ def _preflight_design_partitions(plan: RefreshPlan) -> None:
 
 
 _EXACT_LAYER_COLUMNS_KEY = b"terrine.runtime.exact_layer_columns"
+_COUNT_LAYER_COLUMNS_KEY = b"terrine.runtime.count_layer_columns"
 
 
 def _duckdb_type(name: str):
@@ -394,9 +395,8 @@ def _persistable_layer(relation: Any, execute: Any):
 
     BIGNUM has no Arrow type: those columns travel as text and are restored
     by name. A HUGEINT count travels as ``decimal128(38, 0)``, DuckDB's own
-    Arrow type for it, and reads back as ``decimal(38, 0)``, which the DuckDB
-    policy accepts as count state; a count is at most the source row count,
-    below ``2**63``, so its 19 digits fit the 38 exactly.
+    Arrow type for it, and is restored to HUGEINT by name; a count is at most
+    the source row count, below ``2**63``, so its 19 digits fit the 38 exactly.
     """
     bignum, hugeint = _duckdb_type("BIGNUM"), _duckdb_type("HUGEINT")
     schema = relation.schema()
@@ -405,10 +405,17 @@ def _persistable_layer(relation: Any, execute: Any):
     casts = {name: relation[name].cast("string") for name in exact_columns}
     casts.update({name: relation[name].cast("decimal(38, 0)") for name in counts})
     result = execute(relation.mutate(**casts) if casts else relation)
-    if exact_columns:
+    metadata = {
+        key: json.dumps(columns).encode()
+        for key, columns in (
+            (_EXACT_LAYER_COLUMNS_KEY, exact_columns),
+            (_COUNT_LAYER_COLUMNS_KEY, counts),
+        )
+        if columns
+    }
+    if metadata:
         import pyarrow as pa
 
-        metadata = {_EXACT_LAYER_COLUMNS_KEY: json.dumps(exact_columns).encode()}
         if isinstance(result, pa.RecordBatchReader):
             result = pa.RecordBatchReader.from_batches(
                 result.schema.with_metadata(metadata), result
@@ -419,22 +426,41 @@ def _persistable_layer(relation: Any, execute: Any):
 
 
 def _restore_persisted_layer(context: Any, arrow: Any, name: str):
+    """A temporary table holding a persisted layer in the types it was built with.
+
+    Counts return to HUGEINT, the count state direct compilation reads, so a
+    frame composed from layers needs exactly the admission a direct one does.
+    Layers written without count names keep their counts as ``decimal(38, 0)``.
+    """
+    from contextlib import nullcontext
+
     from terrine.runtime.arrow import ArrowOutput
 
-    exact_dtype = _duckdb_type("BIGNUM")
     metadata = arrow.schema.metadata or {}
-    if isinstance(arrow, ArrowOutput):
-        with arrow.open() as reader:
-            raw = context.con.con
-            raw.register(name + "_input", reader)
-            try:
-                raw.execute(f'CREATE TEMP TABLE "{name}" AS SELECT * FROM "{name}_input"')
-            finally:
-                raw.unregister(name + "_input")
-        relation = context.con.table(name)
-    else:
-        relation = context.con.create_table(name, obj=arrow, temp=True)
     exact_columns = json.loads(metadata.get(_EXACT_LAYER_COLUMNS_KEY, b"[]"))
+    counts = json.loads(metadata.get(_COUNT_LAYER_COLUMNS_KEY, b"[]"))
+    quoted = ['"' + column.replace('"', '""') + '"' for column in counts]
+    replaced = ", ".join(f"CAST({column} AS HUGEINT) AS {column}" for column in quoted)
+    projection = f"* REPLACE ({replaced})" if counts else "*"
+    raw = context.con.con
+    with arrow.open() if isinstance(arrow, ArrowOutput) else nullcontext(arrow) as source:
+        raw.register(name + "_input", source)
+        try:
+            raw.execute(f'CREATE TEMP TABLE "{name}" AS SELECT {projection} FROM "{name}_input"')
+        finally:
+            raw.unregister(name + "_input")
+    relation = context.con.table(name)
+    if counts:
+        # Ibis infers a stored HUGEINT as decimal(38, 0); declare what it holds.
+        hugeint = _duckdb_type("HUGEINT")
+        schema = ibis.schema(
+            {
+                column: hugeint if column in counts else dtype
+                for column, dtype in relation.schema().items()
+            }
+        )
+        relation = relation.op().copy(schema=schema).to_expr()
+    exact_dtype = _duckdb_type("BIGNUM")
     return (
         relation.mutate(**{column: relation[column].cast(exact_dtype) for column in exact_columns})
         if exact_columns

@@ -93,22 +93,11 @@ def verify_exact_arithmetic(con: Any) -> None:
         )
 
 
-def _stored_count(dtype: dt.DataType) -> bool:
-    """A HUGEINT count read back from a persisted layer as ``decimal(38, 0)``."""
-    return isinstance(dtype, dt.Decimal) and (dtype.precision, dtype.scale) == (38, 0)
-
-
 def _needs_exact_arithmetic(queries: tuple[Any, ...]) -> bool:
-    """Whether a query carries exact coefficients or decimal values.
-
-    Counts are native integer sums on every path, so persisted count state is
-    not decimal arithmetic and needs no witness, as on the direct path.
-    """
     exact_type = ENGINES["duckdb"].dialect("duckdb").exact_type()
     for query in queries:
         if any(
-            value.dtype == exact_type
-            or (value.dtype.is_decimal() and not _stored_count(value.dtype))
+            value.dtype.is_decimal() or value.dtype == exact_type
             for value in query.op().find(ops.Value)
         ):
             return True

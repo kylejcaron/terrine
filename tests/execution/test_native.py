@@ -29,7 +29,7 @@ def test_exact_witness_runs_once_per_execution_context(monkeypatch, native_input
     assert calls == [None]
 
 
-def test_witness_follows_exact_coefficients_not_stored_counts(monkeypatch, native_inputs):
+def test_bignum_without_decimal_operands_triggers_witness(monkeypatch, native_inputs):
     from terrine.execution.inputs import open_execution
 
     catalog, con = native_inputs
@@ -38,12 +38,8 @@ def test_witness_follows_exact_coefficients_not_stored_counts(monkeypatch, nativ
     coefficient_type = ENGINES["duckdb"].dialect("duckdb").exact_type()
     coefficient = ibis.literal(1).cast(coefficient_type)
     assert not coefficient.type().is_decimal()
-    # A persisted count layer reads its HUGEINT counts back as decimal(38, 0).
-    layer = ibis.table({"event_count": "decimal(38, 0)"}, name="layer")
 
     with open_execution(catalog, con) as context:
-        context.admit(layer.select(window=layer.event_count - layer.event_count))
-        assert calls == []
         context.admit(coefficient.as_table())
 
     assert calls == [None]
