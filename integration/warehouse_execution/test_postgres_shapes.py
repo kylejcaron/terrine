@@ -321,6 +321,34 @@ def test_event_panel_macaddr_unit_matches_text_read(
     assert {row["unit"] for row in result.to_pylist()} == {text_read}
 
 
+
+
+def test_user_enum_named_macaddr_keeps_enum_order(postgres_scratch):  # noqa: F811
+    from terrine.execution._postgres import resolve
+    from terrine.semantic.models import SqlQuery, TableRef
+
+    con, schema = postgres_scratch.con, postgres_scratch.schema
+    con.raw_sql(f"CREATE TYPE \"{schema}\".macaddr AS ENUM ('z', 'a')")
+    con.raw_sql(f'CREATE TABLE enum_values(value "{schema}".macaddr)')
+    con.raw_sql("INSERT INTO enum_values VALUES ('z'), ('a')")
+
+    relation = resolve(con, TableRef(kind="table", name="enum_values"))
+    assert not relation.value.type().is_string()
+    ordered = resolve(
+        con,
+        SqlQuery(
+            kind="sql",
+            sql=(
+                f"SELECT value, value > 'z'::\"{schema}\".macaddr AS after_z "
+                f"FROM \"{schema}\".enum_values ORDER BY value"
+            ),
+        ),
+    )
+
+    assert con.to_pyarrow(ordered.select("after_z")).to_pylist() == [
+        {"after_z": False},
+        {"after_z": True},
+    ]
 @pytest.mark.parametrize("naive", [False, True])
 def test_landmark_nth_anchor_matches_original_time_oracle(postgres_scratch, tmp_path, naive):  # noqa: F811
     duckdb, postgres = _both(postgres_scratch, tmp_path, naive=naive)

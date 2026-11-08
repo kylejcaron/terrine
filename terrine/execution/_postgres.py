@@ -37,6 +37,7 @@ DIALECT = "postgres"
 # Relation kinds that are physical row sources or views over them.
 _TABLE_KINDS = {"r": "table", "p": "table", "m": "table"}
 _SYSTEM_SCHEMAS = ("pg_catalog", "information_schema")
+_ADDRESS_TYPE_OIDS = frozenset({650, 774, 829, 869})
 
 
 def _snapshot_error(reason: str):
@@ -315,12 +316,10 @@ def _textual_network_query(raw: Any, query: str) -> tuple[str, frozenset[str]]:
         result = cursor.pgresult
         names = [column.name for column in cursor.description or ()]
         oids = [result.ftype(index) for index in range(len(names))]
-    types = dict(
-        _rows(raw, "SELECT oid, typname FROM pg_catalog.pg_type WHERE oid = ANY(%s)", (oids,))
-    )
-    text_types = {"cidr", "inet", "macaddr", "macaddr8"}
     address_columns = frozenset(
-        name for name, oid in zip(names, oids, strict=True) if types.get(oid) in text_types
+        name
+        for name, oid in zip(names, oids, strict=True)
+        if oid in _ADDRESS_TYPE_OIDS
     )
     if not address_columns:
         return query, address_columns
@@ -332,7 +331,7 @@ def _textual_network_query(raw: Any, query: str) -> tuple[str, frozenset[str]]:
         column = pg_sql.Identifier(name)
         projections.append(
             pg_sql.SQL("{}::text AS {}").format(column, column)
-            if types.get(oid) in text_types
+            if oid in _ADDRESS_TYPE_OIDS
             else column
         )
     # The SQL has already passed the dialect parser/admission gate.
@@ -351,18 +350,15 @@ def resolve(con: Any, relation: RelationSpec, catalog_dialect: str = DIALECT) ->
         item = _relation(raw, _lookup(raw, relation.name))
         columns = _rows(
             raw,
-            "SELECT a.attname, t.typname FROM pg_catalog.pg_attribute a "
-            "JOIN pg_catalog.pg_type t ON t.oid = a.atttypid "
+            "SELECT a.attname FROM pg_catalog.pg_attribute a "
             "WHERE a.attrelid = %s AND a.attnum > 0 AND NOT a.attisdropped "
-            "AND t.typname = ANY(%s)",
-            (item.oid, ["cidr", "inet", "macaddr", "macaddr8"]),
+            "AND a.atttypid = ANY(%s)",
+            (item.oid, list(_ADDRESS_TYPE_OIDS)),
         )
         if not columns:
             return con.table(item.name, database=item.schema)
         table = con.table(item.name, database=item.schema)
-        return table.mutate(
-            *(table[name].cast("string").name(name) for name, _ in columns)
-        )
+        return table.mutate(*(table[name].cast("string").name(name) for (name,) in columns))
     sql = _normalized(admit_read_query(relation.sql, catalog_dialect, DIALECT))
     sql, _ = _textual_network_query(raw, sql)
     return con.sql(sql, schema=query_schema(raw, sql, con.compiler.type_mapper))
