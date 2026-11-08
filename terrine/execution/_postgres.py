@@ -37,6 +37,7 @@ DIALECT = "postgres"
 # Relation kinds that are physical row sources or views over them.
 _TABLE_KINDS = {"r": "table", "p": "table", "m": "table"}
 _SYSTEM_SCHEMAS = ("pg_catalog", "information_schema")
+_ADDRESS_TYPE_OIDS = frozenset({650, 774, 829, 869})
 
 
 def _snapshot_error(reason: str):
@@ -308,12 +309,58 @@ def query_schema(raw: Any, sql: str, type_mapper: Any) -> Any:
     )
 
 
+def _textual_network_query(raw: Any, query: str) -> tuple[str, frozenset[str]]:
+    """Cast PostgreSQL address-type outputs to the strings Ibis exposes."""
+    with raw.cursor() as cursor:
+        cursor.execute(f"SELECT * FROM ({query}) AS terrine_probe LIMIT 0")
+        result = cursor.pgresult
+        names = [column.name for column in cursor.description or ()]
+        oids = [result.ftype(index) for index in range(len(names))]
+    address_columns = frozenset(
+        name
+        for name, oid in zip(names, oids, strict=True)
+        if oid in _ADDRESS_TYPE_OIDS
+    )
+    if not address_columns:
+        return query, address_columns
+
+    from psycopg import sql as pg_sql
+
+    projections = []
+    for name, oid in zip(names, oids, strict=True):
+        column = pg_sql.Identifier(name)
+        projections.append(
+            pg_sql.SQL("{}::text AS {}").format(column, column)
+            if oid in _ADDRESS_TYPE_OIDS
+            else column
+        )
+    # The SQL has already passed the dialect parser/admission gate.
+    admitted_query = pg_sql.SQL(query)  # ty: ignore[invalid-argument-type]
+    return (
+        pg_sql.SQL("SELECT {} FROM ({}) AS terrine_address_source").format(
+            pg_sql.SQL(", ").join(projections), admitted_query
+        ).as_string(raw),
+        address_columns,
+    )
+
+
 def resolve(con: Any, relation: RelationSpec, catalog_dialect: str = DIALECT) -> Any:
     raw = raw_connection(con)
     if isinstance(relation, TableRef):
         item = _relation(raw, _lookup(raw, relation.name))
-        return con.table(item.name, database=item.schema)
+        columns = _rows(
+            raw,
+            "SELECT a.attname FROM pg_catalog.pg_attribute a "
+            "WHERE a.attrelid = %s AND a.attnum > 0 AND NOT a.attisdropped "
+            "AND a.atttypid = ANY(%s)",
+            (item.oid, list(_ADDRESS_TYPE_OIDS)),
+        )
+        if not columns:
+            return con.table(item.name, database=item.schema)
+        table = con.table(item.name, database=item.schema)
+        return table.mutate(*(table[name].cast("string").name(name) for (name,) in columns))
     sql = _normalized(admit_read_query(relation.sql, catalog_dialect, DIALECT))
+    sql, _ = _textual_network_query(raw, sql)
     return con.sql(sql, schema=query_schema(raw, sql, con.compiler.type_mapper))
 
 
@@ -355,6 +402,19 @@ class PostgresSession:
 
     def __init__(self, raw: Any) -> None:
         self.raw = raw
+        if not hasattr(raw, "adapters"):
+            return
+        from psycopg.adapt import Loader
+        from psycopg.pq import Format
+
+        class MacaddrBinaryLoader(Loader):
+            format = Format.BINARY
+
+            def load(self, data: Any) -> str:
+                return ":".join(f"{byte:02x}" for byte in data)
+
+        raw.adapters.register_loader("macaddr", MacaddrBinaryLoader)
+        raw.adapters.register_loader("macaddr8", MacaddrBinaryLoader)
 
     def check_query(self, sql: str) -> None:
         _parse_read_query_ast(sql, DIALECT)
@@ -362,8 +422,7 @@ class PostgresSession:
 
     def _rows(self, sql: str, schema: pa.Schema, chunk_size: int):
         struct = pa.struct(list(schema))
-        # Only binary results carry an anonymous record's field types. Other
-        # results stay text, which loads types without a binary loader (macaddr).
+        # Binary results preserve anonymous record field types.
         binary = any(pa.types.is_struct(field.type) for field in schema)
         with self.raw.cursor(name="terrine_cursor", binary=binary) as cursor:
             cursor.execute(sql)
@@ -372,8 +431,8 @@ class PostgresSession:
                     array = pa.array(batch, type=struct)
                 except (pa.ArrowInvalid, pa.ArrowTypeError):
                     _raise_nonfinite(batch, schema)
-                    # psycopg returns uuid.UUID where Ibis expects Arrow strings.
-                    array = pa.array(_uuids_as_text(batch), type=struct)
+                    # Psycopg returns UUIDs and address objects where Ibis expects strings.
+                    array = pa.array(_values_as_text(batch), type=struct)
                 yield pa.RecordBatch.from_struct_array(array)
 
     def execute(self, con: Any, query: Any, sql: str) -> pa.Table:
@@ -409,11 +468,22 @@ def _raise_nonfinite(rows: list[tuple[Any, ...]], schema: pa.Schema) -> None:
                 raise _NONFINITE.error(column=field.name, value=str(value))
 
 
-def _uuids_as_text(rows: list[tuple[Any, ...]]) -> list[tuple[Any, ...]]:
+def _values_as_text(rows: list[tuple[Any, ...]]) -> list[tuple[Any, ...]]:
+    import ipaddress
     from uuid import UUID
 
+    text_types = (
+        UUID,
+        ipaddress.IPv4Address,
+        ipaddress.IPv6Address,
+        ipaddress.IPv4Interface,
+        ipaddress.IPv6Interface,
+        ipaddress.IPv4Network,
+        ipaddress.IPv6Network,
+    )
     return [
-        tuple(str(value) if isinstance(value, UUID) else value for value in row) for row in rows
+        tuple(str(value) if isinstance(value, text_types) else value for value in row)
+        for row in rows
     ]
 
 

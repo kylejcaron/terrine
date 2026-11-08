@@ -277,6 +277,8 @@
 - Warehouse exports retain scoring rows when there are no outcome windows.
 ### Fixed
 
+- PostgreSQL address keys (`macaddr`, `macaddr8`, `inet` and `cidr`) are read as
+  text consistently across table and SQL relations, including event-panel results.
 - Temporal union/window lookups refuse incompatible unit-key types with
   `terrine.compile.incompatible_unit_keys` and a route to align source key types,
   instead of exposing internal set-operation errors.
