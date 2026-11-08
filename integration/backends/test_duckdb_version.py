@@ -89,6 +89,20 @@ _SPEND = tr.recipes.time_series(
 )
 
 
+def test_native_design_runs_on_duckdb_without_exact_prefix_state(monkeypatch, readme_backend):
+    con, model = readme_backend
+    monkeypatch.setattr(duckdb_engine, "version", lambda _: "1.4.4")
+
+    native = _SPEND.build(model).to_pandas().sort_values(["unit", "t0"])
+
+    # Whole-unit amounts sum exactly in binary64.
+    assert native["spend"].tolist() == [75.0, 25.0, 80.0, 0.0, 0.0, 0.0]
+    # Only the exact declaration needs the backend's exact prefix state.
+    with pytest.raises(TerrineError) as error:
+        _SPEND.build(readme_model(con, exact=True)).to_pandas()
+    assert error.value.code == "terrine.temporal.exact_unsupported"
+
+
 def _fail_witness(monkeypatch) -> None:
     monkeypatch.setattr(_native, "_exact_arithmetic_answer", lambda _: ("SELECT 1", (2,)))
 
