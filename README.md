@@ -21,10 +21,10 @@ Because Terrine knows each row's snapshot time, features can only look backwards
 
 ## Example: a customer spend forecasting table
 
-Requires Python 3.12 to 3.14.
+Requires Python 3.12 or later (tested on 3.12–3.14).
 
 ```sh
-pip install --pre "terrine[duckdb,pandas]"
+pip install "terrine[duckdb,pandas]"
 ```
 
 <!-- --8<-- [start:first-dataset] -->
@@ -179,7 +179,8 @@ Dataset staging and durable materialization are currently DuckDB-only. `Dataset`
 | Backend | Status |
 | --- | --- |
 | DuckDB | Reference backend; can also save versioned datasets |
-| PostgreSQL 16, BigQuery, Snowflake | Verified against DuckDB; floating-point results match within documented tolerances |
+| PostgreSQL 16 | Verified against DuckDB; floating-point results match within documented tolerances |
+| BigQuery, Snowflake | Verified against DuckDB at 0.1.0.dev2; floating-point results match within documented tolerances |
 | Other Ibis backends | Read-only, unverified; opt in with `allow_unverified=True` |
 
 See [backend compatibility](https://github.com/kylejcaron/terrine/blob/main/docs/guides/backend-compatibility.md) for extras and details.
