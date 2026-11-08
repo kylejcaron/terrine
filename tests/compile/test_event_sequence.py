@@ -33,7 +33,7 @@ def sequence_model():
     )
     catalog = Catalog.model_validate(
         {
-            "schema_version": 2,
+            "schema_version": 3,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": {
@@ -101,7 +101,7 @@ def test_legacy_support_like_property_names_remain_values(sequence_model, repres
             representation=representation,
         ),
     ).build(model)
-    materialized = frame.materialize(Budget(max_rows=100, max_output_bytes=1_000_000))
+    materialized = frame.materialize(budget=Budget(max_rows=100, max_output_bytes=1_000_000))
     rows = materialized.table.to_pylist()
     if representation == "positions":
         children = [row for row in rows if row["is_event"]]
@@ -264,7 +264,7 @@ def test_sequence_excludes_rows_without_selected_fact_before_event_cap():
     )
     catalog = Catalog.model_validate(
         {
-            "schema_version": 2,
+            "schema_version": 3,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": {

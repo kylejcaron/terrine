@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any, Literal
 import pyarrow as pa
 
 from terrine.backends.registry import get_engine
-from terrine.errors import RefusalSpec, freeze, parameter_names, thaw
+from terrine.errors import RefusalSpec, TerrineError, freeze, parameter_names, thaw
 from terrine.windows import Window, _elapsed, _seconds
 
 if TYPE_CHECKING:
@@ -44,6 +44,8 @@ __all__ = [
     "ExecutionSnapshot",
     "ExpressionTiming",
     "FeatureCutoff",
+    "EventMetric",
+    "Ratio",
     "History",
     "MaterializedFrame",
     "Preview",
@@ -127,6 +129,11 @@ _INVALID_ENGINE_STAMP = RefusalSpec(
     "terrine.metadata.invalid_engine_stamp",
     "Engine stamp is {reason} (present fields {fields!r}); re-materialize the Design "
     "with the current Terrine version.",
+)
+_INVALID_METADATA = RefusalSpec(
+    "terrine.metadata.invalid",
+    "Materialized frame metadata is invalid ({reason}); use a lossless Terrine Arrow or JSON "
+    "representation.",
 )
 _ENGINE_STAMP_FIELDS = ("dialect", "engine_name", "engine_status")
 _ARROW_METADATA_KEY = b"terrine.materialized_frame.v2"
@@ -425,13 +432,18 @@ def _complete(value: tuple[date | str, date | str] | None) -> tuple[date, date] 
 
 @dataclass(frozen=True, slots=True)
 class EventMetric:
-    """One aggregation over an event table, optionally restricted by label filters."""
+    """One aggregation over an event table, optionally restricted by label filters.
+
+    ``exact=False`` allows native float arithmetic; counts, distinct counts and integer or
+    decimal values always aggregate exactly.
+    """
 
     aggregation: Literal[
         "count", "sum", "avg_event", "avg_calendar_day", "min", "max", "count_distinct"
     ]
     column: str | None
     filters: tuple[Filter, ...]
+    exact: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -503,9 +515,15 @@ class Events:
         complete: tuple[date | str, date | str] | None = None,
     ) -> None:
         bound = _table_input(table, "table")
+        if not isinstance(time, str):
+            raise _INVALID_BINDING.error(reason="wrong_type", field="time")
         _binding_name(time, "time")
+        if not isinstance(key, str):
+            raise _INVALID_BINDING.error(reason="wrong_type", field="key")
         _binding_name(key, "key")
         if unit is not None:
+            if not isinstance(unit, str):
+                raise _INVALID_BINDING.error(reason="wrong_type", field="unit")
             _binding_name(unit, "unit")
         declared = {} if metrics is None else metrics
         if not isinstance(declared, Mapping) or any(
@@ -649,7 +667,7 @@ class History:
         )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class Roles:
     unit: str
     anchor: str
@@ -694,7 +712,7 @@ class Roles:
             raise ValueError("feature and outcome names must be unique")
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ApproximationMeta:
     algorithm: str
     implementation: str
@@ -717,7 +735,7 @@ class ApproximationMeta:
         object.__setattr__(self, "parameters", MappingProxyType(dict(self.parameters)))
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ColumnMeta:
     window: Window | None
     role: str
@@ -729,6 +747,8 @@ class ColumnMeta:
     approximation: ApproximationMeta | None = None
     transformation: Mapping[str, Any] | None = None
     measure: Literal["time", "elapsed"] | None = None
+    # The arithmetic a metric column's measures declare; None for other columns.
+    arithmetic: Literal["native", "exact"] | None = None
 
     def __post_init__(self) -> None:
         if self.window is not None and not isinstance(self.window, Window):
@@ -745,6 +765,8 @@ class ColumnMeta:
                 _nonempty(value, name)
         if self.numeric_policy not in (None, "exact"):
             raise ValueError("unsupported numeric policy")
+        if self.arithmetic not in (None, "native", "exact"):
+            raise ValueError("unsupported arithmetic")
         if self.measure not in (None, "time", "elapsed"):
             raise ValueError("unsupported event measure")
         if self.transformation is not None:
@@ -753,7 +775,7 @@ class ColumnMeta:
             )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class FeatureCutoff:
     latest_seconds: int
     strict: bool
@@ -770,7 +792,7 @@ class FeatureCutoff:
             raise ValueError("unsupported cutoff reference")
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ExpressionTiming:
     """Conservative support and exact resolved time-column references for one expression."""
 
@@ -833,7 +855,7 @@ class ExpressionTiming:
         object.__setattr__(self, "selector_support_seconds", MappingProxyType(supports))
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class StatePanelMeta:
     """Portable state-panel definition and structural timing references."""
 
@@ -901,7 +923,7 @@ class StatePanelMeta:
             _nonempty(getattr(self, name), name)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class SequenceMeta:
     """Portable event-sequence schema and stable references to status fields."""
 
@@ -1004,7 +1026,7 @@ class SequenceMeta:
         )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class TreatmentHistoryMeta:
     kind: Literal["initiation", "persistent_adoption"]
     source: str
@@ -1032,7 +1054,7 @@ class TreatmentHistoryMeta:
             raise ValueError("initiation metadata cannot declare persistence")
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class TrialWeightMeta:
     kind: Literal["equal_trial", "explicit"]
     values: Mapping[str, float] | None = None
@@ -1050,7 +1072,7 @@ class TrialWeightMeta:
             raise ValueError("equal_trial weights cannot include values")
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class SamplingMeta:
     strata: tuple[str, ...]
     controls_per_treated: int
@@ -1073,7 +1095,7 @@ class SamplingMeta:
         object.__setattr__(self, "strata", strata)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class PanelMeta:
     """Portable shape-specific identity and treatment-history metadata."""
 
@@ -1117,7 +1139,7 @@ class PanelMeta:
             raise ValueError("anticipation_seconds must be nonnegative")
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class CalendarComparisonMeta:
     """Portable control, cohort and period policy for stacked comparisons."""
 
@@ -1145,7 +1167,7 @@ class CalendarComparisonMeta:
             object.__setattr__(self, name, tuple(getattr(self, name)))
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class CohortOperationMeta:
     bucket_seconds: int
     bucket_origin: datetime
@@ -1220,7 +1242,7 @@ class RowCheckGroup:
         object.__setattr__(self, "checks", tuple(self.checks))
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ExecutionSnapshot:
     snapshot_id: str | None
     backend: str
@@ -1246,7 +1268,7 @@ class ExecutionSnapshot:
         )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class DatasetViewMeta:
     """Portable selections and split/exclusion summary for a dataset view."""
 
@@ -1292,7 +1314,7 @@ class DatasetViewMeta:
         object.__setattr__(self, "counts_by_reason", MappingProxyType(counts))
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class Provenance:
     """Design, model, input and execution evidence recorded with every result.
 
@@ -1471,7 +1493,7 @@ class CoverageSummary:
         object.__setattr__(self, "end_exclusive", end)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class Preview:
     planned_rows: int | None
     output_bytes: int | None
@@ -1641,42 +1663,44 @@ def _decode(value: Any, cls: type) -> Any:
             treatment = item.get("treatment")
             if treatment is not None:
                 treatment = TreatmentHistoryMeta(
-                    treatment["kind"],
-                    treatment["source"],
-                    treatment["property"],
-                    datetime.fromisoformat(treatment["history_start"]["$datetime"]),
-                    treatment["knowledge"],
-                    treatment.get("adopted_value"),
-                    treatment.get("persistence"),
+                    kind=treatment["kind"],
+                    source=treatment["source"],
+                    property=treatment["property"],
+                    history_start=datetime.fromisoformat(treatment["history_start"]["$datetime"]),
+                    knowledge=treatment["knowledge"],
+                    adopted_value=treatment.get("adopted_value"),
+                    persistence=treatment.get("persistence"),
                 )
             weight = item.get("trial_weight")
             if weight is not None:
-                weight = TrialWeightMeta(weight["kind"], weight.get("values"))
+                weight = TrialWeightMeta(kind=weight["kind"], values=weight.get("values"))
             kwargs[field.name] = PanelMeta(
-                item["shape"],
-                treatment,
-                weight,
-                tuple(item.get("periods", ())),
-                item.get("period_seconds"),
-                item.get("reference_period"),
-                tuple(item.get("trials", ())),
-                item.get("anticipation_seconds", 0),
+                shape=item["shape"],
+                treatment=treatment,
+                trial_weight=weight,
+                periods=tuple(item.get("periods", ())),
+                period_seconds=item.get("period_seconds"),
+                reference_period=item.get("reference_period"),
+                trials=tuple(item.get("trials", ())),
+                anticipation_seconds=item.get("anticipation_seconds", 0),
             )
         elif field.name == "calendar_comparison" and item is not None:
             kwargs[field.name] = CalendarComparisonMeta(
-                item["control"],
-                item["cohort_source"],
-                item["cohort_property"],
-                datetime.fromisoformat(item["history_start"]["$datetime"]),
-                item["knowledge"],
-                item["reference_period"],
-                tuple(item["comparison_periods"]),
-                tuple(item["anticipation_periods"]),
-                item["period_seconds"],
+                control=item["control"],
+                cohort_source=item["cohort_source"],
+                cohort_property=item["cohort_property"],
+                history_start=datetime.fromisoformat(item["history_start"]["$datetime"]),
+                knowledge=item["knowledge"],
+                reference_period=item["reference_period"],
+                comparison_periods=tuple(item["comparison_periods"]),
+                anticipation_periods=tuple(item["anticipation_periods"]),
+                period_seconds=item["period_seconds"],
             )
         elif field.name == "sampling" and item is not None:
             kwargs[field.name] = SamplingMeta(
-                tuple(item["strata"]), item["controls_per_treated"], item["seed"]
+                strata=tuple(item["strata"]),
+                controls_per_treated=item["controls_per_treated"],
+                seed=item["seed"],
             )
         elif field.name == "cohort_operation" and item is not None:
             kwargs[field.name] = _decode(item, CohortOperationMeta)
@@ -1803,7 +1827,7 @@ def output_sort_keys(schema: pa.Schema, roles: Roles, *, shape: str) -> tuple[st
     return tuple(dict.fromkeys(ordered))
 
 
-@dataclass(frozen=True, slots=True, repr=False)
+@dataclass(frozen=True, slots=True, repr=False, kw_only=True)
 class MaterializedFrame:
     table: pa.Table
     roles: Roles
@@ -1908,7 +1932,7 @@ class MaterializedFrame:
         roles = _decode(payload["roles"], Roles)
         columns = {key: _decode(item, ColumnMeta) for key, item in payload["columns"].items()}
         provenance = _decode(payload["provenance"], Provenance)
-        return cls(table, roles, columns, provenance)
+        return cls(table=table, roles=roles, columns=columns, provenance=provenance)
 
     @classmethod
     def from_arrow(cls, table: pa.Table) -> MaterializedFrame:
@@ -1919,20 +1943,30 @@ class MaterializedFrame:
             raise _UNSUPPORTED_METADATA_VERSION.error(version=1)
         if raw is None:
             raise ValueError("Arrow schema has no Terrine metadata")
-        payload = json.loads(raw.decode("utf-8"))
-        if payload.get("version") != 2:
-            raise _UNSUPPORTED_METADATA_VERSION.error(version=payload.get("version"))
-        roles = _decode(payload["roles"], Roles)
-        columns = {key: _decode(item, ColumnMeta) for key, item in payload["columns"].items()}
-        provenance = _decode(payload["provenance"], Provenance)
-        missing = tuple(
-            name for name in payload["bookkeeping_columns"] if name not in table.column_names
-        )
-        if missing:
-            raise _MISSING_COLUMNS.error(columns=missing)
-        clean = dict(table.schema.metadata or {})
-        del clean[_ARROW_METADATA_KEY]
-        return cls(table.replace_schema_metadata(clean or None), roles, columns, provenance)
+        try:
+            payload = json.loads(raw.decode("utf-8"))
+            if payload.get("version") != 2:
+                raise _UNSUPPORTED_METADATA_VERSION.error(version=payload.get("version"))
+            roles = _decode(payload["roles"], Roles)
+            columns = {key: _decode(item, ColumnMeta) for key, item in payload["columns"].items()}
+            provenance = _decode(payload["provenance"], Provenance)
+            missing = tuple(
+                name for name in payload["bookkeeping_columns"] if name not in table.column_names
+            )
+            if missing:
+                raise _MISSING_COLUMNS.error(columns=missing)
+            clean = dict(table.schema.metadata or {})
+            del clean[_ARROW_METADATA_KEY]
+            return cls(
+                table=table.replace_schema_metadata(clean or None),
+                roles=roles,
+                columns=columns,
+                provenance=provenance,
+            )
+        except TerrineError:
+            raise
+        except Exception as error:
+            raise _INVALID_METADATA.error(reason="invalid_arrow_metadata") from error
 
     def to_json(self) -> str:
         """Serialize metadata plus an Arrow IPC stream, without pickle."""
@@ -1945,12 +1979,20 @@ class MaterializedFrame:
 
     @classmethod
     def from_json(cls, serialized: str) -> MaterializedFrame:
-        payload = json.loads(serialized)
-        if payload.pop("version") != 1:
-            raise ValueError("unsupported Terrine metadata version")
-        raw = b64decode(payload.pop("arrow_ipc"), validate=True)
-        table = pa.ipc.open_stream(pa.py_buffer(raw)).read_all()
-        roles = _decode(payload["roles"], Roles)
-        columns = {key: _decode(item, ColumnMeta) for key, item in payload["columns"].items()}
-        provenance = _decode(payload["provenance"], Provenance)
-        return cls(table, roles, columns, provenance)
+        try:
+            payload = json.loads(serialized)
+            version = payload.pop("version")
+            if version != 1:
+                raise _UNSUPPORTED_METADATA_VERSION.error(version=version)
+            raw = b64decode(payload.pop("arrow_ipc"), validate=True)
+            table = pa.ipc.open_stream(pa.py_buffer(raw)).read_all()
+            roles = _decode(payload["roles"], Roles)
+            columns = {key: _decode(item, ColumnMeta) for key, item in payload["columns"].items()}
+            provenance = _decode(payload["provenance"], Provenance)
+            return cls(table=table, roles=roles, columns=columns, provenance=provenance)
+        except TerrineError:
+            raise
+        except json.JSONDecodeError as error:
+            raise _INVALID_METADATA.error(reason="malformed_json") from error
+        except Exception as error:
+            raise _INVALID_METADATA.error(reason="invalid_json_metadata") from error

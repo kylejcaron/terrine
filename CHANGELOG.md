@@ -1,14 +1,17 @@
 # Changelog
 
-## 1.0.0rc1
+## 0.1.0
 
 ### Breaking changes
 
 - Python 3.12 is the minimum supported version; CPython 3.12, 3.13 and 3.14
   are supported.
-- Floating-point inputs to window sums are quantized once to `DECIMAL(38, 9)`
-  scale using each engine's conversion, then share the exact decimal-coefficient
-  path. Results follow the documented error bounds, not bitwise engine parity.
+- Float sums and means use native arithmetic unless `exact=True`.
+  `tr.sum`, `tr.mean`, `tr.min` and `tr.max` accept `exact=` (default
+  `False`); a Catalog measure declares native float arithmetic with
+  `exact: false`. Counts, distinct counts and integer or decimal values are
+  always exact; `exact: false` on them refuses with
+  `terrine.catalog.invalid_definition`.
 - Bare nonzero integer durations are refused: use unit-bearing strings such as
   `"30d"` and `"0s"` instead of integer seconds; bare `0` remains accepted.
 - `MaterializedFrame.to_arrow()` is removed: use `.to_pyarrow()`.
@@ -31,8 +34,8 @@
 - Design and dataset-definition documents require `schema_version: 4` and write
   durations as canonical text such as `gap: 1w` and `every: 1mo`; version 3 and
   older documents refuse: reconstruct and save the design or definition.
-  Catalog documents stay at version 2; manifest and saved-plan outer envelopes
-  stay at version 1, with version-4 nested designs and definitions.
+  Catalog documents use version 3; manifest and saved-plan outer envelopes stay
+  at version 1, with version-4 nested designs and definitions.
 - Design, dataset-definition and Catalog documents omit fields equal to their
   defaults (a minimal Design saves only `unit` and `anchor`), including the
   training and scoring views, split policies and winsorization records inside a
@@ -69,10 +72,12 @@
   `RetentionMetric.finite_horizon_seconds` become `gap`, `within` and `horizon`.
   `terrine.windows.seconds`, `seconds_text` and `format_duration` are removed;
   `terrine.windows.duration` returns a `Duration`.
-- Catalog documents require version 2: rebuild version-1 catalogs with source
-  `time`, `units` and `events`, root `events`, dimension `unit` and `key`,
-  measure `event`, and metric `unit`. Version 1 refuses with
-  `terrine.catalog.invalid_definition`.
+- Catalog documents require version 3. Version 2 documents still load, with
+  every measure exact and their model hash, model references and retained-snapshot
+  identities unchanged. A native measure has its own identity, so switching a
+  metric's mode rebuilds its persisted layers. `Catalog.model_validate` accepts
+  version 3 only; load version 2 mappings with `Model.from_catalog` or load
+  catalog files with `load_catalog`.
 - `Events` replaces `keys=` and `values=` with one `key=` and named `metrics=`:
   declare each metric explicitly; generated metric names are removed. Labels,
   histories and events share a namespace, and `__` and `<source>_<column>`
@@ -118,6 +123,19 @@
   including when reopening their datasets: stage into a new namespace or owner
   database. A database from a newer release also refuses before writes. Stored
   timestamp and column layouts are not upgraded in place.
+- `Dataset`, the runtime, the CLI, panel transforms and result metadata are
+  provisional.
+- Stable facades expose the types named by their signatures, and signature
+  checks reject unclassified Terrine types.
+- Result metadata records are keyword-only; pass field names when constructing
+  them.
+- Recipe argument names distinguish event-panel `reference_index` from
+  duration-valued trial-panel `reference_period`, and integer recipe caps use
+  `max_periods`; `Frame.materialize` takes `budget` by keyword.
+- Elapsed minutes are spelled `min` instead of `m`; public duration inputs that
+  use `m` are refused with guidance to use `min` or calendar months `mo`.
+  Schema-4 design and definition documents still read legacy `m` and save
+  canonical `min`.
 
 ### Additions
 
@@ -190,11 +208,80 @@
   every 1.x release reads. `terrine.runtime`, `terrine.execution`,
   `terrine.agent`, `terrine.orchestration`, `terrine.adapters`,
   `terrine.export`, `terrine.simulate`, `approx_distinct`, `approx_quantile` and
-  `Model.from_increment` are provisional. CI checks stable signatures against
-  the newest 1.x release tag.
+  `Model.from_increment` are provisional. Signature checks use final 0.x tags
+  and enforce compatibility only within the current release line.
+- Save stable callable signatures in versioned release snapshots. Compatibility
+  differences are reported during 0.x and enforced within the current release
+  line.
+- Release candidates and final tags require successful CI, PostgreSQL and scale
+  checks; 0.x tags require successful CI.
+- Publish a hosted documentation site with API reference pages for stable
+  facades.
+- Declare macOS and Linux support for Python 3.12–3.14; Parquet export and the
+  owner control server provide coded refusals on Windows.
+- `tr.count_distinct` accepts string, date and boolean columns as well as
+  integers.
+- Design predicates `tr.lt`, `tr.lte`, `tr.gte`, `tr.ne`, `tr.isin`,
+  `tr.between`, `tr.any_of` and `tr.not_` join `tr.eq`, `tr.gt`, `tr.is_null`
+  and `tr.all_of`. For example,
+  `tr.lt(tr.agg("orders", window=("-30d", "0s")), 3)` expresses fewer than three
+  orders in 30 days without a dataframe post-filter. Comparisons use the same
+  operators and typed literals as `where=` filters and compile to the same
+  predicate; `any_of` and `not_` follow SQL three-valued logic with the unknown
+  term's reason. Their records (`Lt`, `Lte`, `Gte`, `Ne`, `IsIn`, `Between`,
+  `Or`, `Not`, and now `Gt`, `Eq`, `IsNull`, `And`) are stable exports of
+  `terrine.spec`, and Design documents stay at version 4 with new node tags.
+- Native float sums and means are evaluated as differences of binary64 running
+  sums, without `DECIMAL(38, 9)` quantization or exact backend state, and their
+  generated SQL is smaller (the README design drops from about 86k to 66k
+  characters). Non-finite inputs and running sums beyond binary64's range
+  still refuse with `terrine.temporal.float64_precision`.
+  `ColumnMeta.arithmetic` records each metric column's declared arithmetic
+  (`"native"` or `"exact"`; `None` for other columns) through Arrow and JSON
+  metadata; metadata saved without it reads as `None`. `tr.preview` names
+  native float windows' strategies
+  `sparse_day_prefix/native_float` and `sparse_event_prefix/native_float`.
+- On PostgreSQL and the portable expression policy, whose float arithmetic
+  raises on overflow and underflow, native sums are withheld by a magnitude
+  bound once a unit's accumulated history could leave half of binary64's range,
+  and means and ratios are withheld when their divisor-dependent guard allows
+  a quotient to round to zero (below `2**-1020` with divisor magnitude at least
+  one) or overflow (above `2**1020` with a divisor below one).
+  Cohort totals and cumulative trajectory values of native metrics are bounded
+  the same way. Affected windows and summaries refuse
+  `terrine.temporal.float64_precision` (`bound_overflow`) instead of failing
+  with a driver error; DuckDB results are unchanged. Cohort summaries record
+  the value column's `arithmetic` in their metadata.
+- An exact float window that discards a nonzero contribution below its `1e-9`
+  resolution publishes the sum of retained contributions with
+  `__reason = "below_resolution"` and `__complete` unchanged; means, ratios,
+  cumulative trajectory values and complete cohort summaries carry the note.
+  The numerical contract documents both arithmetic modes: the native bound
+  against the history prefix (`2·n_P·2^-53·Σ_P|x|`), the exact window bound,
+  and when to choose exact. PostgreSQL and the portable policy also refuse
+  `bound_overflow` for histories reaching half the binary64 range, quotients
+  that could round to zero (below `2^-1020` with a divisor of magnitude at
+  least one) or overflow (above `2^1020` with a divisor below one), and cohort
+  means whose scaled quotient or product the engine would raise on. Prefix
+  state format is part of every layer identity, rebuilding earlier layers;
+  portable prefix lookup aligns an unscaled anchor instant with microsecond
+  state.
+- Generated study SQL is smaller and faster with unchanged results: columns no
+  later step reads are dropped from every nested projection, prefix lookups for
+  one window join in a single chain, windows over the same anchors, bounds and
+  coverage share one relation of request points, and DuckDB compares
+  microsecond timestamps natively. The README design compiles to about 19.7k
+  characters (from 66k); time-to-event and trial designs shrink by roughly
+  three to five times. The scheduled scale tier checks each recipe's SQL size
+  and results against hand-written queries of the same values (see the cost
+  guide's budget table). Query-time comparisons are tracked separately; run
+  `uv run python -m benchmarks.run_cost` to measure them.
 - Warehouse exports retain scoring rows when there are no outcome windows.
 ### Fixed
 
+- Catalog filter operators load with the minimum supported Pydantic version.
+- PostgreSQL address keys (`macaddr`, `macaddr8`, `inet` and `cidr`) are read as
+  text consistently across table and SQL relations, including event-panel results.
 - Temporal union/window lookups refuse incompatible unit-key types with
   `terrine.compile.incompatible_unit_keys` and a route to align source key types,
   instead of exposing internal set-operation errors.
@@ -208,7 +295,19 @@
   references carry the recorded definition digest and the digest of the stored
   publication text.
 
-### Performance
+- Refusals for registered DataFrame views and malformed materialized-frame
+  metadata include actionable guidance, and wrong-typed event times and design
+  units report the correct reason.
+- Streamed Arrow results use a supported reader and close cleanly when
+  consumption ends early; catalog serialization preserves declared list fields.
+- Benchmark workload definitions use the current EventPanel `period` parameter.
+- Panel transforms preserve the base design's administrative cutoff, anchor
+  range and sampling policy.
+- Event panels run on PostgreSQL. Their `{event_id, period}` anchor identifiers
+  are anonymous records there: portable period lookup no longer casts NULL to
+  a struct type PostgreSQL cannot name, anchor joins compare records directly,
+  and results holding records are read in binary so the identifiers publish as
+  the same Arrow struct DuckDB returns.
 
 - PostgreSQL prefix and first-occurrence lookups use set-based union/window
   evaluation instead of correlated top-one scans. Anchor assembly uses

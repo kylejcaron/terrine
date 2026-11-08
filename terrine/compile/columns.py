@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import unicodedata
 from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager
@@ -30,7 +31,7 @@ from terrine.compile.anchors import (
     _utc_column,
     compile_anchors,
 )
-from terrine.compile.layers import build_measure_layer, measure_identity
+from terrine.compile.numeric import CompileContext, lower_aggregate
 from terrine.compile.ranges import plan_ranges
 from terrine.compile.retention import compile_retention
 from terrine.data import (
@@ -48,20 +49,16 @@ from terrine.errors import RefusalSpec
 from terrine.execution.gates import fold, foldable, gate_totals, validate_schedule
 from terrine.semantic.bind import normalize_events
 from terrine.semantic.models import BoundDimension
-from terrine.semantic.rules import calendar_average_alignment
 from terrine.spec.anchors import FixedDate, Schedule
 from terrine.spec.design import _RESERVED_OUTPUT_NAME as _RESERVED_NAME
 from terrine.spec.design import Design
 from terrine.spec.expressions import (
-    And,
+    _PREDICATE_NODES,
     ApproxMetricDistinct,
     ApproxMetricQuantile,
     AttributeAsOf,
-    Eq,
     EventTime,
     Expr,
-    Gt,
-    IsNull,
     MetricAgg,
     MetricQuantile,
     Predicate,
@@ -70,7 +67,7 @@ from terrine.spec.expressions import (
 )
 from terrine.spec.sequence import _UNSUPPORTED_SHAPE
 from terrine.spec.validate import _fixed_anchors
-from terrine.temporal.aggregate import TemporalResult, aggregate_window
+from terrine.temporal.aggregate import TemporalResult
 from terrine.temporal.attributes import (
     _enriched_property_columns,
     enrich_events,
@@ -323,6 +320,14 @@ class CompiledStudy:
         object.__setattr__(self, "_checks", tuple(checks))
         object.__setattr__(self, "sketches", tuple(self.sketches))
 
+    def with_output(self, table: ibis.Table) -> CompiledStudy:
+        """This study with an equivalent output relation of the published schema."""
+        if table.schema() != self.table.schema():
+            raise ValueError("an equivalent output keeps the published schema")
+        study = copy.copy(self)
+        object.__setattr__(study, "table", table)
+        return study
+
     def reads(self) -> tuple[ibis.Table, ...]:
         """Every relation materialization may execute: the output, its audit, the
         anchor checks, each gate statement of the check schedule, each check
@@ -486,6 +491,8 @@ def compile_columns(
                 events, source, source_histories[source_name]
             )
         return selector_sources[source_name]
+
+    lowering = CompileContext(model, unit_name, fixed, events_for, states)
 
     selector_columns: dict[EventTime, str] = {}
     selector_metadata = {}
@@ -803,16 +810,20 @@ def compile_columns(
                 },
             )
             meta = ColumnMeta(
-                None,
-                "event_time",
-                selector_meta["observed_from"],
-                selector_meta["observed_until"],
-                selector_meta["complete"],
-                selector_meta["reason"],
+                window=None,
+                role="event_time",
+                observed_from_column=selector_meta["observed_from"],
+                observed_until_column=selector_meta["observed_until"],
+                complete_column=selector_meta["complete"],
+                reason_column=selector_meta["reason"],
                 measure=node.measure,
             )
             selector_support, _ = selector_timing(node)
-            cutoff = FeatureCutoff(selector_support[1], True, "retrospective_effective_time")
+            cutoff = FeatureCutoff(
+                latest_seconds=selector_support[1],
+                strict=True,
+                knowledge="retrospective_effective_time",
+            )
             timing_column_refs[node] = (
                 output,
                 selector_meta["start_bound"],
@@ -846,7 +857,9 @@ def compile_columns(
                 if relative is not None
                 else node.before.seconds
             )
-            cutoff = FeatureCutoff(cutoff_seconds, True, "retrospective_effective_time")
+            cutoff = FeatureCutoff(
+                latest_seconds=cutoff_seconds, strict=True, knowledge="retrospective_effective_time"
+            )
             strategy = "strict_history"
             result_table = result.table
         elif isinstance(node, RetentionMetric):
@@ -864,7 +877,9 @@ def compile_columns(
             )
             meta = result.columns[output]
             cutoff = FeatureCutoff(
-                range_plans[node].block_seconds, True, "retrospective_effective_time"
+                latest_seconds=range_plans[node].block_seconds,
+                strict=True,
+                knowledge="retrospective_effective_time",
             )
             strategy = "blocked_range_join/retention_occurrences"
             result_table = result.table
@@ -894,7 +909,11 @@ def compile_columns(
                 range_plan=range_plans[node],
             )
             meta = result.columns[output]
-            cutoff = FeatureCutoff(node.window.end.seconds, True, "retrospective_effective_time")
+            cutoff = FeatureCutoff(
+                latest_seconds=node.window.end.seconds,
+                strict=True,
+                knowledge="retrospective_effective_time",
+            )
             strategy = "blocked_range_join/exact_type7"
             result_table = result.table
         elif isinstance(node, ApproxMetricQuantile):
@@ -951,7 +970,11 @@ def compile_columns(
                     error_description="t-digest empirical, no guaranteed bound",
                 ),
             )
-            cutoff = FeatureCutoff(node.window.end.seconds, True, "retrospective_effective_time")
+            cutoff = FeatureCutoff(
+                latest_seconds=node.window.end.seconds,
+                strict=True,
+                knowledge="retrospective_effective_time",
+            )
             strategy = "blocked_range_join/tdigest_sidecar"
             result_table = summary.table.mutate(**{output: ibis.null().cast("float64")})
         elif isinstance(node, ApproxMetricDistinct):
@@ -989,7 +1012,11 @@ def compile_columns(
                     error_description="HLL relative standard error ≈ 1.04/√m",
                 ),
             )
-            cutoff = FeatureCutoff(node.window.end.seconds, True, "retrospective_effective_time")
+            cutoff = FeatureCutoff(
+                latest_seconds=node.window.end.seconds,
+                strict=True,
+                knowledge="retrospective_effective_time",
+            )
             strategy = "blocked_range_join/hll"
             result_table = result.table
         elif (
@@ -1021,60 +1048,31 @@ def compile_columns(
                 if relative is not None
                 else node.window.end.seconds
             )
-            cutoff = FeatureCutoff(cutoff_seconds, True, "retrospective_effective_time")
+            cutoff = FeatureCutoff(
+                latest_seconds=cutoff_seconds, strict=True, knowledge="retrospective_effective_time"
+            )
             strategy = "blocked_range_join/nonadditive"
             result_table = result.table
         elif not isinstance(node, EventTime):
-            metric = model.metrics[node.metric]
-            resolution: Literal["day", "event"] = (
-                "day"
-                if fixed
-                and relative is None
-                and all(
-                    calendar_average_alignment(
-                        node.window, anchor=instant, day_boundary=model.catalog.day_boundary
-                    )
-                    == "aligned"
-                    for instant in fixed
-                )
-                else "event"
-            )
-            resolved = []
-            supplied = {}
-            for measure in metric.measures:
-                source = model.sources[measure.source_name]
-                events = events_for(source.name)
-                measure = resolve_measure(events, measure, source=source)
-                key = (measure.source_name, measure_identity(measure), design.unit, resolution)
-                if key not in states:
-                    states[key] = build_measure_layer(
-                        events,
-                        measure,
-                        source,
-                        boundary=model.catalog.day_boundary,
-                        resolution=resolution,
-                    )
-                resolved.append(measure)
-                supplied[measure] = states[key]
-            result = aggregate_window(
-                expression_anchors,
-                replace(metric, measures=tuple(resolved)),
-                supplied,
+            lowered = lower_aggregate(
+                lowering,
+                model.metrics[node.metric],
                 node.window,
-                model.readiness,
-                boundary=model.catalog.day_boundary,
+                anchors=expression_anchors,
                 output=output,
-                role="feature",
-                resolution=resolution,
+                relative=relative is not None,
             )
+            result = lowered.result
             meta = result.columns[output]
             cutoff_seconds = (
                 selector_timing(relative)[0][1] + node.window.end.seconds
                 if relative is not None
                 else node.window.end.seconds
             )
-            cutoff = FeatureCutoff(cutoff_seconds, True, "retrospective_effective_time")
-            strategy = f"sparse_{resolution}_prefix/native"
+            cutoff = FeatureCutoff(
+                latest_seconds=cutoff_seconds, strict=True, knowledge="retrospective_effective_time"
+            )
+            strategy = lowered.strategy
             result_table = result.table
 
         if relative is not None and selector_point_column is None:
@@ -1300,7 +1298,7 @@ def compile_columns(
     expression_timings = {}
     for role, named in (("feature", design.features), ("outcome", design.outcomes)):
         for name, node in named.items():
-            if isinstance(node, (Gt, Eq, IsNull, And)):
+            if isinstance(node, _PREDICATE_NODES):
                 for leaf in _output_leaves(node):
                     expression(leaf)
                 result = compile_predicate(table, node, values, output=name, role=role)
@@ -1353,6 +1351,7 @@ def compile_columns(
     eligible = ibis.literal(True)
     for name in design.eligibility:
         eligible &= table[name]
+    candidates = table
     table = table.mutate(__terrine_eligible=eligible)
     support = list(anchors.table.columns)
     for meta in columns.values():
@@ -1372,8 +1371,9 @@ def compile_columns(
         ):
             if name is not None and name in table.columns and name not in support:
                 support.append(name)
-    projection = {name: table[name] for name in support}
-    projection.update({name: table[value] for name, value in public.items()})
+    names = {name: name for name in support}
+    names.update(public)
+    projection = {name: table[value] for name, value in names.items()}
     # A window result's row checks are counted over the audit only when nothing
     # registered after it joins into the candidates under a check that runs
     # later: an as-of lookup whose history conflicts duplicates candidate rows
@@ -1395,7 +1395,13 @@ def compile_columns(
         __terrine_eligible=table.__terrine_eligible,
         **{name: table[name] for names in audit_bound.values() for name in names},
     )
-    retained = table.filter(table.__terrine_eligible.fill_null(False)).select(**projection)
+    # Without eligibility rules every candidate is retained, selected from the
+    # candidates' own relation.
+    retained = (
+        table.filter(table.__terrine_eligible.fill_null(False)).select(**projection)
+        if design.eligibility
+        else candidates.select(**{name: candidates[value] for name, value in names.items()})
+    )
     # A window result's one-row checks and its row checks take its place in the
     # schedule, in the order its own validation ran them.
     schedule: list[_DeferredCheck | RowCheckGroup] = []
@@ -1425,12 +1431,12 @@ def compile_columns(
         retained,
         audit,
         Roles(
-            "unit",
-            "anchor_id",
-            "t0",
-            "treatment" if design.treatment else None,
-            tuple(design.features),
-            tuple(design.outcomes),
+            unit="unit",
+            anchor="anchor_id",
+            t0="t0",
+            treatment="treatment" if design.treatment else None,
+            features=tuple(design.features),
+            outcomes=tuple(design.outcomes),
         ),
         columns,
         feature_cutoffs,

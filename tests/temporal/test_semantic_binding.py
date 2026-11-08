@@ -24,7 +24,7 @@ def semantic_con():
 def event_catalog():
     return Catalog.model_validate(
         {
-            "schema_version": 2,
+            "schema_version": 3,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": {
@@ -62,7 +62,7 @@ def test_selected_logical_entity_resolves_only_its_physical_key(event_catalog):
 def test_ratio_binds_different_physical_keys_and_retains_filters():
     catalog = Catalog.model_validate(
         {
-            "schema_version": 2,
+            "schema_version": 3,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": {
@@ -253,7 +253,7 @@ def test_dimension_filter_requires_dimension_property_membership(event_catalog, 
 def test_shared_dimension_filter_binds_from_non_owner_source():
     catalog = Catalog.model_validate(
         {
-            "schema_version": 2,
+            "schema_version": 3,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": {
@@ -412,7 +412,7 @@ def test_coverage_uses_catalog_fixed_boundary_and_readiness_is_per_source(
 ):
     catalog = Catalog.model_validate(
         {
-            "schema_version": 2,
+            "schema_version": 3,
             "day_boundary": boundary,
             "dialect": "duckdb",
             "sources": {

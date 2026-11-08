@@ -31,7 +31,7 @@ def test_overlapping_event_anchors_match_independent_pandas_oracle():
         con.create_table("events", events)
         catalog = Catalog.model_validate(
             {
-                "schema_version": 2,
+                "schema_version": 3,
                 "day_boundary": "UTC",
                 "dialect": "duckdb",
                 "sources": {
@@ -77,7 +77,9 @@ def test_overlapping_event_anchors_match_independent_pandas_oracle():
                 funnel=FunnelSpec("kind", ("view", "purchase"), within="2h"),
             ),
         )
-        result = design.build(model).materialize(Budget(max_rows=100, max_output_bytes=1_000_000))
+        result = design.build(model).materialize(
+            budget=Budget(max_rows=100, max_output_bytes=1_000_000)
+        )
         table = pd.DataFrame(result.table.to_pylist())
         source = pd.DataFrame(events.to_pydict())
         source["ts"] = pd.to_datetime(source["ts"], utc=True)

@@ -33,7 +33,7 @@ def _trajectory_model(*, decimal_type="DECIMAL(18, 2)", unit=None):
     con.raw_sql("UPDATE events SET float_amount = amount::DOUBLE / 100")
     catalog = Catalog.model_validate(
         {
-            "schema_version": 2,
+            "schema_version": 3,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": {
@@ -174,6 +174,107 @@ def test_cumulative_partitions_repeated_anchors_and_propagates_missing_period():
         con.disconnect()
 
 
+def test_cumulative_reason_separates_missing_periods_from_notes_on_published_values():
+    """An exact float period that discarded a sub-resolution contribution publishes
+    its value with ``below_resolution``; the cumulative value carries that note
+    while every contributing period is present, and a missing period's own
+    reason once one is not."""
+    con, model = _trajectory_model()
+    try:
+        con.raw_sql(
+            "INSERT INTO events (user_id, ts, kind, amount, float_amount) VALUES "
+            "('u2', TIMESTAMPTZ '2025-01-02 00:00:00+00', 'revenue', 0, 4e-10), "
+            "('u2', TIMESTAMPTZ '2025-01-10 00:00:00+00', 'revenue', NULL, NULL)"
+        )
+        design = Design(
+            "user",
+            EventAnchor("purchase", occurrence="first"),
+            shape=CohortSpec(
+                origin="purchase",
+                trajectory=Trajectory("float_revenue", "7d", periods=3, cumulative=True),
+            ),
+        )
+        compiled = compile_ltv(design, model)
+        rows = _collect(con, compiled).to_pylist()
+        u2 = sorted((row for row in rows if row["unit"] == "u2"), key=lambda row: row["age"])
+        assert [row["period_value"] for row in u2] == [0.0, None, 0.0]
+        assert [row["period_value__reason"] for row in u2] == [
+            "below_resolution",
+            "all_values_null",
+            None,
+        ]
+        assert [row["period_value__complete"] for row in u2] == [True, True, True]
+        assert [row["cumulative_value"] for row in u2] == [0.0, None, None]
+        assert [row["cumulative_value__reason"] for row in u2] == [
+            "below_resolution",
+            "all_values_null",
+            "all_values_null",
+        ]
+        assert [row["cumulative_value__complete"] for row in u2] == [True, False, False]
+    finally:
+        con.disconnect()
+
+
+def test_portable_integer_cumulative_sums_in_its_native_domain(monkeypatch):
+    """The portable policy bounds decimal and binary64 running totals only; integer
+    periods accumulate as they are."""
+    from dataclasses import replace
+    from datetime import UTC, datetime
+
+    from terrine.backends.dialect import dialect_scope
+    from terrine.compile.columns import compile_columns
+    from terrine.data import ColumnMeta
+    from terrine.windows import Window
+
+    con, model = _trajectory_model(unit="u1")
+    try:
+        base = compile_columns(Design("user", EventAnchor("purchase", occurrence="first")), model)
+        periods = con.create_table(
+            "period_values",
+            base.table.mutate(
+                __trajectory_age_0=ibis.literal(10, type="int64"),
+                __trajectory_age_1=ibis.literal(5, type="int64"),
+                complete=ibis.literal(True),
+                reason=ibis.null().cast("string"),
+                observed_from=ibis.literal(datetime(2025, 1, 1, tzinfo=UTC)),
+                observed_until=ibis.literal(datetime(2025, 1, 31, tzinfo=UTC)),
+            ),
+        )
+        period = 7 * 24 * 60 * 60
+        metadata = {
+            f"__trajectory_age_{age}": ColumnMeta(
+                window=Window(f"{age * period}s", f"{(age + 1) * period}s"),
+                role="outcome",
+                observed_from_column="observed_from",
+                observed_until_column="observed_until",
+                complete_column="complete",
+                reason_column="reason",
+                numeric_policy="exact",
+                arithmetic="exact",
+            )
+            for age in range(2)
+        }
+        prepared = replace(base, table=periods, columns=metadata)
+        monkeypatch.setattr("terrine.compile.shapes.ltv.compile_columns", lambda *_args: prepared)
+        with dialect_scope("generic"):
+            compiled = compile_ltv(
+                Design(
+                    "user",
+                    EventAnchor("purchase", occurrence="first"),
+                    shape=CohortSpec(
+                        origin="purchase",
+                        trajectory=Trajectory("net_revenue", "7d", periods=2, cumulative=True),
+                    ),
+                ),
+                model,
+            )
+        rows = _collect(con, compiled).to_pylist()
+        assert compiled.columns["cumulative_value"].arithmetic == "exact"
+        assert {row["age"]: row["cumulative_value"] for row in rows} == {0: 10, 1: 15}
+    finally:
+        con.disconnect()
+
+
 def test_cutoff_nulls_immature_float_period_value():
     from datetime import UTC, datetime
 
@@ -195,16 +296,30 @@ def test_cutoff_nulls_immature_float_period_value():
         young = next(row for row in table if row["unit"] == "u3" and row["age"] == 1)
         meta = frame.columns["period_value"]
         assert meta.numeric_policy is None
+        # A period value keeps the arithmetic its metric declares.
+        assert meta.arithmetic == "exact"
         assert young["period_value"] is None
         assert young[meta.reason_column] == "administrative_cutoff"
     finally:
         con.disconnect()
 
 
-def test_cumulative_float_overflow_refuses(monkeypatch):
+@pytest.mark.parametrize(
+    "dialect,value,published",
+    [
+        # DuckDB sums to an infinity, which the finite check refuses.
+        ("duckdb", 1e308, None),
+        # The portable policy withholds the second period once the magnitudes
+        # accumulated through it pass half the range, and keeps a total within it.
+        ("generic", 6e307, None),
+        ("generic", 4e307, 8e307),
+    ],
+)
+def test_cumulative_float_overflow_refuses(monkeypatch, dialect, value, published):
     from dataclasses import replace
     from datetime import UTC, datetime
 
+    from terrine.backends.dialect import dialect_scope
     from terrine.compile.columns import compile_columns
     from terrine.data import ColumnMeta
     from terrine.windows import Window
@@ -215,8 +330,8 @@ def test_cumulative_float_overflow_refuses(monkeypatch):
         periods = con.create_table(
             "period_values",
             base.table.mutate(
-                __trajectory_age_0=ibis.literal(1e308),
-                __trajectory_age_1=ibis.literal(1e308),
+                __trajectory_age_0=ibis.literal(value),
+                __trajectory_age_1=ibis.literal(value),
                 complete=ibis.literal(True),
                 reason=ibis.null().cast("string"),
                 observed_from=ibis.literal(datetime(2025, 1, 1, tzinfo=UTC)),
@@ -226,33 +341,40 @@ def test_cumulative_float_overflow_refuses(monkeypatch):
         period = 7 * 24 * 60 * 60
         metadata = {
             f"__trajectory_age_{age}": ColumnMeta(
-                Window(f"{age * period}s", f"{(age + 1) * period}s"),
-                "outcome",
-                "observed_from",
-                "observed_until",
-                "complete",
-                "reason",
+                window=Window(f"{age * period}s", f"{(age + 1) * period}s"),
+                role="outcome",
+                observed_from_column="observed_from",
+                observed_until_column="observed_until",
+                complete_column="complete",
+                reason_column="reason",
+                arithmetic="native",
             )
             for age in range(2)
         }
         prepared = replace(base, table=periods, columns=metadata)
         monkeypatch.setattr("terrine.compile.shapes.ltv.compile_columns", lambda *_args: prepared)
-        frame = compile_ltv(
-            Design(
-                "user",
-                EventAnchor("purchase", occurrence="first"),
-                shape=CohortSpec(
-                    origin="purchase",
-                    trajectory=Trajectory("float_revenue", "7d", periods=2, cumulative=True),
+        with dialect_scope(dialect):
+            frame = compile_ltv(
+                Design(
+                    "user",
+                    EventAnchor("purchase", occurrence="first"),
+                    shape=CohortSpec(
+                        origin="purchase",
+                        trajectory=Trajectory("float_revenue", "7d", periods=2, cumulative=True),
+                    ),
                 ),
-            ),
-            model,
-        )
-        with pytest.raises(TerrineError) as error:
-            frame.validate(execute=con.to_pyarrow)
-        assert error.value.code == "terrine.temporal.float64_precision"
-        assert error.value.context["reason"] == "bound_overflow"
-        assert error.value.context["output"] == "cumulative_value"
+                model,
+            )
+        assert frame.columns["cumulative_value"].arithmetic == "native"
+        if published is None:
+            with pytest.raises(TerrineError) as error:
+                frame.validate(execute=con.to_pyarrow)
+            assert error.value.code == "terrine.temporal.float64_precision"
+            assert error.value.context["reason"] == "bound_overflow"
+            assert error.value.context["output"] == "cumulative_value"
+        else:
+            rows = _collect(con, frame).to_pylist()
+            assert {row["age"]: row["cumulative_value"] for row in rows} == {0: value, 1: published}
     finally:
         con.disconnect()
 
@@ -288,12 +410,12 @@ def test_portable_cumulative_decimal_beyond_the_accumulator_refuses(monkeypatch)
         period = 7 * 24 * 60 * 60
         metadata = {
             f"__trajectory_age_{age}": ColumnMeta(
-                Window(f"{age * period}s", f"{(age + 1) * period}s"),
-                "outcome",
-                "observed_from",
-                "observed_until",
-                "complete",
-                "reason",
+                window=Window(f"{age * period}s", f"{(age + 1) * period}s"),
+                role="outcome",
+                observed_from_column="observed_from",
+                observed_until_column="observed_until",
+                complete_column="complete",
+                reason_column="reason",
                 numeric_policy="exact",
             )
             for age in range(3)

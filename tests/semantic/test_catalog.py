@@ -4,15 +4,17 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
+import yaml
 
 from terrine.data import Coverage, UnitSource
 from terrine.errors import TerrineError
 from terrine.model import Model
-from terrine.semantic.io import dump_catalog, load_catalog, validate_catalog
-from terrine.semantic.models import Catalog
+from terrine.runtime.saved_plan import ModelReference
+from terrine.semantic.io import catalog_payload, dump_catalog, load_catalog, validate_catalog
+from terrine.semantic.models import Catalog, Filter
 
 CATALOG = {
-    "schema_version": 2,
+    "schema_version": 3,
     "day_boundary": "UTC",
     "dialect": "duckdb",
     "sources": {
@@ -41,6 +43,79 @@ CATALOG = {
 }
 
 
+def test_filter_model_accepts_declared_operator():
+    filter_ = Filter(property="tier", op="not_equals", values=("enterprise",))
+
+    assert filter_.model_dump() == {
+        "property": "tier",
+        "op": "not_equals",
+        "values": ("enterprise",),
+    }
+
+
+# A version 2 document with a float sum; version 2 measures declare no arithmetic mode.
+FLOAT_CATALOG = {
+    "schema_version": 2,
+    "day_boundary": "UTC",
+    "dialect": "duckdb",
+    "sources": {
+        "orders": {
+            "relation": {"kind": "table", "name": "orders"},
+            "time": "ts",
+            "units": {"user": "user_id"},
+            "events": ["order", "amount", "quantity"],
+            "properties": [],
+            "dimensions": [],
+        }
+    },
+    "events": {
+        "order": {"source": "orders", "column": None},
+        "amount": {"source": "orders", "column": "amount"},
+        "quantity": {"source": "orders", "column": "quantity"},
+    },
+    "properties": {},
+    "dimensions": {},
+    "measures": {
+        "orders": {"event": "order", "aggregation": "count"},
+        "spend": {"event": "amount", "aggregation": "sum"},
+    },
+    "metrics": {
+        "orders": {"kind": "mean", "unit": "user", "measure": "orders"},
+        "spend": {"kind": "mean", "unit": "user", "measure": "spend"},
+    },
+}
+
+
+def _native(definition: dict[str, Any], **events: str) -> dict[str, Any]:
+    """A version 3 definition whose named measures are native, optionally over other events."""
+    measures = dict(definition["measures"])
+    for name, event in events.items():
+        measures[name] = {**measures[name], "event": event, "exact": False}
+    return {**definition, "schema_version": 3, "measures": measures}
+
+
+@pytest.fixture
+def orders_con():
+    import ibis
+
+    con = ibis.duckdb.connect()
+    con.create_table(
+        "orders",
+        schema=ibis.schema(
+            {
+                "ts": "timestamp",
+                "user_id": "int64",
+                "amount": "float64",
+                "quantity": "decimal(10, 2)",
+            }
+        ),
+    )
+    try:
+        yield con
+    finally:
+        con.disconnect()
+
+
 def test_from_catalog_mapping_binds_same_model_as_catalog():
     import ibis
 
@@ -59,7 +134,7 @@ def test_from_catalog_mapping_binds_same_model_as_catalog():
     assert from_mapping.catalog == from_catalog.catalog
 
     with pytest.raises(TerrineError) as error:
-        Model.from_catalog({**CATALOG, "schema_version": 3}, con=con, readiness=readiness)
+        Model.from_catalog({**CATALOG, "schema_version": 4}, con=con, readiness=readiness)
     assert error.value.code == "terrine.catalog.invalid_definition"
 
     with pytest.raises(TerrineError) as error:
@@ -76,8 +151,6 @@ def test_from_catalog_mapping_binds_same_model_as_catalog():
 
 def test_model_identity_survives_catalog_gaining_defaulted_field():
     import ibis
-
-    from terrine.runtime.saved_plan import ModelReference
 
     class AnnotatedCatalog(Catalog):
         description: str | None = None
@@ -104,7 +177,77 @@ def test_model_identity_survives_catalog_gaining_defaulted_field():
     assert dump_catalog(annotated.catalog) == dump_catalog(plain.catalog)
 
 
-@pytest.mark.parametrize("version", [1, 3, "2", None])
+def test_catalog_v2_loads_float_measures_as_exact():
+    catalog = validate_catalog(FLOAT_CATALOG)
+    assert catalog.schema_version == 3
+    assert {name: measure.exact for name, measure in catalog.measures.items()} == {
+        "orders": True,
+        "spend": True,
+    }
+    assert catalog_payload(catalog) == FLOAT_CATALOG
+    with pytest.raises(TerrineError) as error:
+        validate_catalog({**_native(FLOAT_CATALOG, spend="amount"), "schema_version": 2})
+    assert error.value.code == "terrine.catalog.invalid_definition"
+    assert [(issue["location"], issue["kind"]) for issue in error.value.context["issues"]] == [
+        (("measures", "spend", "exact"), "exact_requires_version_3")
+    ]
+
+
+def test_native_measure_has_distinct_identity(orders_con):
+    readiness = {"orders": Coverage("2025-01-01", "2025-02-01")}
+    models = {
+        name: Model.from_catalog(definition, con=orders_con, readiness=readiness)
+        for name, definition in (
+            ("version_2", FLOAT_CATALOG),
+            ("exact", {**FLOAT_CATALOG, "schema_version": 3}),
+            ("native", _native(FLOAT_CATALOG, spend="amount")),
+        )
+    }
+    hashes = {name: model.model_hash for name, model in models.items()}
+    references = {
+        name: ModelReference.from_model(model, owner_key="owner") for name, model in models.items()
+    }
+    assert hashes["exact"] == hashes["version_2"] != hashes["native"]
+    assert references["exact"] == references["version_2"]
+    assert references["native"].catalog_hash != references["exact"].catalog_hash
+    native = catalog_payload(models["native"].catalog)
+    assert (native["schema_version"], native["measures"]["spend"]) == (
+        3,
+        {"event": "amount", "aggregation": "sum", "exact": False},
+    )
+    assert "exact" not in native["measures"]["orders"]
+
+
+@pytest.mark.parametrize("event", ["quantity", "order"])
+def test_native_arithmetic_refuses_exact_event_values(orders_con, event):
+    with pytest.raises(TerrineError) as error:
+        Model.from_catalog(
+            _native(FLOAT_CATALOG, spend=event),
+            con=orders_con,
+            readiness={"orders": Coverage("2025-01-01", "2025-02-01")},
+        )
+    assert error.value.code == "terrine.catalog.invalid_definition"
+    assert [(issue["location"], issue["kind"]) for issue in error.value.context["issues"]] == [
+        (("measures", "spend", "exact"), "exact_value_type")
+    ]
+
+
+def test_catalog_v3_written_with_exact_false_for_native(tmp_path: Path):
+    native = validate_catalog(_native(FLOAT_CATALOG, spend="amount"))
+    exact = validate_catalog(FLOAT_CATALOG)
+    path = tmp_path / "catalog.yaml"
+    for catalog in (native, exact):
+        path.write_text(dump_catalog(catalog), encoding="utf-8")
+        assert yaml.safe_load(path.read_text(encoding="utf-8"))["schema_version"] == 3
+        assert load_catalog(path) == catalog
+    assert yaml.safe_load(dump_catalog(native))["measures"] == {
+        "orders": {"event": "order", "aggregation": "count"},
+        "spend": {"event": "amount", "aggregation": "sum", "exact": False},
+    }
+    assert yaml.safe_load(dump_catalog(exact))["measures"] == FLOAT_CATALOG["measures"]
+
+
+@pytest.mark.parametrize("version", [1, 4, "2", None])
 def test_unsupported_schema_version_refuses_before_field_diagnostics(version):
     document = {**CATALOG, "schema_version": version, "surprise": True}
     with pytest.raises(TerrineError) as error:
@@ -258,13 +401,19 @@ def test_catalog_rejects_untrusted_callbacks():
             ("metrics", "sessions"),
             "unsafe_transform",
         ),
+        (
+            {
+                **CATALOG,
+                "measures": {"count": {"event": "session", "aggregation": "count", "exact": False}},
+            },
+            ("measures", "count"),
+            "exact_aggregation",
+        ),
     ],
 )
 def test_loader_reports_coded_actionable_catalog_schema_errors(
     tmp_path: Path, definition, location, kind
 ):
-    import yaml
-
     path = tmp_path / "invalid.yaml"
     path.write_text(yaml.safe_dump(definition), encoding="utf-8")
     with pytest.raises(TerrineError) as caught:
@@ -302,8 +451,9 @@ def test_loader_reports_coded_actionable_catalog_schema_errors(
 def test_catalog_rejects_unknown_fields_and_unsupported_versions():
     with pytest.raises(ValueError):
         Catalog.model_validate({**CATALOG, "surprise": True})
+    # Version 2 definitions load through validate_catalog and the loaders, not the record.
     with pytest.raises(ValueError):
-        Catalog.model_validate({**CATALOG, "schema_version": 3})
+        Catalog.model_validate({**CATALOG, "schema_version": 2})
 
 
 @pytest.mark.parametrize("validity", [{}, {"valid_from": "start", "changed_at": "change"}])

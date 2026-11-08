@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from decimal import Decimal
 
 import ibis
@@ -125,7 +126,7 @@ _BUDGET = tr.Budget(max_rows=100, max_output_bytes=1_000_000, strict_scan=False)
 
 
 def _rows(model, design=_DESIGN):
-    table = design.build(model).materialize(_BUDGET).table
+    table = design.build(model).materialize(budget=_BUDGET).table
     kept = [name for name in table.column_names if name not in {"t0", "anchor_id"}]
     rows = table.select(kept).to_pylist()
     return sorted(rows, key=lambda row: row["unit"])
@@ -239,10 +240,13 @@ def test_float_windows_match_duckdb_within_tolerance(postgres_scratch, tmp_path)
     assert {row["unit"]: row["weight_before"] for row in actual}["a"] == 0.75
 
 
-def _float_rows(con, rows: list[tuple[str, str]]) -> None:
+def _float_rows(con, rows: Sequence[tuple[str, ...]]) -> None:
+    """Insert unit d rows of ``(at, weight)`` or ``(at, weight, light)`` SQL literals."""
     cursor = con.raw_sql(
         "INSERT INTO events VALUES "
-        + ", ".join(f"('d', '{at}+00', 0, 0, {weight}, 0)" for at, weight in rows)
+        + ", ".join(
+            f"('d', '{row[0]}+00', 0, 0, {row[1]}, {row[2] if len(row) > 2 else 0})" for row in rows
+        )
     )
     if con.name == "postgres":  # DuckDB returns its connection, not a cursor
         cursor.close()
@@ -284,6 +288,7 @@ def test_cancelling_float_window_stays_within_the_absolute_sum_bound(postgres_sc
     from fractions import Fraction
 
     from tests._float_bound import window_sum_bound
+
     duckdb = ibis.duckdb.connect()
     _load(duckdb, timestamp_type="TIMESTAMPTZ", amount_type="DECIMAL(12, 2)")
     _load(postgres_scratch.con, timestamp_type="timestamptz", amount_type="numeric(12, 2)")
@@ -325,3 +330,118 @@ def test_empty_window_after_nonfinite_history_is_zero(postgres_scratch, tmp_path
     design = _design(weight_before=tr.agg("weight", window=("-1d", "0s")))
     rows = _rows(_model(con, tmp_path, "postgres"), design)
     assert {row["unit"]: row["weight_before"] for row in rows}["d"] == 0.0
+
+
+def _native_model(con):
+    """The float facts with the native binary64 arithmetic declaration."""
+    return tr.Model.from_tables(
+        con,
+        units={"user": tr.UnitSource("users", "user_id")},
+        events={
+            "orders": tr.Events(
+                "events",
+                time="occurred_at",
+                key="user_id",
+                metrics={
+                    "weight": tr.sum("weight"),
+                    "mean_weight": tr.mean("weight"),
+                    "light": tr.sum("light"),
+                    "weight_per_light": tr.ratio("weight", "light"),
+                },
+                complete=("2024-12-01", "2025-02-01"),
+            )
+        },
+    )
+
+
+_NATIVE_DESIGN = _design(
+    outcomes={"weight_after": tr.agg("weight", window=("0s", "1d"))},
+    weight_before=tr.agg("weight", window=("-1d", "0s")),
+    weight_week=tr.agg("weight", window=("-7d", "0s")),
+    mean_weight_week=tr.agg("mean_weight", window=("-7d", "0s")),
+    weight_per_light_week=tr.agg("weight_per_light", window=("-7d", "0s")),
+)
+
+
+def test_native_float_windows_match_duckdb_within_tolerance(postgres_scratch, tmp_path):  # noqa: F811
+    """While a unit's history magnitudes sum to less than half the binary64 range the
+    guarded native path publishes what DuckDB does, including a prefix difference of
+    opposite large sums and a subnormal input."""
+    duckdb = ibis.duckdb.connect()
+    rows = [
+        ("2024-12-28 00:00:00", "4e307", "0.5"),
+        ("2025-01-01 12:00:00", "-4e307", "0.25"),
+        ("2025-01-01 13:00:00", "5e-324", "0.25"),
+        ("2025-01-02 06:00:00", "1.5", "1.0"),
+    ]
+    for con in (duckdb, postgres_scratch.con):
+        _load(con, timestamp_type="TIMESTAMPTZ", amount_type="DECIMAL(12, 2)")
+        _float_rows(con, rows)
+    expected = _rows(_native_model(duckdb), _NATIVE_DESIGN)
+    actual = _rows(_native_model(postgres_scratch.con), _NATIVE_DESIGN)
+    _assert_close(actual, expected)
+    by_unit = {row["unit"]: row for row in actual}
+    assert by_unit["d"]["weight_before"] == -4e307
+    assert by_unit["d"]["weight_after"] == 1.5
+    assert by_unit["a"]["weight_before"] == 0.75
+    frame = _NATIVE_DESIGN.build(_native_model(postgres_scratch.con))
+    assert {meta.arithmetic for meta in frame.columns.values()} == {"native"}
+
+
+@pytest.mark.parametrize(
+    ("rows", "metric", "failure"),
+    [
+        # Two values whose group sum would overflow are withheld before the backend adds them.
+        (
+            [("2025-01-01 12:00:00", "1e308"), ("2025-01-01 13:00:00", "1e308")],
+            "weight",
+            "bound_overflow",
+        ),
+        # A withheld history state poisons every later non-empty window.
+        (
+            [
+                ("2024-12-20 00:00:00", "1e308"),
+                ("2024-12-21 00:00:00", "1e308"),
+                ("2025-01-01 12:00:00", "1.0"),
+            ],
+            "weight",
+            "bound_overflow",
+        ),
+        # Two groups admitted on their own whose magnitudes accumulated through the
+        # prefix exceed half the range: the running sum is withheld, not evaluated.
+        (
+            [("2024-12-31 00:00:00", "6e307"), ("2025-01-01 12:00:00", "6e307")],
+            "weight",
+            "bound_overflow",
+        ),
+        # A mean whose quotient would round to zero.
+        (
+            [("2025-01-01 12:00:00", "5e-324"), ("2025-01-01 13:00:00", "0.0")],
+            "mean_weight",
+            "bound_overflow",
+        ),
+        # A ratio whose quotient would overflow.
+        ([("2025-01-01 12:00:00", "1e300", "1e-10")], "weight_per_light", "bound_overflow"),
+        # Non-finite inputs are counted, never added, as on DuckDB.
+        (
+            [("2024-12-20 00:00:00", "'NaN'"), ("2025-01-01 12:00:00", "1.0")],
+            "weight",
+            "nonfinite_input",
+        ),
+    ],
+)
+def test_native_float_window_failures_are_coded_refusals(
+    postgres_scratch, tmp_path, rows, metric, failure
+):  # noqa: F811
+    """Where float8 arithmetic would raise, the native path refuses by code instead."""
+    con = postgres_scratch.con
+    _load(con, timestamp_type="timestamptz", amount_type="numeric(12, 2)")
+    _float_rows(con, rows)
+    design = _design(value=tr.agg(metric, window=("-1d", "0s")))
+    with pytest.raises(TerrineError) as error:
+        _rows(_native_model(con), design)
+    assert error.value.code == "terrine.temporal.float64_precision"
+    assert error.value.context["reason"] == failure
+    # An empty window is still zero, even after a withheld or invalid history.
+    before = _design(value=tr.agg("weight", window=("-10d", "-5d")))
+    assert {row["unit"]: row["value"] for row in _rows(_native_model(con), before)}["d"] == 0.0

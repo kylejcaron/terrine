@@ -32,7 +32,7 @@ def _model():
         ) AS p(user_id, ts, region)
     """)
     catalog = {
-        "schema_version": 2,
+        "schema_version": 3,
         "day_boundary": "UTC",
         "dialect": "duckdb",
         "sources": {
@@ -107,11 +107,11 @@ def main() -> None:
     con, model = _model()
     try:
         design = recipes.ltv(
-            start_event="purchase", metric="net_revenue", period="7d", periods=3,
+            start_event="purchase", metric="net_revenue", period="7d", max_periods=3,
             administrative_cutoff=datetime(2025, 1, 22, tzinfo=UTC),
         )
         budget = Budget(max_rows=100, max_output_bytes=1_000_000)
-        ltv_rows = design.build(model).materialize(budget).table.to_pylist()
+        ltv_rows = design.build(model).materialize(budget=budget).table.to_pylist()
         u1 = {row["age"]: row for row in ltv_rows if row["unit"] == "u1"}
         assert u1[0]["cumulative_value"] == 17  # Origin amount 7 plus later amount 10.
         assert u1[1]["cumulative_value"] == 22
@@ -127,7 +127,7 @@ def main() -> None:
         print("Cohort rows:", cohort_arrow.to_pylist())
         readiness = model.readiness
         later_design = recipes.ltv(
-            start_event="purchase", metric="net_revenue", period="7d", periods=3,
+            start_event="purchase", metric="net_revenue", period="7d", max_periods=3,
             administrative_cutoff=datetime(2025, 1, 29, tzinfo=UTC),
         )
         later_rows = later_design.build(model).to_pyarrow(budget=budget).to_pylist()
@@ -144,7 +144,7 @@ def main() -> None:
         survival = recipes.survival(
             start_event="purchase", end_event="churn",
             administrative_cutoff=datetime(2025, 1, 22, tzinfo=UTC),
-        ).build(model).materialize(budget)
+        ).build(model).materialize(budget=budget)
         records = {row["unit"]: row for row in survival.table.to_pylist()}
         assert records["u1"]["event"] is True
         assert records["u1"]["duration"] == timedelta(days=10)
@@ -158,7 +158,7 @@ def main() -> None:
             start_event="purchase", end_event="churn", bin="7d",
             group_by={"region": asof("region", before="-1d")},
             administrative_cutoff=datetime(2025, 1, 22, tzinfo=UTC),
-        ).build(model).materialize(budget)
+        ).build(model).materialize(budget=budget)
         assert set(life.table["region"].to_pylist()) == {"north", "south"}
         assert life.roles.features == ("region", "time_bin")
         assert life.roles.outcomes == (

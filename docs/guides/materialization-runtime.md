@@ -1,6 +1,6 @@
 # Durable materialization runtime
 
-The materialization runtime persists plan/run state and publishes immutable output generations in the customer's own execution environment. It does not infer whether source rows changed: source revisions, change feeds, checksums, or explicit operator restatements must provide that evidence. A readiness watermark says which period is declared complete; it is not a change detector.
+The materialization runtime persists plan/run state and publishes immutable output generations in the customer's own execution environment. It does not infer whether source rows changed: source revisions, change feeds, checksums, or explicit operator restatements must provide that evidence. A readiness watermark says which period is declared complete; it is not a change detector. This durable materialization runtime is currently DuckDB-only and provisional; its API may change in a minor release.
 
 The runtime accepts an immutable `RefreshPlan` and delegates physical source
 reads, execution and publication to an owner-configured `Executor`. Request
@@ -18,7 +18,7 @@ The runnable [`examples/materialization_runtime.py`](../../examples/materializat
 uv run python examples/materialization_runtime.py
 ```
 
-The example publishes per-user one-day event totals and an effective-dated tier from a local DuckDB source, then verifies each exact-receipt result against a fresh `design.build(model).materialize(budget)` of the same Model/Design and source state. It then inserts an event and corrects the effective-dated tier, captures a new retained snapshot, saves a new plan against the first generation, and queries that second receipt. The totals change from `3, 4` to `8, 4`, and the tier changes from `gold` to `silver`; the first receipt remains bound to its original generation. Saved plans use the production `DesignExecutor`; no application-specific aggregation executor is involved in this example.
+The example publishes per-user one-day event totals and an effective-dated tier from a local DuckDB source, then verifies each exact-receipt result against a fresh `design.build(model).materialize(budget=budget)` of the same Model/Design and source state. It then inserts an event and corrects the effective-dated tier, captures a new retained snapshot, saves a new plan against the first generation, and queries that second receipt. The totals change from `3, 4` to `8, 4`, and the tier changes from `gold` to `silver`; the first receipt remains bound to its original generation. Saved plans use the production `DesignExecutor`; no application-specific aggregation executor is involved in this example.
 
 In the example Catalog, the `tier` property references the `history` dimension, whose `starts` and `ends` columns define validity intervals in `user_tier`. The Design requests `"tier": asof("tier", before="0s")`, so the attribute is taken strictly before the anchor from the effective-dated event history. Updating those dimension rows requires a new retained snapshot just as inserting an event does. The example reopens the first receipt after publishing the correction and checks that its original rows are unchanged.
 
@@ -75,7 +75,7 @@ materialization. Dataset staging, owner planning and saved plans refuse them
 with `terrine.runtime.sketch_sidecar_unavailable` before source validation or
 snapshot capture; use exact quantiles for retained runtime outputs.
 
-For persisted-layer staging, pass the resolved design, model, logical relations, and budget through `terrine.runtime.materialize.compose_runtime_frame`. This runtime entry point applies the same execution-owned shape-budget, integrity, and unknown-eligibility gates as `Frame.materialize` before returning the compiled relation for staging. Composition runs the whole check schedule once (the anchor checks, then the folded gate statements and in-place checks in registration order); the staging task then reads its output in one statement that carries only the eligibility summary, decoded before the first batch is written. Persisted prefix layers written by this version hold counts as Arrow `decimal128(38, 0)` on DuckDB; an earlier version cannot read them, while layers written in the earlier text form still restore here.
+For persisted-layer staging, pass the resolved design, model, logical relations, and budget through `terrine.runtime.materialize.compose_runtime_frame`, with `admit=context.admit` from the task's execution context. This runtime entry point applies the same execution-owned shape-budget, integrity, and unknown-eligibility gates as `Frame.materialize` before returning the compiled relation for staging, and submits every relation it will read for admission first, so a DuckDB build that fails the exact-arithmetic known answers refuses before any check runs. The built-in executor also admits each anchor and prefix layer before reading it. Composition runs the whole check schedule once (the anchor checks, then the folded gate statements and in-place checks in registration order); the staging task then reads its output in one statement that carries only the eligibility summary, decoded before the first batch is written. Persisted prefix layers written by this version hold counts as Arrow `decimal128(38, 0)` on DuckDB; an earlier version cannot read them, while layers written in the earlier text form still restore here.
 
 The built-in executor transfers anchor, prefix, and final outputs in bounded Arrow batches to owner-retained IPC artifacts. Task state stores verified artifact references rather than full Arrow payloads; retry checks the artifact checksum before use. Final output budgets are enforced while writing batches. Publication streams these artifacts into generation-specific DuckDB tables and retains their logical Arrow schema, including duration ticks and Frame metadata. `DuckDBBackend.read_batches` reopens an exact partition with that schema and closes its cursor when the reader closes.
 
@@ -268,7 +268,7 @@ with publish_native_inputs(model.catalog, con=con, units=model.units) as stored:
         event_ids=model.event_ids,
         input_binding=binding,
     )
-    result = design.build(pinned).materialize(budget)
+    result = design.build(pinned).materialize(budget=budget)
 ```
 
 Keep the publication open for new builds. An execution already holding a lease

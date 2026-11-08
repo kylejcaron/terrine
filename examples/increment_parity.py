@@ -66,7 +66,7 @@ def _catalog() -> dict:
     }
     metrics = {name: {"kind": "mean", "unit": "user", "measure": name} for name in measures}
     return {
-            "schema_version": 2,
+            "schema_version": 3,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": sources,

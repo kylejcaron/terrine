@@ -6,13 +6,15 @@ import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Annotated, Any, Literal, Self
+from typing import TYPE_CHECKING, Annotated, Any, Literal, Self, TypeAlias, get_args, get_origin
 
 from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    FieldSerializationInfo,
     SerializerFunctionWrapHandler,
+    StrictBool,
     StrictInt,
     StrictStr,
     field_serializer,
@@ -69,11 +71,21 @@ def _seal(value: Any) -> Any:
     return value
 
 
-def _plain(value: Any) -> Any:
+def _plain(value: Any, annotation: Any = None) -> Any:
+    origin = get_origin(annotation)
+    args = get_args(annotation)
     if isinstance(value, Mapping):
-        return {key: _plain(item) for key, item in value.items()}
+        value_type = args[1] if len(args) > 1 else None
+        return {key: _plain(item, value_type) for key, item in value.items()}
     if isinstance(value, tuple):
-        return tuple(_plain(item) for item in value)
+        if origin is list:
+            item_type = args[0] if args else None
+            return [_plain(item, item_type) for item in value]
+        item_type = args[0] if args else None
+        return tuple(_plain(item, item_type) for item in value)
+    if isinstance(value, list):
+        item_type = args[0] if args else None
+        return [_plain(item, item_type) for item in value]
     return value
 
 
@@ -87,8 +99,14 @@ class _Record(BaseModel):
         return self
 
     @field_serializer("*", mode="wrap")
-    def _serialize_field(self, value: Any, handler: SerializerFunctionWrapHandler):
-        return handler(_plain(value))
+    def _serialize_field(
+        self,
+        value: Any,
+        handler: SerializerFunctionWrapHandler,
+        info: FieldSerializationInfo,
+    ):
+        field = type(self).model_fields[info.field_name]
+        return handler(_plain(value, field.annotation))
 
     def __deepcopy__(self, memo: dict[int, Any] | None = None) -> Self:
         copied = type(self).model_validate(self.model_dump(mode="python"))
@@ -157,9 +175,15 @@ class Dimension(_Record):
     properties: tuple[StrictStr, ...]
 
 
+# Comparison operators shared by Catalog filters, where= keys and Design comparisons.
+FilterOp: TypeAlias = Literal[  # noqa: UP040 - pydantic 2.8 lacks PEP 695 alias support.
+    "equals", "not_equals", "in", "not_in", "gt", "gte", "lt", "lte", "between"
+]
+
+
 class Filter(_Record):
     property: StrictStr
-    op: Literal["equals", "not_equals", "in", "not_in", "gt", "gte", "lt", "lte", "between"]
+    op: FilterOp
     values: tuple[object, ...]
 
     @model_validator(mode="before")
@@ -193,12 +217,27 @@ class Filter(_Record):
 
 
 class Measure(_Record):
+    """One aggregation of an event; ``exact: false`` allows native float arithmetic.
+
+    Counts and distinct counts are always exact, and binding refuses native arithmetic on
+    integer or decimal event values, which always aggregate exactly.
+    """
+
     event: StrictStr
     aggregation: Literal[
         "sum", "count", "avg_event", "avg_calendar_day", "min", "max", "count_distinct"
     ]
     filters: tuple[Filter, ...] = ()
     window_days: StrictInt | None = None
+    exact: StrictBool = True
+
+    @model_validator(mode="after")
+    def validate_arithmetic(self):
+        if not self.exact and self.aggregation in {"count", "count_distinct"}:
+            raise PydanticCustomError(
+                "exact_aggregation", "counts and distinct counts are always exact"
+            )
+        return self
 
 
 class Metric(_Record):
@@ -230,7 +269,7 @@ class Metric(_Record):
 
 
 class Catalog(_Record):
-    schema_version: Literal[2]
+    schema_version: Literal[3]
     day_boundary: StrictStr
     dialect: StrictStr
     sources: Mapping[StrictStr, Source]
@@ -277,7 +316,7 @@ class Catalog(_Record):
 @dataclass(frozen=True, slots=True)
 class BoundFilter:
     property_name: str
-    op: Literal["equals", "not_equals", "in", "not_in", "gt", "gte", "lt", "lte", "between"]
+    op: FilterOp
     values: tuple[None | bool | int | float | str, ...]
 
 
@@ -317,6 +356,7 @@ class BoundMeasure:
     filters: tuple[BoundFilter, ...]
     window_days: int | None
     value_type: str | None
+    exact: bool = True
 
 
 @dataclass(frozen=True, slots=True)

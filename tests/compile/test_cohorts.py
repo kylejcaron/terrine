@@ -38,6 +38,8 @@ def _cohorts(
     bucket="7d",
     origin=datetime(2025, 1, 1, tzinfo=UTC),
     dialect=None,
+    arithmetic=None,
+    reasons=None,
 ):
     count = len(values)
     table = con.create_table(
@@ -51,7 +53,10 @@ def _cohorts(
                 "period_value__complete": complete or [True] * count,
                 "period_value_mature": mature or [True] * count,
                 "period_value__reason": pa.array(
-                    [None if value is not None else "incomplete_observation" for value in values],
+                    reasons
+                    or [
+                        None if value is not None else "incomplete_observation" for value in values
+                    ],
                     type=pa.string(),
                 ),
             }
@@ -61,15 +66,23 @@ def _cohorts(
     study = CompiledStudy(
         table=table,
         audit_table=table,
-        roles=Roles("unit", "unit", "cohort_time", None, (), ("period_value",)),
+        roles=Roles(
+            unit="unit",
+            anchor="unit",
+            t0="cohort_time",
+            treatment=None,
+            features=(),
+            outcomes=("period_value",),
+        ),
         columns={
             "period_value": ColumnMeta(
-                None,
-                "outcome",
-                None,
-                None,
-                "period_value__complete",
-                "period_value__reason",
+                window=None,
+                role="outcome",
+                observed_from_column=None,
+                observed_until_column=None,
+                complete_column="period_value__complete",
+                reason_column="period_value__reason",
+                arithmetic=arithmetic,
             )
         },
         feature_cutoffs={},
@@ -159,6 +172,14 @@ def test_exact_integer_values_are_summed_before_cohort_mean_conversion(con):
     assert rows[0]["value"] == 0.5
 
 
+@pytest.mark.parametrize("dialect", ["duckdb", "generic"])
+def test_integer_cohort_total_sums_in_its_native_domain(con, dialect):
+    """Only decimal and binary64 totals are bounded; integer totals sum as they are."""
+    result, rows = _cohorts(con, [2**62, 2**62 - 1], statistic="total", dialect=dialect)
+    assert rows[0]["value"] == 2**63 - 1
+    assert result.columns["value"].arithmetic is None
+
+
 def test_cohort_mean_preserves_fractional_decimal_and_float_values(con):
     for dtype in (pa.decimal128(18, 2), pa.float64()):
         values = [Decimal("0.25")] * 2 if pa.types.is_decimal(dtype) else [0.25] * 2
@@ -220,8 +241,92 @@ def test_large_zero_float_cohort_mean_remains_available(con):
     assert rows[0]["value__complete"] is True
 
 
-def test_float_cohort_total_overflow_refuses(con):
+@pytest.mark.parametrize(
+    "values,ieee",
+    [
+        # A unit value below 2**-1020 of the cohort's largest: the normalizing
+        # quotient would round to zero.
+        ([5e-324, 4.0], 2.0),
+        # A mean of normalized values whose product with a tiny scale would round
+        # to zero.
+        ([1e-300, -1e-300, 5e-324], 0.0),
+    ],
+)
+def test_portable_float_cohort_mean_refuses_where_the_engine_would_underflow(con, values, ieee):
+    """A policy whose float arithmetic raises on underflow withholds the cohort
+    mean's scaled quotients and products before the backend evaluates them, and
+    the withheld reduction refuses ``bound_overflow``; an IEEE 754 engine publishes
+    the rounded value."""
+    _, rows = _cohorts(con, values, dtype=pa.float64())
+    assert rows[0]["value"] == ieee
     with pytest.raises(TerrineError) as error:
-        _cohorts(con, [1e308, 1e308], dtype=pa.float64(), statistic="total")
+        _cohorts(con, values, dtype=pa.float64(), dialect="generic")
     assert error.value.code == "terrine.temporal.float64_precision"
     assert error.value.context["reason"] == "bound_overflow"
+    assert error.value.context["source"] == "cohort"
+
+
+@pytest.mark.parametrize(
+    "values,expected",
+    [([2.0, 4.0], 3.0), ([1e-300, 3e-300], 2e-300), ([0.0, 0.0], 0.0), ([4e307, 8e307], 6e307)],
+)
+def test_portable_float_cohort_mean_within_the_range_matches_duckdb(con, values, expected):
+    for dialect in ("duckdb", "generic"):
+        result, rows = _cohorts(
+            con, values, dtype=pa.float64(), dialect=dialect, arithmetic="native"
+        )
+        assert rows[0]["value"] == pytest.approx(expected, rel=2**-50), dialect
+        assert rows[0]["value__complete"] is True
+        assert result.columns["value"].arithmetic == "native"
+
+
+def test_cohort_reason_comes_from_missing_values_not_notes_on_published_ones(con):
+    """A reason beside a published value describes that value; the cohort's own
+    reason names why a unit's value is missing, and a complete cohort carries
+    the note."""
+    result, rows = _cohorts(
+        con,
+        [1.0, None],
+        dtype=pa.float64(),
+        reasons=["below_resolution", "incomplete_coverage"],
+    )
+    assert rows[0]["value"] is None
+    assert rows[0]["value__reason"] == "incomplete_coverage"
+    result, rows = _cohorts(con, [1.0, 3.0], dtype=pa.float64(), reasons=["below_resolution", None])
+    assert rows[0]["value"] == 2.0
+    assert rows[0]["value__complete"] is True
+    assert rows[0]["value__reason"] == "below_resolution"
+
+
+@pytest.mark.parametrize(
+    "dialect,value",
+    [
+        # DuckDB sums to an infinity, which the finite check refuses.
+        ("duckdb", 1e308),
+        # The portable policy withholds the partition once its magnitudes pass half
+        # the range, before the backend adds values it would raise on.
+        ("generic", 6e307),
+    ],
+)
+def test_float_cohort_total_overflow_refuses(con, dialect, value):
+    with pytest.raises(TerrineError) as error:
+        _cohorts(con, [value, value], dtype=pa.float64(), statistic="total", dialect=dialect)
+    assert error.value.code == "terrine.temporal.float64_precision"
+    assert error.value.context["reason"] == "bound_overflow"
+
+
+def test_portable_float_cohort_total_within_half_the_range_keeps_its_arithmetic(con):
+    result, rows = _cohorts(
+        con,
+        [4e307, 4e307],
+        dtype=pa.float64(),
+        statistic="total",
+        dialect="generic",
+        arithmetic="native",
+    )
+    assert rows[0]["value"] == 8e307
+    assert rows[0]["value__complete"] is True
+    # The summary carries the value column's declared arithmetic; the unit
+    # denominators declare none.
+    assert result.columns["value"].arithmetic == "native"
+    assert {result.columns[name].arithmetic for name in ("at_risk", "observable")} == {None}

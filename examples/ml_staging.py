@@ -20,7 +20,7 @@ from terrine.runtime.changes import Change, ChangeSet
 
 def catalog() -> dict[str, Any]:
     return {
-            "schema_version": 2,
+            "schema_version": 3,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": {

@@ -33,7 +33,7 @@ from terrine.spec import Treatment  # noqa: E402
 
 def _definitions():
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "day_boundary": "UTC",
         "dialect": "duckdb",
         "sources": {
@@ -174,7 +174,7 @@ def main():
 
             ExecutionContext.execute = execute_then_write
             try:
-                ordinary = frame.materialize(budget)
+                ordinary = frame.materialize(budget=budget)
             finally:
                 ExecutionContext.execute = original_execute
             assert changed
@@ -197,7 +197,7 @@ def main():
                     input_binding=binding,
                 )
                 writer.execute("UPDATE events SET value = -1")
-                pinned = design.build(pinned_model).materialize(budget)
+                pinned = design.build(pinned_model).materialize(budget=budget)
                 _assert_result(pinned)
                 assert pinned.provenance.model_hash == ordinary.provenance.model_hash
                 assert set(pinned.provenance.source_generations) == {

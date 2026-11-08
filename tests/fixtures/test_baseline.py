@@ -22,7 +22,7 @@ def test_materialized_baseline_has_typed_honest_causal_metadata(weighted):
     assert frame.roles.treatment == "baseline_enabled"
     assert frame.roles.weight == ("target_weight" if weighted else None)
     provenance = frame.provenance
-    cutoff = FeatureCutoff(0, True, "retrospective_effective_time")
+    cutoff = FeatureCutoff(latest_seconds=0, strict=True, knowledge="retrospective_effective_time")
     assert provenance.feature_cutoffs == {"x": cutoff, "plan_tier": cutoff}
     assert provenance.eligibility_cutoffs == {}
     assert provenance.eligibility_summary is not None

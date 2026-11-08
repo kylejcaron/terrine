@@ -42,7 +42,7 @@ def main() -> None:
         pa.table({"user_id": ["a"], "ts": [datetime(2025, 1, 1, tzinfo=UTC)]}),
     )
     catalog = {
-            "schema_version": 2,
+            "schema_version": 3,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": {
@@ -100,7 +100,7 @@ def main() -> None:
 
         budget = Budget(max_rows=20, max_output_bytes=100_000)
         for design in (sequential, events):
-            frame = design.build(model).materialize(budget)
+            frame = design.build(model).materialize(budget=budget)
             restored = MaterializedFrame.from_arrow(frame.to_pyarrow())
             assert restored.table.equals(frame.table)
             rows = restored.table.to_pylist()

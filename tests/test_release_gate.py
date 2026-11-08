@@ -1,57 +1,193 @@
-import pytest
-
-from scripts.require_green_ci import ci_succeeded
-
-DEFERRED_GATE = "ci-ok (checked by the pull request run)"
+from scripts.require_green_ci import gate, required_jobs
 
 
 def _run(
+    workflow,
+    run_id,
     *,
-    name="CI",
     event="push",
     status="completed",
+    created_at="2026-01-01T00:00:00Z",
     conclusion="success",
-    gate="ci-ok",
-    gate_conclusion="success",
 ):
     return {
-        "name": name,
+        "id": run_id,
+        "name": workflow,
         "event": event,
         "status": status,
         "conclusion": conclusion,
-        "jobs": [
-            {"name": "scope", "conclusion": "success"},
-            {"name": gate, "conclusion": gate_conclusion},
-        ],
+        "created_at": created_at,
     }
 
 
-@pytest.mark.parametrize("event", ["push", "workflow_dispatch"])
-def test_ci_succeeded_accepts_full_commit_run_whose_gate_succeeded(event):
-    assert ci_succeeded([_run(event=event)])
+def test_required_jobs_for_0x_tag():
+    assert required_jobs("v0.1.0") == {"CI": ("ci-ok",)}
 
 
-@pytest.mark.parametrize(
-    "run",
-    [
-        pytest.param(_run(gate=DEFERRED_GATE), id="deferred"),
-        pytest.param(_run(conclusion="failure", gate_conclusion="failure"), id="failed"),
-        pytest.param(
-            _run(status="in_progress", conclusion=None, gate_conclusion=None), id="in-progress"
+def test_required_jobs_for_rc_tag():
+    assert required_jobs("v1.0.0rc1") == {
+        "CI": ("ci-ok",),
+        "warehouse-backends": ("postgres",),
+        "scale": ("scale",),
+    }
+
+
+def test_rc_admitted_when_postgres_green_and_bigquery_red():
+    runs = [
+        _run("CI", 1),
+        _run("warehouse-backends", 2, conclusion="failure"),
+        _run("scale", 3),
+    ]
+    jobs = {
+        1: [{"name": "ci-ok", "conclusion": "success"}],
+        2: [
+            {"name": "postgres", "conclusion": "success"},
+            {"name": "bigquery", "conclusion": "failure"},
+        ],
+        3: [{"name": "scale", "conclusion": "success"}],
+    }
+
+    assert gate(runs, jobs.__getitem__, "v1.0.0rc1")
+
+
+def test_rc_refused_when_scale_job_red():
+    runs = [_run("CI", 1), _run("warehouse-backends", 2), _run("scale", 3)]
+    jobs = {
+        1: [{"name": "ci-ok", "conclusion": "success"}],
+        2: [{"name": "postgres", "conclusion": "success"}],
+        3: [{"name": "scale", "conclusion": "failure"}],
+    }
+
+    assert not gate(runs, jobs.__getitem__, "v1.0.0rc1")
+
+
+def test_rc_refused_when_no_scale_run_on_sha():
+    runs = [_run("CI", 1), _run("warehouse-backends", 2)]
+    jobs = {
+        1: [{"name": "ci-ok", "conclusion": "success"}],
+        2: [{"name": "postgres", "conclusion": "success"}],
+    }
+
+    assert not gate(runs, jobs.__getitem__, "v1.0.0rc1")
+
+
+def test_gate_rejects_pull_request_runs():
+    runs = [_run("CI", 1, event="pull_request")]
+    jobs = {1: [{"name": "ci-ok", "conclusion": "success"}]}
+
+    assert not gate(runs, jobs.__getitem__, "v0.1.0")
+
+
+def test_gate_ignores_incomplete_runs():
+    runs = [_run("CI", 1, status="in_progress")]
+    jobs = {1: [{"name": "ci-ok", "conclusion": "success"}]}
+
+    assert not gate(runs, jobs.__getitem__, "v0.1.0")
+
+
+def test_gate_uses_newest_completed_run_of_each_workflow():
+    runs = [
+        _run("CI", 1),
+        _run("CI", 2, created_at="2026-01-02T00:00:00Z"),
+    ]
+    jobs = {
+        1: [{"name": "ci-ok", "conclusion": "success"}],
+        2: [{"name": "ci-ok", "conclusion": "failure"}],
+    }
+
+    assert not gate(runs, jobs.__getitem__, "v0.1.0")
+
+
+def test_gate_uses_older_full_success_when_newer_run_is_deferred():
+    runs = [
+        _run("CI", 1),
+        _run("CI", 2, created_at="2026-01-02T00:00:00Z"),
+    ]
+    jobs = {
+        1: [{"name": "ci-ok", "conclusion": "success"}],
+        2: [
+            {
+                "name": "ci-ok (checked by the pull request run)",
+                "conclusion": "success",
+            }
+        ],
+    }
+
+    assert gate(runs, jobs.__getitem__, "v0.1.0")
+
+
+def test_gate_rejects_newer_full_failure_even_when_older_run_succeeded():
+    runs = [
+        _run("CI", 1),
+        _run("CI", 2, created_at="2026-01-02T00:00:00Z"),
+        _run("CI", 3, created_at="2026-01-03T00:00:00Z"),
+    ]
+    jobs = {
+        1: [{"name": "ci-ok", "conclusion": "success"}],
+        2: [
+            {
+                "name": "ci-ok (checked by the pull request run)",
+                "conclusion": "success",
+            }
+        ],
+        3: [{"name": "ci-ok", "conclusion": "failure"}],
+    }
+
+    assert not gate(runs, jobs.__getitem__, "v0.1.0")
+
+
+def test_rc_accepts_scheduled_postgres_and_scale_runs():
+    runs = [
+        _run("CI", 1),
+        _run("warehouse-backends", 2, event="schedule"),
+        _run("scale", 3, event="schedule"),
+    ]
+    jobs = {
+        1: [{"name": "ci-ok", "conclusion": "success"}],
+        2: [{"name": "postgres", "conclusion": "success"}],
+        3: [{"name": "scale", "conclusion": "success"}],
+    }
+
+    assert gate(runs, jobs.__getitem__, "v1.0.0rc1")
+
+
+def test_advisory_warehouse_dispatch_does_not_replace_postgres_check():
+    runs = [
+        _run("CI", 1),
+        _run("warehouse-backends", 2),
+        _run("warehouse-backends", 3, created_at="2026-01-02T00:00:00Z"),
+        _run("scale", 4),
+    ]
+    jobs = {
+        1: [{"name": "ci-ok", "conclusion": "success"}],
+        2: [{"name": "postgres", "conclusion": "success"}],
+        3: [
+            {"name": "postgres", "conclusion": "skipped"},
+            {"name": "bigquery", "conclusion": "failure"},
+        ],
+        4: [{"name": "scale", "conclusion": "success"}],
+    }
+
+    assert gate(runs, jobs.__getitem__, "v1.0.0rc1")
+
+
+def test_newer_scheduled_failure_blocks_release():
+    runs = [
+        _run("CI", 1),
+        _run("warehouse-backends", 2),
+        _run("scale", 3),
+        _run(
+            "scale",
+            4,
+            event="schedule",
+            created_at="2026-01-02T00:00:00Z",
         ),
-        pytest.param(_run(event="pull_request"), id="pull-request"),
-        pytest.param(_run(name="Release"), id="other-workflow"),
-    ],
-)
-def test_ci_succeeded_rejects_run_that_did_not_validate_the_commit(run):
-    assert not ci_succeeded([run])
+    ]
+    jobs = {
+        1: [{"name": "ci-ok", "conclusion": "success"}],
+        2: [{"name": "postgres", "conclusion": "success"}],
+        3: [{"name": "scale", "conclusion": "success"}],
+        4: [{"name": "scale", "conclusion": "failure"}],
+    }
 
-
-def test_ci_succeeded_rejects_no_runs():
-    assert not ci_succeeded([])
-
-
-def test_ci_succeeded_accepts_any_qualifying_run_for_commit():
-    runs = [_run(conclusion="failure", gate_conclusion="failure"), _run()]
-
-    assert ci_succeeded(runs)
+    assert not gate(runs, jobs.__getitem__, "v1.0.0rc1")

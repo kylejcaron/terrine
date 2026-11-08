@@ -44,9 +44,11 @@ from terrine.semantic.time import boundary_timezone
 from terrine.temporal.lookup import lookup_prefix
 from terrine.temporal.prefix import (
     _EXACT_FLOAT_COUNTS,
+    _NATIVE_FLOAT_COUNTS,
     _UNKNOWN_FIELDS,
     FLOAT64_PRECISION,
     Float64Failure,
+    native_arithmetic,
 )
 from terrine.temporal.readiness import Readiness
 from terrine.windows import Window
@@ -188,8 +190,12 @@ class _Builder:
         self._table = table
 
     def name(self, label: str) -> str:
+        # Intermediates share the relation with declared outputs, so they stay in
+        # the reserved namespace; the label's initials keep the name short, since
+        # it is listed at every level of the statement.
+        initials = "".join(word[0] for word in label.split("_") if word)
         while True:
-            name = f"__terrine_window_{self.counter}_{label}"
+            name = f"__terrine_w{self.counter}_{initials}"
             self.counter += 1
             if name.casefold() not in self.used:
                 self.used.add(name.casefold())
@@ -231,12 +237,18 @@ class _Builder:
 @dataclass(frozen=True, slots=True)
 class _Quantity:
     value: str
+    # A reason that makes the value unavailable (NULL), or NULL.
     reason: str
     known_zero: str
     scale: int = 0
     count: bool = False
     # Published as binary64, either a scaled exact coefficient or a quotient.
     binary64: bool = False
+    # A native binary64 sum, already checked finite, publishes unconverted.
+    native: bool = False
+    # A reason published beside an available value, describing what it omits
+    # (``below_resolution``), or NULL; absent when the arithmetic cannot omit.
+    note: str | None = None
 
 
 def narrow_exact(coefficient, scale: int, target: str | dt.DataType):
@@ -253,10 +265,23 @@ def _aligned(timestamp, minutes: int):
     return timestamp == day_start(timestamp, minutes)
 
 
+def _merged_note(builder: _Builder, *quantities: _Quantity) -> str | None:
+    """One note column for a quantity derived from ``quantities``: the first
+    operand's note, else the next's. ``None`` when no operand can carry one."""
+    notes = [builder.col(q.note) for q in quantities if q.note is not None]
+    if not notes:
+        return None
+    return builder.put("note", ibis.coalesce(*notes) if len(notes) > 1 else notes[0])
+
+
 def _quotient(
     builder: _Builder, numerator: _Quantity, denominator: _Quantity, reason: str, context
 ) -> _Quantity:
-    """Convert each exact operand at its own scale, then divide once in float64."""
+    """Convert each exact operand at its own scale, then divide once in float64.
+
+    A native binary64 operand enters the division as it is. An operand's note
+    describes the quotient too.
+    """
     known_zero = builder.put(
         "quotient_zero",
         builder.col(numerator.known_zero) & ~builder.col(denominator.known_zero),
@@ -277,7 +302,8 @@ def _quotient(
         "bound_overflow",
         context,
     )
-    return _Quantity(value, reason, known_zero, binary64=True)
+    note = _merged_note(builder, numerator, denominator)
+    return _Quantity(value, reason, known_zero, binary64=True, note=note)
 
 
 def _state_fields(measure: BoundMeasure, state: ibis.Table, *, counting: bool) -> tuple[str, ...]:
@@ -292,13 +318,58 @@ def _state_fields(measure: BoundMeasure, state: ibis.Table, *, counting: bool) -
     if not counting:
         fields += ["nonnull_count", "sum_value"]
         assert measure.value_type is not None  # callers pass resolved measures
-        if dt.dtype(measure.value_type).is_floating():
+        if native_arithmetic(measure):
+            fields += _NATIVE_FLOAT_COUNTS
+        elif dt.dtype(measure.value_type).is_floating():
             fields += _EXACT_FLOAT_COUNTS
         if "sum_withheld" in state.columns:
             fields.append("sum_withheld")
     if measure.filters:
         fields += _UNKNOWN_FIELDS
     return tuple(fields)
+
+
+def _native_window_sum(
+    builder: _Builder,
+    start: Mapping[str, str],
+    end: Mapping[str, str],
+    *,
+    empty: str,
+    reason: str,
+    context,
+) -> _Quantity:
+    """The binary64 difference of two running sums, checked finite.
+
+    Its rounding error is bounded by the history prefix through the window end,
+    not by the window alone. Non-finite inputs are counted instead of summed, so
+    one at or before the window end refuses a non-empty window; a running sum
+    that overflowed leaves no finite difference and refuses as ``bound_overflow``.
+    Where the policy bounds float arithmetic the prefix withholds such a state
+    instead and counts it, and a non-empty window reading a withheld state at
+    or before its end refuses the same way.
+    """
+    zero = ibis.literal(0.0)
+    difference = builder.col(end["sum_value"]) - builder.col(start["sum_value"])
+    withheld = None
+    if "sum_withheld" in end:
+        count = builder.col(end["sum_withheld"])
+        withheld = builder.put(
+            "state_withheld", ~builder.col(empty) & (count > exact_literal(0, count))
+        )
+        difference = builder.col(withheld).ifelse(ibis.null(dt.float64), difference)
+    # Empty windows remain zero, even after invalid input history.
+    value = builder.put("sum", builder.col(empty).ifelse(zero, difference))
+    held = builder.col(end["float64_nonfinite_count"])
+    nonfinite = ~builder.col(empty) & (
+        held.fill_null(exact_literal(0, held)) > exact_literal(0, held)
+    )
+    builder.flag(nonfinite, "nonfinite_input", context)
+    if withheld is not None:
+        builder.flag(builder.col(withheld), "bound_overflow", context)
+    builder.flag(~float_is_finite(builder.col(value)), "bound_overflow", context)
+    # As for exact sums, dropped inputs never make a known zero denominator.
+    known_zero = builder.put("sum_zero", (builder.col(value) == zero) & ~nonfinite)
+    return _Quantity(value, reason, known_zero, binary64=True, native=True)
 
 
 def _component(
@@ -340,6 +411,44 @@ def _component(
             ),
         ),
     )
+    if native_arithmetic(measure):
+        quantity = _native_window_sum(
+            builder, start, end, empty=empty, reason=reason, context=context
+        )
+    else:
+        quantity = _exact_window_sum(
+            builder, measure, start, end, empty=empty, zero=zero, reason=reason, context=context
+        )
+    if measure.aggregation in {"avg_event", "avg_calendar_day"}:
+        divisor = (
+            nonnull_count
+            if measure.aggregation == "avg_event"
+            else builder.put("days", exact_literal(days, builder.col(event_count)))
+        )
+        divisor_zero = builder.put("divisor_zero", builder.col(divisor) == zero)
+        denominator = _Quantity(divisor, reason, divisor_zero, count=True)
+        quantity = _quotient(builder, quantity, denominator, reason, context)
+    return quantity
+
+
+def _exact_window_sum(
+    builder: _Builder,
+    measure: BoundMeasure,
+    start: Mapping[str, str],
+    end: Mapping[str, str],
+    *,
+    empty: str,
+    zero: ir.Scalar,
+    reason: str,
+    context,
+) -> _Quantity:
+    """The exact difference of two coefficient prefixes.
+
+    A float fact's window also refuses when its state could not hold an input at
+    or before the window end, and notes ``below_resolution`` when the window
+    holds a nonzero contribution the scale-9 quantization discarded: the
+    published sum is then the sum of the retained contributions.
+    """
     sums = []
     for endpoint in (start, end):
         # A matched all-null prefix has the mathematical sum zero, not a missing state.
@@ -393,7 +502,19 @@ def _component(
         # A sum that only looks zero because inputs were dropped is not a zero
         # denominator: its refusal must not be masked by a zero_denominator reason.
         known_zero = builder.put("sum_zero", (builder.col(value) == state_zero) & ~invalid)
-        quantity = _Quantity(value, reason, known_zero, scale=9, binary64=True)
+        # The discarded-term count is a prefix difference, so only the window's
+        # own discards are noted; an all-zero or all-null window has none.
+        discarded = exact_subtract(
+            builder.col(end["float64_below_resolution_count"]),
+            builder.col(start["float64_below_resolution_count"]),
+        )
+        note = builder.put(
+            "note",
+            (~builder.col(empty) & (discarded > exact_literal(0, discarded))).ifelse(
+                reason_codes.BELOW_RESOLUTION, ibis.null().cast("string")
+            ),
+        )
+        quantity = _Quantity(value, reason, known_zero, scale=9, binary64=True, note=note)
     else:
         value = builder.put("sum", difference)
         known_zero = builder.put("sum_zero", builder.col(value) == state_zero)
@@ -402,15 +523,6 @@ def _component(
             assert dtype.scale is not None
             scale = dtype.scale
         quantity = _Quantity(value, reason, known_zero, scale=scale)
-    if measure.aggregation in {"avg_event", "avg_calendar_day"}:
-        divisor = (
-            nonnull_count
-            if measure.aggregation == "avg_event"
-            else builder.put("days", exact_literal(days, builder.col(event_count)))
-        )
-        divisor_zero = builder.put("divisor_zero", builder.col(divisor) == zero)
-        denominator = _Quantity(divisor, reason, divisor_zero, count=True)
-        quantity = _quotient(builder, quantity, denominator, reason, context)
     return quantity
 
 
@@ -428,11 +540,14 @@ def aggregate_window(
     resolution: Literal["day", "event"] = "event",
     strategy: Literal["native", "union_window"] = "native",
 ) -> TemporalResult:
-    """Build exact endpoint differences and defer every data-dependent refusal.
+    """Build endpoint differences and defer every data-dependent refusal.
 
-    At s=t0+start and e=t0+end, P(e)-P(s) measures exactly [s,e). Floats
-    difference exact scale-9 coefficients and convert to float64; averages
-    and ratios convert each exact operand once, then divide once in float64.
+    At s=t0+start and e=t0+end, P(e)-P(s) measures [s,e). Exact floats
+    difference exact scale-9 coefficients and convert to float64; native floats
+    difference binary64 running sums. Averages and ratios convert each exact
+    operand once, then divide once in float64. The reason column names why a
+    value is NULL, or carries ``below_resolution`` beside an exact float value
+    whose window discarded a nonzero contribution below the quantization.
     """
     if not isinstance(window, Window):
         raise TypeError("window must be a Window")
@@ -483,8 +598,13 @@ def aggregate_window(
         if calendar_average_alignment(window, anchor=None, day_boundary=boundary) == "unaligned":
             raise UNALIGNED_CALENDAR_AVERAGE.error(measure=measure.event, **domain_context)
     builder = _Builder(anchors, output)
-    start = builder.put("start", anchors.t0 + ibis.interval(seconds=window.start.seconds))
-    end = builder.put("end", builder.table.t0 + ibis.interval(seconds=window.end.seconds))
+
+    def shifted(seconds: int):
+        t0 = builder.table.t0
+        return t0 + ibis.interval(seconds=seconds) if seconds else t0
+
+    start = builder.put("start", shifted(window.start.seconds))
+    end = builder.put("end", shifted(window.end.seconds))
     row_checks: list[RowCheck] = []
     if calendars or resolution == "day":
         invalid = builder.put(
@@ -505,19 +625,21 @@ def aggregate_window(
     )
     observed_from = ibis.literal(source_start)
     observed_until = ibis.literal(source_end)
-    observation_complete = cast(ir.BooleanValue, ibis.literal(True))
+    bounds = []
     if "_observed_from" in anchors.columns:
         bound = builder.table._observed_from
         observed_from = greatest(observed_from, bound.fill_null(observed_from))
-        observation_complete = observation_complete & (
-            bound.isnull() | (builder.col(start) >= bound)
-        )
+        bounds.append(bound.isnull() | (builder.col(start) >= bound))
     if "_observed_until" in anchors.columns:
         bound = builder.table._observed_until
         observed_until = least(observed_until, bound.fill_null(observed_until))
-        observation_complete = observation_complete & (bound.isnull() | (builder.col(end) <= bound))
+        bounds.append(bound.isnull() | (builder.col(end) <= bound))
     observed_from = builder.put("observed_from", observed_from)
     observed_until = builder.put("observed_until", observed_until)
+    observation_complete = cast(ir.BooleanValue, ibis.literal(True))
+    if bounds:
+        conjunction = bounds[0] if len(bounds) == 1 else bounds[0] & bounds[1]
+        observation_complete = builder.col(builder.put("observed", conjunction))
     available = builder.put("complete", builder.col(source_complete) & observation_complete)
     unavailable = builder.put(
         "unavailable_reason",
@@ -528,6 +650,9 @@ def aggregate_window(
             ),
         ),
     )
+    # Windows over the same anchors, bounds and coverage read one relation of
+    # request points; each lookup chain starts from its own reference to it.
+    builder.table = builder.table.view()
     quantities = []
     unknown_flags = []
     conversion = metric.kind == "conversion"
@@ -614,11 +739,18 @@ def aggregate_window(
         )
     else:
         quantity = quantities[0]
-    final_reason = builder.put(
-        "reason",
-        builder.col(available).ifelse(builder.col(quantity.reason), builder.col(unavailable)),
-    )
-    evaluated = builder.put("evaluated", builder.col(final_reason).isnull())
+    # The value is published only where nothing makes it unavailable; a note
+    # then fills the reason without withdrawing the value.
+    blocking = builder.col(available).ifelse(builder.col(quantity.reason), builder.col(unavailable))
+    if quantity.note is None:
+        final_reason = builder.put("reason", blocking)
+        evaluated = builder.put("evaluated", builder.col(final_reason).isnull())
+    else:
+        blocking_name = builder.put("blocking_reason", blocking)
+        evaluated = builder.put("evaluated", builder.col(blocking_name).isnull())
+        final_reason = builder.put(
+            "reason", builder.col(blocking_name).fill_null(builder.col(quantity.note))
+        )
     if unknown_flags:
         row_checks.extend(builder.check(unknown_flags, active=builder.col(available)))
     numeric_context = {
@@ -660,7 +792,7 @@ def aggregate_window(
                 active=builder.col(evaluated),
             )
         )
-    elif quantity.binary64:
+    elif quantity.binary64 and not quantity.native:
         rounded, nonfinite, out_of_range = exact_to_float(
             builder.col(quantity.value), quantity.scale
         )
@@ -691,5 +823,6 @@ def aggregate_window(
         complete_column=available,
         reason_column=final_reason,
         numeric_policy=None if metric.kind == "conversion" or quantity.binary64 else "exact",
+        arithmetic="native" if any(native_arithmetic(m) for m in metric.measures) else "exact",
     )
     return TemporalResult(result, {output: meta}, row_checks=tuple(row_checks))

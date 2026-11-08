@@ -100,6 +100,27 @@ eligible_rows = tr.recipes.time_series(
 ).build(model).to_pandas()
 ```
 
+## Fewer than N events
+
+Keep units with fewer than two events in the 30 days before t0. A complete
+zero is fewer than two, so `c`, who has no events, is kept; `a`, with two
+visits, is not. Incomplete history stays unknown and refuses export rather
+than being treated as fewer.
+
+```python
+low_activity_rows = tr.recipes.time_series(
+    every="1d", start="2025-02-01", end="2025-02-01",
+    features=rolling,
+    eligibility={"under_two": tr.lt(tr.agg("activity_count", window=("-30d", "0s")), 2)},
+).build(model).to_pandas()
+```
+
+`tr.lte`, `tr.gte`, `tr.ne`, `tr.between` and `tr.isin` compare the same way,
+with the same operators and typed literals as `where=`. Combine rules with
+`tr.all_of`, `tr.any_of` and `tr.not_`; for example,
+`tr.any_of(tr.lt(recent, 2), tr.eq(tr.asof("channel"), "referral"))`, with
+`recent` the 30-day count above, also keeps referral users with more activity.
+
 ## Attributes at t0
 
 Roster attributes are authoritative static values, available even when event

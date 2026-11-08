@@ -29,8 +29,7 @@ from terrine.model import Model
 from terrine.runtime.owner import RuntimeOwner
 from terrine.runtime.schema import check_runtime_schema
 from terrine.runtime.state import RuntimeStore
-from terrine.semantic.io import catalog_payload
-from terrine.semantic.models import Catalog
+from terrine.semantic.io import catalog_payload, validate_catalog
 from terrine.spec.anchors import EventAnchor
 from terrine.spec.design import Design
 from terrine.spec.expressions import (
@@ -399,7 +398,10 @@ class SnapshotAuthority:
         if not artifact.is_file() or _file_hash(artifact) != restored.artifact_hash:
             raise _INVALID.error(reason="retained artifact is absent or changed")
         try:
-            catalog = Catalog.model_validate(json.loads(restored.catalog_json))
+            catalog = validate_catalog(json.loads(restored.catalog_json))
+        except ValueError as exc:
+            raise _INVALID.error(reason="source declarations cannot be reconstructed") from exc
+        try:
             units = {
                 name: UnitSource(**unit) for name, unit in json.loads(restored.units_json).items()
             }
@@ -449,14 +451,9 @@ class _SnapshotContext(ExecutionContext):
     __slots__ = ("_manager", "_published")
 
     def __init__(self, context: ExecutionContext, manager: Any, published: PublishedInputs) -> None:
-        super().__init__(
-            con=context.con,
-            snapshot=context.snapshot,
-            _resolver=context._resolver,
-            _session=context._session,
-            owner_con=context.owner_con,
-            _revalidate=context._revalidate,
-        )
+        # Every field carries over, admission and preflight included, so a
+        # retained read is admitted exactly as a direct one.
+        super().__init__(**{item.name: getattr(context, item.name) for item in fields(context)})
         self._manager = manager
         self._published = published
 

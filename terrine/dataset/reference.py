@@ -340,12 +340,14 @@ class Dataset:
         table = pa.Table.from_batches(collected, schema=schema)
         identity = {column.role: column.name for column in self._manifest.columns}
         roles = Roles(
-            identity.get("unit", "unit"),
-            identity.get("anchor", "anchor_id"),
-            identity.get("t0", "t0"),
-            None,
-            tuple(column.name for column in self._manifest.columns if column.role == "feature"),
-            (),
+            unit=identity.get("unit", "unit"),
+            anchor=identity.get("anchor", "anchor_id"),
+            t0=identity.get("t0", "t0"),
+            treatment=None,
+            features=tuple(
+                column.name for column in self._manifest.columns if column.role == "feature"
+            ),
+            outcomes=(),
         )
         keys = output_sort_keys(
             table.schema,

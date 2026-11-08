@@ -27,7 +27,7 @@ from terrine.spec import Design, FixedDate, agg, asof
 
 def _catalog() -> dict:
     return {
-            "schema_version": 2,
+            "schema_version": 3,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": {
@@ -74,7 +74,7 @@ class ModelResolver:
 
 def _clean_rebuild_rows(model: Model, design: Design) -> list[dict[str, object]]:
     rows = design.build(model).materialize(
-        Budget(max_rows=100, max_output_bytes=1_000_000)
+        budget=Budget(max_rows=100, max_output_bytes=1_000_000)
     ).table.to_pylist()
     return sorted(
         [{"user_id": row["unit"], "total": row["total"], "tier": row["tier"]} for row in rows],

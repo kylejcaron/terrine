@@ -1,11 +1,19 @@
 [project]
 name = "terrine"
-version = "0.1.0.dev2"
+version = "0.1.0"
 description = "Typed dataset construction and analytical workflows"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+]
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.txt"]
-requires-python = ">=3.12,<3.15"
+requires-python = ">=3.12"
 dependencies = [
     "ibis-framework>=11,<13",
     "pydantic>=2.8.1,<3",
@@ -19,27 +27,27 @@ dependencies = [
 terrine = "terrine.runtime.cli:main"
 
 [project.optional-dependencies]
-duckdb = ["ibis-framework[duckdb]>=11,<13", "duckdb==1.5.6"]
+duckdb = ["ibis-framework[duckdb]>=11,<13", "duckdb>=1.5,<2"]
 # PostgreSQL's expression and execution policies are verified with Ibis 12.
 postgres = ["ibis-framework[postgres]>=12,<13"]
 bigquery = ["ibis-framework[bigquery]>=12,<13"]
 snowflake = ["ibis-framework[snowflake]>=12,<13"]
 pandas = ["pandas>=2.2,<4"]
 polars = ["polars>=1.21,<2"]
-airflow = ["apache-airflow==3.3.2", "apache-airflow-providers-standard==1.20.1"]
-dagster = ["dagster==1.13.26"]
-dbt = ["dbt-core==1.10.13", "dbt-duckdb==1.9.6"]
-increment = ["increment==0.1.0a2"]
+airflow = ["apache-airflow>=3.3,<4", "apache-airflow-providers-standard>=1.20,<2"]
+dagster = ["dagster>=1.13,<2"]
+dbt = ["dbt-core>=1.10,<2", "dbt-duckdb>=1.9,<2"]
+increment = ["increment>=0.1.0a2,<0.2"]
 sketches = ["datasketches>=5.2,<6"]
-doubleml = ["doubleml==0.11.4"]
-dowhy = ["dowhy==0.14; python_version < '3.14'"]
-duckreg = ["duckreg==0.4.1"]
-lifelines = ["lifelines==0.30.3"]
-diff-diff = ["diff-diff==3.13.0"]
+doubleml = ["doubleml>=0.11,<1"]
+dowhy = ["dowhy>=0.14,<1; python_version < '3.14'"]
+duckreg = ["duckreg>=0.4,<1"]
+lifelines = ["lifelines>=0.30,<1"]
+diff-diff = ["diff-diff>=3.13,<4"]
 
 [project.urls]
 Homepage = "https://github.com/kylejcaron/terrine"
-Documentation = "https://github.com/kylejcaron/terrine/tree/main/docs/guides"
+Documentation = "https://kylejcaron.github.io/terrine/"
 Repository = "https://github.com/kylejcaron/terrine"
 Changelog = "https://github.com/kylejcaron/terrine/blob/main/CHANGELOG.md"
 Issues = "https://github.com/kylejcaron/terrine/issues"
@@ -60,7 +68,12 @@ dev = [
     "mutmut>=3.8,<3.9",
     "griffe>=2.4,<3",
 ]
-docs = ["mkdocs>=1.6,<2", "mkdocs-material>=9.6,<10"]
+docs = [
+    "mkdocs>=1.6,<2",
+    "mkdocs-material>=9.6,<10",
+    "mkdocstrings[python]>=0.29,<1",
+    "pymdown-extensions>=10.11,<12",
+]
 
 [build-system]
 requires = ["hatchling>=1.27,<2"]
@@ -76,6 +89,7 @@ exclude = ["docs/superpowers", ".superpowers", ".worktrees", "mutants"]
 testpaths = ["tests"]
 addopts = "-ra --strict-markers --strict-config --durations=0 --durations-min=5.0 -m 'not scale and not postgres and not bigquery and not snowflake'"
 xfail_strict = true
+filterwarnings = ["error::DeprecationWarning:terrine.*", "error::ResourceWarning"]
 markers = [
     "scale: resource-bound scale, oracle, live-warehouse and example-script checks; scheduled tier only",
     "postgres: live PostgreSQL probes; need TERRINE_TEST_POSTGRES_* settings",

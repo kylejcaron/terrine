@@ -38,7 +38,9 @@ _STAMPS = pytest.mark.parametrize(
 def _provenance(stamp: _Stamp = _VERIFIED_STAMP):
     engine_name, dialect, engine_status = stamp
     return Provenance(
-        feature_cutoffs={"revenue": FeatureCutoff(-1, True, "recorded_at")},
+        feature_cutoffs={
+            "revenue": FeatureCutoff(latest_seconds=-1, strict=True, knowledge="recorded_at")
+        },
         eligibility_cutoffs={},
         eligibility_summary=None,
         treatment_knowledge="recorded_at",
@@ -63,15 +65,15 @@ def _provenance(stamp: _Stamp = _VERIFIED_STAMP):
         treatment_known_at_t0=True,
         expression_timings={
             "first_purchase": ExpressionTiming(
-                "event_time",
-                "signup",
-                (-86400, 0),
-                (-86400, 0),
-                ("signup",),
-                {"signup": (-86400, 0)},
-                "selected_time",
-                "start_bound",
-                "end_bound",
+                kind="event_time",
+                selector_ref="signup",
+                relative_offsets=(-86400, 0),
+                support_seconds=(-86400, 0),
+                selector_dependencies=("signup",),
+                selector_support_seconds={"signup": (-86400, 0)},
+                point_time_column="selected_time",
+                start_bound_column="start_bound",
+                end_bound_column="end_bound",
             )
         },
     )
@@ -88,7 +90,9 @@ def _frame(provenance):
                 ),
             }
         ),
-        roles=Roles("unit", "anchor", "t0", None, (), ()),
+        roles=Roles(
+            unit="unit", anchor="anchor", t0="t0", treatment=None, features=(), outcomes=()
+        ),
         columns={},
         provenance=provenance,
     )
@@ -133,10 +137,12 @@ def test_sequence_metadata_round_trips_arrow_as_typed_provenance():
         ),
     )
     frame = MaterializedFrame(
-        pa.table({"unit": ["a"], "nested": [[{"event_id": "e1", "amount": 3}]]}),
-        Roles("unit", "anchor_id", "t0", None, (), ()),
-        {},
-        provenance,
+        table=pa.table({"unit": ["a"], "nested": [[{"event_id": "e1", "amount": 3}]]}),
+        roles=Roles(
+            unit="unit", anchor="anchor_id", t0="t0", treatment=None, features=(), outcomes=()
+        ),
+        columns={},
+        provenance=provenance,
     )
     restored = MaterializedFrame.from_arrow(frame.to_pyarrow())
     assert restored.table.to_pylist() == frame.table.to_pylist()
@@ -175,15 +181,17 @@ def test_array_sequence_transition_references_survive_arrow_roundtrip():
         sequence_meta=sequence_meta,
     )
     frame = MaterializedFrame(
-        pa.table(
+        table=pa.table(
             {
                 "unit": ["a"],
                 "event_values": [[{"transition_from": None, "transition_to": "signup"}]],
             }
         ),
-        Roles("unit", "anchor_id", "t0", None, (), ()),
-        {},
-        provenance,
+        roles=Roles(
+            unit="unit", anchor="anchor_id", t0="t0", treatment=None, features=(), outcomes=()
+        ),
+        columns={},
+        provenance=provenance,
     )
     restored = MaterializedFrame.from_arrow(frame.to_pyarrow())
     restored_meta = restored.provenance.sequence_meta
@@ -225,8 +233,16 @@ def test_eligibility_summary_rejects_inconsistent_counts_with_stable_code():
 
 def test_metadata_mappings_are_deeply_immutable_and_detached():
     generations = {"events": None}
-    feature_cutoffs = {"revenue": FeatureCutoff(-1, True, "recorded_at")}
-    snapshot = ExecutionSnapshot(None, "duckdb", generations, None, "unverified")
+    feature_cutoffs = {
+        "revenue": FeatureCutoff(latest_seconds=-1, strict=True, knowledge="recorded_at")
+    }
+    snapshot = ExecutionSnapshot(
+        snapshot_id=None,
+        backend="duckdb",
+        source_generations=generations,
+        input_binding_id=None,
+        replay_equivalence="unverified",
+    )
     provenance = Provenance(
         feature_cutoffs=feature_cutoffs,
         eligibility_cutoffs={},
@@ -254,11 +270,11 @@ def test_dataset_view_resolved_instant_round_trips_json_and_arrow():
     provenance = replace(
         _provenance(),
         dataset_view=DatasetViewMeta(
-            "scoring",
-            ("revenue",),
-            (),
-            "view",
-            "features",
+            kind="scoring",
+            selected_features=("revenue",),
+            selected_labels=(),
+            view_hash="view",
+            feature_definition_hash="features",
             resolved_as_of=datetime(2025, 1, 1, tzinfo=UTC),
         ),
     )
@@ -290,15 +306,22 @@ def test_materialized_frame_metadata_json_roundtrip_preserves_arrow_values(stamp
     )
     frame = MaterializedFrame(
         table=table,
-        roles=Roles("unit", "anchor", "t0", "treated", ("spend",), ("amount",)),
+        roles=Roles(
+            unit="unit",
+            anchor="anchor",
+            t0="t0",
+            treatment="treated",
+            features=("spend",),
+            outcomes=("amount",),
+        ),
         columns={
             "amount": ColumnMeta(
-                None,
-                "outcome",
-                None,
-                None,
-                "amount_complete",
-                "amount_reason",
+                window=None,
+                role="outcome",
+                observed_from_column=None,
+                observed_until_column=None,
+                complete_column="amount_complete",
+                reason_column="amount_reason",
                 approximation=ApproximationMeta(
                     algorithm="hll",
                     implementation="duckdb",
@@ -308,12 +331,13 @@ def test_materialized_frame_metadata_json_roundtrip_preserves_arrow_values(stamp
                 ),
             ),
             "spend": ColumnMeta(
-                Window("-1d", 0),
-                "feature",
-                "spend_observed_from",
-                "spend_observed_until",
-                "spend_complete",
-                "spend_reason",
+                window=Window("-1d", 0),
+                role="feature",
+                observed_from_column="spend_observed_from",
+                observed_until_column="spend_observed_until",
+                complete_column="spend_complete",
+                reason_column="spend_reason",
+                arithmetic="native",
             ),
         },
         provenance=_provenance(stamp),
@@ -337,6 +361,7 @@ def test_materialized_frame_metadata_json_roundtrip_preserves_arrow_values(stamp
     # A float window column is published rounded once, with no precision policy
     # and no companion error column in the saved metadata.
     assert restored.columns["spend"].numeric_policy is None
+    assert restored.columns["spend"].arithmetic == "native"
     assert set(payload["columns"]["spend"]) == {
         "window",
         "role",
@@ -348,7 +373,12 @@ def test_materialized_frame_metadata_json_roundtrip_preserves_arrow_values(stamp
         "approximation",
         "transformation",
         "measure",
+        "arithmetic",
     }
+    # Metadata written before columns recorded their arithmetic decodes without it.
+    legacy = json.loads(frame.to_json())
+    del legacy["columns"]["spend"]["arithmetic"]
+    assert MaterializedFrame.from_json(json.dumps(legacy)).columns["spend"].arithmetic is None
     payload["provenance"]["unknown_policy"] = True
     with pytest.raises(ValueError):
         MaterializedFrame.from_json(json.dumps(payload))
@@ -535,7 +565,13 @@ def test_partial_or_inconsistent_engine_stamp_refuses(stamp, backend, reason, fi
         with pytest.raises(TerrineError) as constructed:
             replace(
                 _provenance(),
-                execution_snapshot=ExecutionSnapshot(None, backend, {}, None, "unverified"),
+                execution_snapshot=ExecutionSnapshot(
+                    snapshot_id=None,
+                    backend=backend,
+                    source_generations={},
+                    input_binding_id=None,
+                    replay_equivalence="unverified",
+                ),
                 engine_name=stamp["engine_name"],
                 dialect=stamp["dialect"],
                 engine_status=stamp["engine_status"],
@@ -548,17 +584,17 @@ def test_partial_or_inconsistent_engine_stamp_refuses(stamp, backend, reason, fi
 def test_budget_and_preview_validate_counts_and_coverage():
     assert Budget(max_rows=0, max_output_bytes=1, max_scan_bytes=0).max_rows == 0
     preview = Preview(
-        None,
-        None,
-        None,
-        "unknown",
-        {
+        planned_rows=None,
+        output_bytes=None,
+        scan_bytes=None,
+        scan_reason="unknown",
+        coverage={
             "events": CoverageSummary(
                 datetime(2025, 1, 1, tzinfo=UTC), datetime(2025, 1, 2, tzinfo=UTC)
             )
         },
-        {},
-        (),
+        strategy={},
+        budget_warnings=(),
     )
     assert preview.planned_rows is None
     for field in ("max_rows", "max_output_bytes", "max_scan_bytes"):
@@ -568,7 +604,15 @@ def test_budget_and_preview_validate_counts_and_coverage():
             assert error.value.code == "terrine.budget.invalid_limit"
             assert error.value.context == {"reason": "not_nonnegative_integer", "field": field}
     with pytest.raises((TypeError, ValueError)):
-        Preview(-1, None, None, None, {}, {}, ())
+        Preview(
+            planned_rows=-1,
+            output_bytes=None,
+            scan_bytes=None,
+            scan_reason=None,
+            coverage={},
+            strategy={},
+            budget_warnings=(),
+        )
 
 
 def test_unit_source_requires_named_table_and_key():
@@ -611,12 +655,12 @@ def test_state_panel_roles_and_metadata_survive_arrow_json_roundtrip():
             }
         ),
         roles=Roles(
-            "unit",
-            "anchor_id",
-            "t0",
-            None,
-            (),
-            ("to_state",),
+            unit="unit",
+            anchor="anchor_id",
+            t0="t0",
+            treatment=None,
+            features=(),
+            outcomes=("to_state",),
             cluster_unit="unit",
             prior_state="from_state",
         ),
@@ -627,3 +671,20 @@ def test_state_panel_roles_and_metadata_survive_arrow_json_roundtrip():
     assert recovered.roles == frame.roles
     assert recovered.provenance.state_panel == meta
     assert recovered.provenance.state_panel.levels == ("new", "active", "closed")
+
+
+def test_materialized_frame_from_json_malformed_is_coded():
+    with pytest.raises(TerrineError) as error:
+        MaterializedFrame.from_json("{")
+    assert error.value.code == "terrine.metadata.invalid"
+    assert error.value.context["reason"] == "malformed_json"
+
+
+def test_materialized_frame_from_arrow_malformed_is_coded():
+    table = pa.table({"value": [1]}).replace_schema_metadata(
+        {b"terrine.materialized_frame.v2": b"{"}
+    )
+    with pytest.raises(TerrineError) as error:
+        MaterializedFrame.from_arrow(table)
+    assert error.value.code == "terrine.metadata.invalid"
+    assert error.value.context["reason"] == "invalid_arrow_metadata"

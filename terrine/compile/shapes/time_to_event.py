@@ -508,19 +508,33 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
     columns.update(
         {
             **{
-                name: ColumnMeta(None, "outcome", None, None, "complete", "reason")
+                name: ColumnMeta(
+                    window=None,
+                    role="outcome",
+                    observed_from_column=None,
+                    observed_until_column=None,
+                    complete_column="complete",
+                    reason_column="reason",
+                )
                 for name in SURVIVAL_VALUES[:-1]
             },
-            "censor_reason": ColumnMeta(None, "outcome", None, None, None, None),
+            "censor_reason": ColumnMeta(
+                window=None,
+                role="outcome",
+                observed_from_column=None,
+                observed_until_column=None,
+                complete_column=None,
+                reason_column=None,
+            ),
         }
     )
     roles = Roles(
-        "unit",
-        "anchor_id",
-        "t0",
-        base.roles.treatment,
-        tuple(design.features),
-        ("duration", "event"),
+        unit="unit",
+        anchor="anchor_id",
+        t0="t0",
+        treatment=base.roles.treatment,
+        features=tuple(design.features),
+        outcomes=("duration", "event"),
     )
     return replace(
         base,

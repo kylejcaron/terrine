@@ -177,7 +177,7 @@ _DESIGNS = {
 
 
 def _rows(model, design):
-    table = design.build(model).materialize(_BUDGET).table
+    table = design.build(model).materialize(budget=_BUDGET).table
     kept = [name for name in table.column_names if name != "anchor_id"]
     return sorted(table.select(kept).to_pylist(), key=lambda row: (row["unit"], row["t0"]))
 
@@ -222,6 +222,133 @@ def test_design_matches_duckdb(postgres_scratch, tmp_path, name, naive):  # noqa
         ]
 
 
+def test_event_panel_struct_anchor_ids_match_duckdb(postgres_scratch, tmp_path):  # noqa: F811
+    """Event-relative anchor identifiers are records on PostgreSQL and publish as structs."""
+    duckdb, postgres = _both(postgres_scratch, tmp_path)
+    design = tr.recipes.event_panel(
+        event="order",
+        periods=(0, 1, 2),
+        period="1d",
+        reference_index=0,
+        features={"spend": tr.agg("spend", window=("-2d", "0s"))},
+    )
+    expected, actual = (
+        design.build(model).materialize(budget=_BUDGET).table for model in (duckdb, postgres)
+    )
+
+    def ordered(table):
+        return sorted(table.to_pylist(), key=lambda row: (row["unit"], row["t0"]))
+
+    assert expected.num_rows
+    assert actual.schema == expected.schema
+    assert ordered(actual) == ordered(expected)
+
+
+@pytest.mark.parametrize(
+    ("sql_source", "enum_property"), [(False, False), (True, False), (False, True)]
+)
+def test_event_panel_macaddr_unit_matches_text_read(
+    postgres_scratch, tmp_path, sql_source, enum_property
+):  # noqa: F811
+    """A macaddr event-panel unit matches its text-keyed DuckDB reference."""
+    con = postgres_scratch.con
+    if enum_property:
+        con.raw_sql("CREATE TYPE tier_enum AS ENUM ('gold')")
+    tier_type = "tier_enum" if enum_property else "text"
+    con.raw_sql("CREATE TABLE users(user_id macaddr, self macaddr8)")
+    con.raw_sql(
+        "INSERT INTO users VALUES ('80:00:00:00:00:01', '08:00:2b:01:02:03:04:05')"
+    )
+    con.raw_sql(
+        f"CREATE TABLE events(user_id macaddr, occurred_at timestamptz, amount numeric(10, 2), "
+        f"tier {tier_type}, event_id uuid)"
+    )
+    con.raw_sql(
+        "INSERT INTO events VALUES ('80:00:00:00:00:01', '2025-01-01 08:00:00+00', "
+        "5.00, 'gold', '00000000-0000-0000-0000-000000000001')"
+    )
+    con.raw_sql("CREATE TABLE states(user_id macaddr, observed_at timestamptz, state text)")
+
+    duckdb = ibis.duckdb.connect()
+    duckdb.raw_sql("CREATE TABLE users(user_id VARCHAR)")
+    duckdb.raw_sql("INSERT INTO users VALUES ('80:00:00:00:00:01')")
+    duckdb.raw_sql(
+        "CREATE TABLE events(user_id VARCHAR, occurred_at TIMESTAMPTZ, amount DECIMAL(10, 2), "
+        "tier VARCHAR, event_id UUID)"
+    )
+    duckdb.raw_sql(
+        "INSERT INTO events VALUES ('80:00:00:00:00:01', '2025-01-01 08:00:00+00', "
+        "5.00, 'gold', '00000000-0000-0000-0000-000000000001')"
+    )
+    duckdb.raw_sql("CREATE TABLE states(user_id VARCHAR, observed_at TIMESTAMPTZ, state VARCHAR)")
+
+    duckdb_model = _model(duckdb, tmp_path, "duckdb")
+    if sql_source:
+        catalog = tmp_path / "postgres-sql.yaml"
+        contents = _CATALOG.format(dialect="postgres").replace(
+            "relation: {kind: table, name: events}",
+            "relation: {kind: sql, sql: 'SELECT * FROM events'}",
+            1,
+        )
+        catalog.write_text(contents, encoding="utf-8")
+        postgres_model = tr.Model.from_catalog(
+            catalog,
+            con=con,
+            units={"user": tr.UnitSource("users", "user_id")},
+            readiness={
+                "orders": tr.Coverage("2024-12-01", "2025-02-01"),
+                "states": tr.Coverage("2024-12-01", "2025-02-01"),
+            },
+        )
+    else:
+        postgres_model = _model(con, tmp_path, "postgres")
+    models = (duckdb_model, postgres_model)
+    design = tr.recipes.event_panel(
+        event="order",
+        periods=(0, 1),
+        period="1d",
+        reference_index=0,
+        features={"spend": tr.agg("spend", window=("-2d", "0s"))},
+    )
+    expected, result = (
+        design.build(model).materialize(budget=_BUDGET).table for model in models
+    )
+    text_read = con.raw_sql("SELECT user_id::text FROM users").fetchall()[0][0]
+
+    assert result.num_rows
+    assert result.schema == expected.schema
+    assert result.to_pylist() == expected.to_pylist()
+    assert {row["unit"] for row in result.to_pylist()} == {text_read}
+
+
+
+
+def test_user_enum_named_macaddr_keeps_enum_order(postgres_scratch):  # noqa: F811
+    from terrine.execution._postgres import resolve
+    from terrine.semantic.models import SqlQuery, TableRef
+
+    con, schema = postgres_scratch.con, postgres_scratch.schema
+    con.raw_sql(f"CREATE TYPE \"{schema}\".macaddr AS ENUM ('z', 'a')")
+    con.raw_sql(f'CREATE TABLE enum_values(value "{schema}".macaddr)')
+    con.raw_sql("INSERT INTO enum_values VALUES ('z'), ('a')")
+
+    relation = resolve(con, TableRef(kind="table", name="enum_values"))
+    assert not relation.value.type().is_string()
+    ordered = resolve(
+        con,
+        SqlQuery(
+            kind="sql",
+            sql=(
+                f"SELECT value, value > 'z'::\"{schema}\".macaddr AS after_z "
+                f"FROM \"{schema}\".enum_values ORDER BY value"
+            ),
+        ),
+    )
+
+    assert con.to_pyarrow(ordered.select("after_z")).to_pylist() == [
+        {"after_z": False},
+        {"after_z": True},
+    ]
 @pytest.mark.parametrize("naive", [False, True])
 def test_landmark_nth_anchor_matches_original_time_oracle(postgres_scratch, tmp_path, naive):  # noqa: F811
     duckdb, postgres = _both(postgres_scratch, tmp_path, naive=naive)
@@ -365,11 +492,13 @@ def test_source_filters_match_duckdb_and_refuse_unknown_membership(postgres_scra
         for model in (duckdb, postgres):
             model.con.raw_sql("UPDATE events SET amount = NULL WHERE user_id = 'c'")
             with pytest.raises(TerrineError) as error:
-                design.build(bind(model)).materialize(_BUDGET)
+                design.build(bind(model)).materialize(budget=_BUDGET)
             assert error.value.code == "terrine.compile.anchor_integrity"
             assert error.value.context["check_key"] == "unknown_event_filter_value"
     finally:
         duckdb.con.disconnect()
+
+
 @pytest.mark.parametrize("recipe,anchor_join_count", [("forecast", 3), ("ltv", 4)])
 def test_forecast_and_ltv_use_set_based_lookups_and_anchor_joins(
     postgres_scratch,
@@ -415,7 +544,7 @@ def test_forecast_and_ltv_use_set_based_lookups_and_anchor_joins(
             },
             outcomes={"spend_next_30d": tr.agg("spend", window=("0s", "30d"))},
         ),
-        "ltv": tr.recipes.ltv(start_event="orders", metric="spend", period="30d", periods=4),
+        "ltv": tr.recipes.ltv(start_event="orders", metric="spend", period="30d", max_periods=4),
     }[recipe]
     sql = con.compile(design.build(model).expr)
     if recipe == "ltv":
@@ -469,6 +598,41 @@ def test_nullable_array_keys_keep_scalar_distinctness(postgres_scratch):  # noqa
         )
     ).to_pylist()
     assert len(rows) == 16
+    assert all(row["actual"] is row["expected"] for row in rows)
+
+
+def test_missing_struct_key_stays_distinct_from_missing_fields(postgres_scratch):  # noqa: F811
+    from terrine.backends.dialect import current_dialect
+    from terrine.backends.joins import null_safe_equal
+
+    con = postgres_scratch.con
+    fields = con.sql(
+        "SELECT * FROM (VALUES (1, NULL::varchar, NULL::smallint), (2, 'a', NULL), (3, 'a', 0)) "
+        "AS keys(i, event_id, period)"
+    )
+    present = fields.select(
+        i=fields.i, k=ibis.struct({"event_id": fields.event_id, "period": fields.period})
+    )
+    # A typed NULL placeholder in one branch of a union, as the portable lookup builds.
+    missing = present.limit(1).select(
+        i=ibis.literal(0, type=present.i.type()),
+        k=current_dialect(present.k).typed_null(present.k.type()),
+    )
+    keys = missing.union(present)
+    left = keys.select(i=keys.i, a=keys.k)
+    right = keys.select(j=keys.i, b=keys.k).view()
+    pairs = left.cross_join(right)
+    rows = con.to_pyarrow(
+        pairs.select(
+            "i",
+            "j",
+            expected=pairs.a.identical_to(pairs.b),
+            actual=null_safe_equal(pairs.a, pairs.b),
+        )
+    ).to_pylist()
+    assert sorted((row["i"], row["j"]) for row in rows if row["expected"]) == [
+        (index, index) for index in range(4)
+    ]
     assert all(row["actual"] is row["expected"] for row in rows)
 
 
@@ -544,3 +708,130 @@ def test_mixed_integer_unit_widths_preserve_roster_keys(
         assert actual[0] == actual[1]
     finally:
         duckdb.disconnect()
+
+
+def _native_trajectory_model(con, rows):
+    """A native float spend trajectory over ``(user, day, amount)`` rows."""
+    con.raw_sql("CREATE TABLE users(user_id VARCHAR)")
+    con.raw_sql(
+        "CREATE TABLE orders(user_id VARCHAR, occurred_at TIMESTAMPTZ, amount DOUBLE PRECISION)"
+    )
+    _insert_orders(con, rows)
+    return tr.Model.from_tables(
+        con,
+        units={"user": tr.UnitSource("users", "user_id")},
+        events={
+            "orders": tr.Events(
+                "orders",
+                time="occurred_at",
+                key="user_id",
+                metrics={"spend": tr.sum("amount")},
+                complete=("2024-12-01", "2025-02-01"),
+            )
+        },
+    )
+
+
+def _insert_orders(con, rows) -> None:
+    """Insert ``(user, day, amount)`` January orders and their units."""
+    for statement in (
+        "INSERT INTO users VALUES "
+        + ", ".join(f"('{user}')" for user in sorted({r[0] for r in rows})),
+        "INSERT INTO orders VALUES "
+        + ", ".join(
+            f"('{user}', '2025-01-{day:02d} 00:00:00+00', {amount})" for user, day, amount in rows
+        ),
+    ):
+        cursor = con.raw_sql(statement)
+        if con.name == "postgres":  # DuckDB returns its connection, not a cursor
+            cursor.close()
+
+
+def test_native_cohort_total_refuses_where_float8_would_raise(postgres_scratch, tmp_path):  # noqa: F811
+    """A native cohort total of cumulative spend publishes what DuckDB does while the
+    cohort's magnitudes sum to less than half the binary64 range, and keeps the
+    value column's native arithmetic; a cohort whose total would overflow float8
+    refuses ``bound_overflow`` instead of raising."""
+    from terrine.errors import TerrineError
+
+    rows = [(user, day, "2e307") for user in "ab" for day in (1, 2)]
+    duckdb = ibis.duckdb.connect()
+    postgres = postgres_scratch.con
+    try:
+        duckdb_model = _native_trajectory_model(duckdb, rows)
+        postgres_model = _native_trajectory_model(postgres, rows)
+        design = tr.Design(
+            "user",
+            tr.EventAnchor("orders", occurrence="first"),
+            shape=CohortSpec("orders", Trajectory("spend", "1d", periods=2, cumulative=True)),
+            administrative_cutoff=datetime(2025, 1, 6, tzinfo=UTC),
+        )
+        grouping = CohortGrouping("1d", datetime(2025, 1, 1, tzinfo=UTC), statistic="total")
+
+        def summary(model):
+            cohorts = design.build(model).cohorts(
+                grouping=grouping, value_column="cumulative_value"
+            )
+            materialized = cohorts.materialize(budget=_BUDGET)
+            assert materialized.columns["value"].arithmetic == "native"
+            return sorted(materialized.to_pyarrow().to_pylist(), key=lambda row: row["age"])
+
+        expected = summary(duckdb_model)
+        assert [row["value"] for row in expected] == [4e307, 8e307]
+        assert summary(postgres_model) == expected
+        # Two more units take the age-1 cohort total of cumulative spend past the
+        # float8 range (2.4e308) while each unit's own total stays inside half of it.
+        _insert_orders(postgres, [(user, day, "4e307") for user in "cd" for day in (1, 2)])
+        with pytest.raises(TerrineError) as error:
+            summary(postgres_model)
+        assert error.value.code == "terrine.temporal.float64_precision"
+        assert error.value.context["reason"] == "bound_overflow"
+        assert error.value.context["source"] == "cohort"
+    finally:
+        duckdb.disconnect()
+
+
+def test_native_cohort_mean_refuses_where_float8_would_underflow(postgres_scratch, tmp_path):  # noqa: F811
+    """A native cohort mean of period spend equals DuckDB's for ordinary magnitudes
+    and keeps the value column's native arithmetic; a unit whose value is below
+    2**-1020 of the cohort's largest would make float8 raise on the normalizing
+    quotient, so the mean refuses ``bound_overflow`` instead."""
+    from terrine.errors import TerrineError
+
+    rows = [("a", 1, "2.0"), ("b", 1, "6.0")]
+    duckdb = ibis.duckdb.connect()
+    postgres = postgres_scratch.con
+    try:
+        duckdb_model = _native_trajectory_model(duckdb, rows)
+        postgres_model = _native_trajectory_model(postgres, rows)
+        design = tr.Design(
+            "user",
+            tr.EventAnchor("orders", occurrence="first"),
+            shape=CohortSpec("orders", Trajectory("spend", "1d", periods=1, cumulative=False)),
+            administrative_cutoff=datetime(2025, 1, 6, tzinfo=UTC),
+        )
+        grouping = CohortGrouping("1d", datetime(2025, 1, 1, tzinfo=UTC), statistic="mean")
+
+        def summary(model):
+            cohorts = design.build(model).cohorts(grouping=grouping, value_column="period_value")
+            materialized = cohorts.materialize(budget=_BUDGET)
+            assert materialized.columns["value"].arithmetic == "native"
+            return sorted(materialized.to_pyarrow().to_pylist(), key=lambda row: row["age"])
+
+        expected = summary(duckdb_model)
+        assert [row["value"] for row in expected] == [4.0]
+        assert summary(postgres_model) == expected
+        _insert_orders(postgres, [("c", 1, "5e-324")])
+        with pytest.raises(TerrineError) as error:
+            summary(postgres_model)
+        assert error.value.code == "terrine.temporal.float64_precision"
+        assert error.value.context["reason"] == "bound_overflow"
+        assert error.value.context["source"] == "cohort"
+    finally:
+        duckdb.disconnect()
+
+
+def test_not_over_true_false_and_null_matches_duckdb(postgres_scratch):  # noqa: F811
+    from integration.compile.test_boolean_outputs import NEGATION_STATES, negation_states
+
+    assert negation_states(postgres_scratch.con) == NEGATION_STATES

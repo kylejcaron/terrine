@@ -40,7 +40,12 @@ def test_lifelines_fits_record_km_cox_and_compressed_risk_counts(handoff_frame, 
             **handoff_frame.columns,
             **{
                 name: ColumnMeta(
-                    None, "outcome", None, None, f"{name}__complete", f"{name}__reason"
+                    window=None,
+                    role="outcome",
+                    observed_from_column=None,
+                    observed_until_column=None,
+                    complete_column=f"{name}__complete",
+                    reason_column=f"{name}__reason",
                 )
                 for name in ("duration", "event")
             },
@@ -73,9 +78,23 @@ def test_lifelines_fits_record_km_cox_and_compressed_risk_counts(handoff_frame, 
     risk = replace(
         data,
         table=risk_table,
-        roles=Roles("unit", "anchor_id", "t0", None, ("time_bin",), ("events", "censored")),
+        roles=Roles(
+            unit="unit",
+            anchor="anchor_id",
+            t0="t0",
+            treatment=None,
+            features=("time_bin",),
+            outcomes=("events", "censored"),
+        ),
         columns={
-            name: ColumnMeta(None, "outcome", None, None, f"{name}__complete", f"{name}__reason")
+            name: ColumnMeta(
+                window=None,
+                role="outcome",
+                observed_from_column=None,
+                observed_until_column=None,
+                complete_column=f"{name}__complete",
+                reason_column=f"{name}__reason",
+            )
             for name in ("events", "censored")
         },
         provenance=replace(data.provenance, shape="life_table"),

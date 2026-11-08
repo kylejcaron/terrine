@@ -86,10 +86,12 @@ def test_large_descriptor_and_materialized_frame_reprs_are_bounded():
     assert len(repr(event)) < 400
 
     materialized = MaterializedFrame(
-        pa.table({"unit": [str(i) for i in range(10_000)], "value": list(range(10_000))}),
-        Roles("unit", "anchor", "t0", None, ("value",), ()),
-        {},
-        _provenance(),
+        table=pa.table({"unit": [str(i) for i in range(10_000)], "value": list(range(10_000))}),
+        roles=Roles(
+            unit="unit", anchor="anchor", t0="t0", treatment=None, features=("value",), outcomes=()
+        ),
+        columns={},
+        provenance=_provenance(),
     )
     result = repr(materialized)
     assert len(result) < 400

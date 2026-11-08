@@ -399,7 +399,7 @@ def test_state_panel_rejects_schedule_over_explicit_period_cap(panel_model):
         every="1d",
         start="2025-01-03",
         end="2025-01-05",
-        periods=2,
+        max_periods=2,
     )
     with pytest.raises(TerrineError) as error:
         design.validate(panel_model)
@@ -443,7 +443,7 @@ def test_state_panel_materialization_requires_positive_row_and_byte_budgets(pane
         ),
     )
     with pytest.raises(TerrineError) as error:
-        design.build(panel_model).materialize(budget)
+        design.build(panel_model).materialize(budget=budget)
     assert error.value.code == "terrine.state_panel.budget_required"
 
 
@@ -504,7 +504,7 @@ def test_terminal_is_found_before_panel_or_anchor_range_filter(
         )
     rows = (
         design.build(model)
-        .materialize(Budget(max_rows=10, max_output_bytes=100_000))
+        .materialize(budget=Budget(max_rows=10, max_output_bytes=100_000))
         .table.to_pylist()
     )
     assert not [row for row in rows if row["unit"] == "a"]
@@ -531,7 +531,9 @@ def test_terminal_is_found_before_panel_or_anchor_range_filter(
 def test_observation_key_and_level_integrity_refuses(observed_model_factory, observations):
     model = observed_model_factory(observations)
     with pytest.raises(TerrineError) as error:
-        _observed_design().build(model).materialize(Budget(max_rows=10, max_output_bytes=100_000))
+        _observed_design().build(model).materialize(
+            budget=Budget(max_rows=10, max_output_bytes=100_000)
+        )
     assert error.value.code == "terrine.state_panel.invalid_observations"
 
 
@@ -546,7 +548,7 @@ def test_known_null_after_absorption_does_not_count_as_recovery(observed_model_f
     rows = (
         _observed_design()
         .build(model)
-        .materialize(Budget(max_rows=10, max_output_bytes=100_000))
+        .materialize(budget=Budget(max_rows=10, max_output_bytes=100_000))
         .table.to_pylist()
     )
     assert len([row for row in rows if row["unit"] == "a"]) == 1
@@ -649,7 +651,7 @@ def test_observed_state_panel_is_invariant_to_source_row_order(observed_model_fa
         panel = (
             _observed_design()
             .build(model)
-            .materialize(Budget(max_rows=10, max_output_bytes=100_000))
+            .materialize(budget=Budget(max_rows=10, max_output_bytes=100_000))
         )
         results.append(
             sorted(
@@ -677,7 +679,7 @@ def test_missing_observations_are_not_bridged_across_adjacent_rows(observed_mode
     rows = (
         _observed_design(absorbing=())
         .build(model)
-        .materialize(Budget(max_rows=10, max_output_bytes=100_000))
+        .materialize(budget=Budget(max_rows=10, max_output_bytes=100_000))
         .table.to_pylist()
     )
     a_rows = sorted(
@@ -705,7 +707,7 @@ def test_known_null_observation_is_complete_but_not_a_state_label(observed_model
     rows = (
         _observed_design(absorbing=())
         .build(model)
-        .materialize(Budget(max_rows=10, max_output_bytes=100_000))
+        .materialize(budget=Budget(max_rows=10, max_output_bytes=100_000))
         .table.to_pylist()
     )
     first = next(row for row in rows if row["unit"] == "a" and row["period_index"] == 0)
@@ -728,7 +730,7 @@ def test_terminal_boundary_emits_incoming_transition_and_suppresses_suffix(obser
     rows = (
         _observed_design()
         .build(model)
-        .materialize(Budget(max_rows=10, max_output_bytes=100_000))
+        .materialize(budget=Budget(max_rows=10, max_output_bytes=100_000))
         .table.to_pylist()
     )
     a_rows = [row for row in rows if row["unit"] == "a"]
@@ -746,7 +748,9 @@ def test_usable_state_recovery_after_absorption_refuses(observed_model_factory):
         ]
     )
     with pytest.raises(TerrineError) as error:
-        _observed_design().build(model).materialize(Budget(max_rows=10, max_output_bytes=100_000))
+        _observed_design().build(model).materialize(
+            budget=Budget(max_rows=10, max_output_bytes=100_000)
+        )
     assert error.value.code == "terrine.state_panel.invalid_observations"
 
 
@@ -762,7 +766,7 @@ def test_off_grid_terminal_is_allowed_but_nonterminal_refuses(observed_model_fac
     rows = (
         _observed_design()
         .build(model)
-        .materialize(Budget(max_rows=10, max_output_bytes=100_000))
+        .materialize(budget=Budget(max_rows=10, max_output_bytes=100_000))
         .table.to_pylist()
     )
     terminal = next(row for row in rows if row["unit"] == "a" and row["terminal"])
@@ -772,7 +776,7 @@ def test_off_grid_terminal_is_allowed_but_nonterminal_refuses(observed_model_fac
     model = observed_model_factory([("a", datetime(2025, 1, 3, 12, tzinfo=UTC), "active")])
     with pytest.raises(TerrineError) as error:
         _observed_design(absorbing=()).build(model).materialize(
-            Budget(max_rows=10, max_output_bytes=100_000)
+            budget=Budget(max_rows=10, max_output_bytes=100_000)
         )
     assert error.value.code == "terrine.state_panel.invalid_observations"
 
@@ -793,7 +797,7 @@ def test_delayed_entry_and_observation_bounds_do_not_shift_or_override_history(
     rows = (
         _observed_design()
         .build(model)
-        .materialize(Budget(max_rows=10, max_output_bytes=100_000))
+        .materialize(budget=Budget(max_rows=10, max_output_bytes=100_000))
         .table.to_pylist()
     )
     a_rows = [row for row in rows if row["unit"] == "a"]
@@ -814,7 +818,7 @@ def test_delayed_entry_and_observation_bounds_do_not_shift_or_override_history(
     rows = (
         _observed_design()
         .build(model)
-        .materialize(Budget(max_rows=10, max_output_bytes=100_000))
+        .materialize(budget=Budget(max_rows=10, max_output_bytes=100_000))
         .table.to_pylist()
     )
     a_rows = [row for row in rows if row["unit"] == "a"]
@@ -837,7 +841,7 @@ def test_unit_observed_until_is_exclusive_for_point_states(observed_model_factor
     rows = (
         _observed_design()
         .build(model)
-        .materialize(Budget(max_rows=10, max_output_bytes=100_000))
+        .materialize(budget=Budget(max_rows=10, max_output_bytes=100_000))
         .table.to_pylist()
     )
     first = next(row for row in rows if row["unit"] == "b" and row["period_index"] == 0)
@@ -854,8 +858,8 @@ def test_exclusive_source_coverage_end_is_unavailable_not_absorbing(observed_mod
         ],
         coverage_end="2025-01-03",
     )
-    materialized = (
-        _observed_design().build(model).materialize(Budget(max_rows=10, max_output_bytes=100_000))
+    materialized = _observed_design().build(model).materialize(
+        budget=Budget(max_rows=10, max_output_bytes=100_000)
     )
     a_rows = [row for row in materialized.table.to_pylist() if row["unit"] == "a"]
     assert len(a_rows) == 2

@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
-from typing import Literal
+from typing import ClassVar, Literal, TypeGuard
 
 from terrine.errors import RefusalSpec, parameter_names
 from terrine.windows import Duration, Window, duration
@@ -22,10 +23,18 @@ __all__ = [
     "retention",
     "AttributeAsOf",
     "EventTime",
-    "Gt",
     "Eq",
+    "Ne",
+    "Gt",
+    "Gte",
+    "Lt",
+    "Lte",
+    "IsIn",
+    "Between",
     "IsNull",
     "And",
+    "Or",
+    "Not",
     "agg",
     "quantile",
     "approx_quantile",
@@ -33,10 +42,18 @@ __all__ = [
     "asof",
     "event_time",
     "since",
-    "gt",
     "eq",
+    "ne",
+    "gt",
+    "gte",
+    "lt",
+    "lte",
+    "isin",
+    "between",
     "is_null",
     "all_of",
+    "any_of",
+    "not_",
 ]
 
 _SKETCH_UNAVAILABLE = RefusalSpec(
@@ -282,27 +299,215 @@ class EventTime:
 
 
 @dataclass(frozen=True, slots=True)
-class Gt:
+class _Compare:
+    """A comparison of one measured expression with one literal."""
+
     expr: Expr
     value: JsonScalar
 
     def __post_init__(self) -> None:
         _require_expr(self.expr, "expr")
         object.__setattr__(self, "value", _scalar(self.value, "value"))
+
+    @property
+    def values(self) -> tuple[JsonScalar]:
+        """The literal operand, as a one-item tuple."""
+        return (self.value,)
 
 
 @dataclass(frozen=True, slots=True)
-class Eq:
+class Eq(_Compare):
+    """Require an expression's value to equal a literal.
+
+    Args:
+        expr: Measured expression to compare; elapsed since() selectors are not predicate operands.
+        value: Literal scalar value to compare with the expression.
+
+    Attributes:
+        op: Operator name shared with ``where=`` filters, ``"equals"``.
+
+    Example: spec.Eq(spec.asof("plan"), "pro")
+    """
+
+    op: ClassVar[Literal["equals"]] = "equals"
+
+
+@dataclass(frozen=True, slots=True)
+class Ne(_Compare):
+    """Require an expression's value to differ from a literal.
+
+    Args:
+        expr: Measured expression to compare; elapsed since() selectors are not predicate operands.
+        value: Literal scalar value to compare with the expression.
+
+    Attributes:
+        op: Operator name shared with ``where=`` filters, ``"not_equals"``.
+
+    Example: spec.Ne(spec.asof("plan"), "free")
+    """
+
+    op: ClassVar[Literal["not_equals"]] = "not_equals"
+
+
+@dataclass(frozen=True, slots=True)
+class Gt(_Compare):
+    """Require an expression's value to be greater than a literal.
+
+    Args:
+        expr: Measured expression to compare; elapsed since() selectors are not predicate operands.
+        value: Literal scalar value to compare with the expression.
+
+    Attributes:
+        op: Operator name shared with ``where=`` filters, ``"gt"``.
+
+    Example: spec.Gt(spec.agg("orders", window=("-30d", "0s")), 0)
+    """
+
+    op: ClassVar[Literal["gt"]] = "gt"
+
+
+@dataclass(frozen=True, slots=True)
+class Gte(_Compare):
+    """Require an expression's value to be greater than or equal to a literal.
+
+    Args:
+        expr: Measured expression to compare; elapsed since() selectors are not predicate operands.
+        value: Literal scalar value to compare with the expression.
+
+    Attributes:
+        op: Operator name shared with ``where=`` filters, ``"gte"``.
+
+    Example: spec.Gte(spec.agg("orders", window=("-30d", "0s")), 3)
+    """
+
+    op: ClassVar[Literal["gte"]] = "gte"
+
+
+@dataclass(frozen=True, slots=True)
+class Lt(_Compare):
+    """Require an expression's value to be less than a literal.
+
+    Args:
+        expr: Measured expression to compare; elapsed since() selectors are not predicate operands.
+        value: Literal scalar value to compare with the expression.
+
+    Attributes:
+        op: Operator name shared with ``where=`` filters, ``"lt"``.
+
+    Example: spec.Lt(spec.agg("orders", window=("-30d", "0s")), 3)
+    """
+
+    op: ClassVar[Literal["lt"]] = "lt"
+
+
+@dataclass(frozen=True, slots=True)
+class Lte(_Compare):
+    """Require an expression's value to be less than or equal to a literal.
+
+    Args:
+        expr: Measured expression to compare; elapsed since() selectors are not predicate operands.
+        value: Literal scalar value to compare with the expression.
+
+    Attributes:
+        op: Operator name shared with ``where=`` filters, ``"lte"``.
+
+    Example: spec.Lte(spec.agg("orders", window=("-30d", "0s")), 2)
+    """
+
+    op: ClassVar[Literal["lte"]] = "lte"
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class IsIn:
+    """Require an expression's value to equal one of several literals.
+
+    Args:
+        expr: Measured expression to compare; elapsed since() selectors are not predicate operands.
+        values: Non-empty list, tuple or set of literal scalar values; a set is stored sorted.
+
+    Attributes:
+        expr: Measured expression to compare.
+        values: Tuple of literal scalar values.
+        op: Operator name shared with ``where=`` filters, ``"in"``.
+
+    Example: spec.IsIn(spec.asof("plan"), ("pro", "team"))
+    """
+
     expr: Expr
-    value: JsonScalar
+    values: tuple[JsonScalar, ...]
+    op: ClassVar[Literal["in"]] = "in"
+
+    def __init__(self, expr: Expr, values: Sequence[JsonScalar] | AbstractSet[JsonScalar]) -> None:
+        _require_expr(expr, "expr")
+        if not isinstance(values, (list, tuple, set, frozenset)):
+            raise _INVALID.error(reason="wrong_type", field="values")
+        if not values:
+            raise _INVALID.error(reason="empty", field="values")
+        items = tuple(_scalar(value, "values") for value in values)
+        # A set has no order; sorting keeps equal designs (and where= filters) identical.
+        if isinstance(values, (set, frozenset)):
+            items = tuple(sorted(items, key=repr))
+        object.__setattr__(self, "expr", expr)
+        object.__setattr__(self, "values", items)
+
+
+def _real(value: JsonScalar) -> TypeGuard[int | float]:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+@dataclass(frozen=True, slots=True)
+class Between:
+    """Require an expression's value to lie between two literals, both included.
+
+    Args:
+        expr: Measured expression to compare; elapsed since() selectors are not predicate operands.
+        low: Inclusive lower literal bound.
+        high: Inclusive upper literal bound; two numbers must satisfy low <= high.
+
+    Attributes:
+        expr: Measured expression to compare.
+        low: Inclusive lower literal bound.
+        high: Inclusive upper literal bound.
+        op: Operator name shared with ``where=`` filters, ``"between"``.
+
+    Example: spec.Between(spec.agg("orders", window=("-30d", "0s")), 1, 5)
+    """
+
+    expr: Expr
+    low: JsonScalar
+    high: JsonScalar
+    op: ClassVar[Literal["between"]] = "between"
 
     def __post_init__(self) -> None:
         _require_expr(self.expr, "expr")
-        object.__setattr__(self, "value", _scalar(self.value, "value"))
+        low, high = _scalar(self.low, "low"), _scalar(self.high, "high")
+        # Quoted decimal bounds are ordered by the operand's type when compiled.
+        if _real(low) and _real(high) and low > high:
+            raise _INVALID.error(reason="reversed_bounds", field="high")
+        object.__setattr__(self, "low", low)
+        object.__setattr__(self, "high", high)
+
+    @property
+    def values(self) -> tuple[JsonScalar, JsonScalar]:
+        """The inclusive bounds as a ``(low, high)`` pair."""
+        return (self.low, self.high)
 
 
 @dataclass(frozen=True, slots=True)
 class IsNull:
+    """Test whether an expression is null, or non-null when ``negate=True``.
+
+    Args:
+        expr: Measured expression to test; elapsed since() selectors are not predicate operands.
+        negate: Whether to require a non-null value instead; False tests for null.
+
+    Attributes:
+        expr: Measured expression to test.
+        negate: Whether a non-null value is required instead.
+
+    Example: spec.IsNull(spec.event_time("orders", window=("-30d", "0s")))
+    """
+
     expr: Expr
     negate: bool = False
 
@@ -312,19 +517,73 @@ class IsNull:
             raise _INVALID.error(reason="wrong_type", field="negate")
 
 
+def _terms(value: object) -> tuple[Predicate, ...]:
+    if not isinstance(value, Iterable):
+        raise _INVALID.error(reason="wrong_type", field="terms")
+    terms = tuple(value)
+    if not terms:
+        raise _INVALID.error(reason="empty", field="terms")
+    if any(not isinstance(term, _PREDICATE_NODES) for term in terms):
+        raise _INVALID.error(reason="wrong_type", field="terms")
+    return terms
+
+
 @dataclass(frozen=True, slots=True)
 class And:
+    """Hold when every term holds, with SQL three-valued logic.
+
+    Args:
+        terms: Non-empty tuple of predicates.
+
+    Attributes:
+        terms: Tuple of predicates that must all hold.
+
+    Example: spec.And((spec.gt(spec.agg("orders", window=("-30d", "0s")), 0),))
+    """
+
     terms: tuple[Predicate, ...]
 
     def __post_init__(self) -> None:
-        if not isinstance(self.terms, Iterable):
-            raise _INVALID.error(reason="wrong_type", field="terms")
-        terms = tuple(self.terms)
-        if not terms:
-            raise _INVALID.error(reason="empty", field="terms")
-        if any(not isinstance(term, (Gt, Eq, IsNull, And)) for term in terms):
-            raise _INVALID.error(reason="wrong_type", field="terms")
-        object.__setattr__(self, "terms", terms)
+        object.__setattr__(self, "terms", _terms(self.terms))
+
+
+@dataclass(frozen=True, slots=True)
+class Or:
+    """Hold when any term holds, with SQL three-valued logic.
+
+    Args:
+        terms: Non-empty tuple of predicates.
+
+    Attributes:
+        terms: Tuple of predicates of which at least one must hold.
+
+    Example: spec.Or((spec.lt(spec.agg("orders", window=("-30d", "0s")), 3),))
+    """
+
+    terms: tuple[Predicate, ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "terms", _terms(self.terms))
+
+
+@dataclass(frozen=True, slots=True)
+class Not:
+    """Hold when a predicate is false; an unknown predicate stays unknown.
+
+    Args:
+        term: Predicate to negate.
+
+    Attributes:
+        term: Predicate to negate.
+
+    Example: spec.Not(spec.eq(spec.asof("plan"), "free"))
+    """
+
+    term: Predicate
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.term, _PREDICATE_NODES):
+            raise _INVALID.error(reason="wrong_type", field="term")
 
 
 type Expr = (
@@ -336,15 +595,21 @@ type Expr = (
     | AttributeAsOf
     | EventTime
 )
-type Predicate = Gt | Eq | IsNull | And
+type Comparison = Eq | Ne | Gt | Gte | Lt | Lte | IsIn | Between
+type Predicate = Comparison | IsNull | And | Or | Not
+
+_COMPARISON_NODES = (Eq, Ne, Gt, Gte, Lt, Lte, IsIn, Between)
+_PREDICATE_NODES = (*_COMPARISON_NODES, IsNull, And, Or, Not)
 
 
 def _output_leaves(value: Expr | Predicate) -> Iterator[Expr]:
     """Yield measured expressions in an output or eligibility rule."""
-    if isinstance(value, And):
+    if isinstance(value, (And, Or)):
         for term in value.terms:
             yield from _output_leaves(term)
-    elif isinstance(value, (Gt, Eq, IsNull)):
+    elif isinstance(value, Not):
+        yield from _output_leaves(value.term)
+    elif isinstance(value, (*_COMPARISON_NODES, IsNull)):
         yield value.expr
     else:
         yield value
@@ -681,6 +946,108 @@ def eq(expr: Expr, value: JsonScalar) -> Eq:
     return Eq(expr, value)
 
 
+def ne(expr: Expr, value: JsonScalar) -> Ne:
+    """Require an expression's value to differ from a literal.
+
+
+    Args:
+        expr: Measured expression to compare; elapsed since() selectors are not predicate operands.
+        value: Literal scalar value to compare with the expression.
+
+    Returns:
+        A not-equal Predicate for output columns or eligibility rules.
+
+    Example: tr.ne(tr.asof("plan"), "free")
+    """
+    return Ne(expr, value)
+
+
+def gte(expr: Expr, value: JsonScalar) -> Gte:
+    """Require an expression's value to be greater than or equal to a literal.
+
+
+    Args:
+        expr: Measured expression to compare; elapsed since() selectors are not predicate operands.
+        value: Literal scalar value to compare with the expression.
+
+    Returns:
+        A greater-than-or-equal Predicate for output columns or eligibility rules.
+
+    Example: tr.gte(tr.agg("orders", window=("-30d", "0s")), 3)
+    """
+    return Gte(expr, value)
+
+
+def lt(expr: Expr, value: JsonScalar) -> Lt:
+    """Require an expression's value to be less than a literal.
+
+    A complete count of zero is less than any positive threshold, so ``lt`` keeps units
+    without events; an incomplete operand stays unknown.
+
+
+    Args:
+        expr: Measured expression to compare; elapsed since() selectors are not predicate operands.
+        value: Literal scalar value to compare with the expression.
+
+    Returns:
+        A less-than Predicate for output columns or eligibility rules.
+
+    Example: tr.lt(tr.agg("orders", window=("-30d", "0s")), 3)
+    """
+    return Lt(expr, value)
+
+
+def lte(expr: Expr, value: JsonScalar) -> Lte:
+    """Require an expression's value to be less than or equal to a literal.
+
+
+    Args:
+        expr: Measured expression to compare; elapsed since() selectors are not predicate operands.
+        value: Literal scalar value to compare with the expression.
+
+    Returns:
+        A less-than-or-equal Predicate for output columns or eligibility rules.
+
+    Example: tr.lte(tr.agg("orders", window=("-30d", "0s")), 2)
+    """
+    return Lte(expr, value)
+
+
+def isin(expr: Expr, values: Sequence[JsonScalar] | AbstractSet[JsonScalar]) -> IsIn:
+    """Require an expression's value to equal one of several literals.
+
+    A null literal never matches, as in SQL ``IN``; another equal literal still does.
+
+
+    Args:
+        expr: Measured expression to compare; elapsed since() selectors are not predicate operands.
+        values: Non-empty list, tuple or set of literal scalar values; a set is stored sorted.
+
+    Returns:
+        A membership Predicate for output columns or eligibility rules.
+
+    Example: tr.isin(tr.asof("plan"), ["pro", "team"])
+    """
+    return IsIn(expr, values)
+
+
+def between(expr: Expr, low: JsonScalar, high: JsonScalar) -> Between:
+    """Require an expression's value to lie between two literals, both included.
+
+
+    Args:
+        expr: Measured expression to compare; elapsed since() selectors are not predicate operands.
+        low: Inclusive lower literal bound.
+        high: Inclusive upper literal bound; two numbers must satisfy low <= high.
+
+    Returns:
+        A range Predicate for output columns or eligibility rules.
+
+    Example: tr.between(tr.agg("orders", window=("-30d", "0s")), 1, 5)
+    """
+    return Between(expr, low, high)
+
+
 def is_null(expr: Expr, *, negate: bool = False) -> IsNull:
     """Test whether an expression is null, or non-null when ``negate=True``.
 
@@ -710,3 +1077,36 @@ def all_of(*terms: Predicate) -> And:
     Example: tr.all_of(tr.gt(tr.agg("orders", window=("-30d", "0s")), 0))
     """
     return And(tuple(terms))
+
+
+def any_of(*terms: Predicate) -> Or:
+    """Require at least one supplied predicate to hold.
+
+    Uses SQL three-valued OR: one true term makes the rule true and complete even
+    alongside an unknown term; false with unknown terms stays unknown.
+
+
+    Args:
+        *terms: One or more Predicate arguments; at least one must hold for the rule to hold.
+
+    Returns:
+        An Or predicate combining every supplied term.
+
+    Example: tr.any_of(tr.eq(tr.asof("plan"), "pro"), tr.lt(tr.asof("seats"), 3))
+    """
+    return Or(tuple(terms))
+
+
+def not_(term: Predicate) -> Not:
+    """Require a predicate to be false; an unknown predicate stays unknown.
+
+
+    Args:
+        term: Predicate to negate.
+
+    Returns:
+        A Not predicate for output columns or eligibility rules.
+
+    Example: tr.not_(tr.isin(tr.asof("plan"), ["free", "trial"]))
+    """
+    return Not(term)

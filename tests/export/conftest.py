@@ -31,30 +31,67 @@ def frame():
             "reason": pa.array([None, None], type=pa.string()),
         }
     )
-    cutoff = FeatureCutoff(0, True, "recorded_at")
+    cutoff = FeatureCutoff(latest_seconds=0, strict=True, knowledge="recorded_at")
     return MaterializedFrame(
-        table,
-        Roles("id", "anchor", "t0", "a", ("x",), ("y",)),
-        {
-            "x": ColumnMeta(None, "feature", None, None, None, None),
-            "a": ColumnMeta(None, "treatment", None, None, None, None),
-            "y": ColumnMeta(Window(0, "28s"), "outcome", None, None, "complete", "reason"),
+        table=table,
+        roles=Roles(
+            unit="id", anchor="anchor", t0="t0", treatment="a", features=("x",), outcomes=("y",)
+        ),
+        columns={
+            "x": ColumnMeta(
+                window=None,
+                role="feature",
+                observed_from_column=None,
+                observed_until_column=None,
+                complete_column=None,
+                reason_column=None,
+            ),
+            "a": ColumnMeta(
+                window=None,
+                role="treatment",
+                observed_from_column=None,
+                observed_until_column=None,
+                complete_column=None,
+                reason_column=None,
+            ),
+            "y": ColumnMeta(
+                window=Window(0, "28s"),
+                role="outcome",
+                observed_from_column=None,
+                observed_until_column=None,
+                complete_column="complete",
+                reason_column="reason",
+            ),
         },
-        Provenance(
-            {"x": cutoff},
-            {},
-            "manual",
-            "manual",
-            {},
-            ExecutionSnapshot(None, "arrow", {}, None, "unverified"),
-            "cross_section",
-            "baseline_binary",
+        provenance=Provenance(
+            feature_cutoffs={"x": cutoff},
+            eligibility_cutoffs={},
+            design_hash="manual",
+            model_hash="manual",
+            source_generations={},
+            execution_snapshot=ExecutionSnapshot(
+                snapshot_id=None,
+                backend="arrow",
+                source_generations={},
+                input_binding_id=None,
+                replay_equivalence="unverified",
+            ),
+            shape="cross_section",
+            treatment_design="baseline_binary",
             engine_name="arrow",
             dialect="generic",
             engine_status="unverified",
             expression_timings={
                 "y": ExpressionTiming(
-                    "fixed_t0", None, None, (0, 28 * 86400), (), {}, "t0", None, None
+                    kind="fixed_t0",
+                    selector_ref=None,
+                    relative_offsets=None,
+                    support_seconds=(0, 28 * 86400),
+                    selector_dependencies=(),
+                    selector_support_seconds={},
+                    point_time_column="t0",
+                    start_bound_column=None,
+                    end_bound_column=None,
                 )
             },
             treatment_knowledge="recorded_at",

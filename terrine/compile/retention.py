@@ -118,12 +118,12 @@ def compile_retention(
         },
     )
     meta = ColumnMeta(
-        window if finite else None,
-        "outcome",
-        "_retention_observed_from",
-        "_retention_observed_until",
-        "_retention_complete",
-        "_retention_reason",
-        "exact",
+        window=window if finite else None,
+        role="outcome",
+        observed_from_column="_retention_observed_from",
+        observed_until_column="_retention_observed_until",
+        complete_column="_retention_complete",
+        reason_column="_retention_reason",
+        numeric_policy="exact",
     )
     return TemporalResult(table, {output: meta})

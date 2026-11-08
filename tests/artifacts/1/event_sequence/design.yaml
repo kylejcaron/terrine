@@ -1,0 +1,22 @@
+design:
+  anchor:
+    event: orders
+    type: EventAnchor
+  features:
+    orders_30d:
+      metric: orders
+      type: MetricAgg
+      window:
+        end: 0s
+        start: -30d
+        type: Window
+  shape:
+    event: orders
+    max_events: 3
+    type: EventSequence
+    window:
+      end: 30d
+      start: 0s
+      type: Window
+  unit: null
+schema_version: 4

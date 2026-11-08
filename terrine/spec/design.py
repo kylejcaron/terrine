@@ -26,15 +26,12 @@ from terrine.execution._metadata import metadata_operation
 from terrine.spec.anchors import AnchorRange, EventAnchor, FixedDate, Schedule, _aware_instant
 from terrine.spec.expressions import (
     _ELAPSED_SELECTOR,
-    And,
+    _PREDICATE_NODES,
     ApproxMetricDistinct,
     ApproxMetricQuantile,
     AttributeAsOf,
-    Eq,
     EventTime,
     Expr,
-    Gt,
-    IsNull,
     MetricAgg,
     MetricQuantile,
     Predicate,
@@ -214,8 +211,8 @@ class Design:
 
     def __init__(
         self,
-        unit: str | None,
-        anchor: FixedDate | EventAnchor | Schedule,
+        unit: str | None = None,
+        anchor: FixedDate | EventAnchor | Schedule | None = None,
         *,
         features: Mapping[str, Expr | Predicate] | None = None,
         outcomes: Mapping[str, Expr | Predicate] | None = None,
@@ -235,7 +232,9 @@ class Design:
         sample: MatchedT0Sample | None = None,
         administrative_cutoff: datetime | None = None,
     ) -> None:
-        if unit is not None and (not isinstance(unit, str) or not unit.strip()):
+        if unit is not None and not isinstance(unit, str):
+            raise _INVALID.error(reason="wrong_type", field="unit")
+        if unit is not None and not unit.strip():
             raise _INVALID.error(reason="empty_name", field="unit")
         if not isinstance(anchor, (FixedDate, EventAnchor, Schedule)):
             raise _INVALID.error(reason="wrong_type", field="anchor")
@@ -281,50 +280,20 @@ class Design:
             raise _INVALID.error(reason="negative", field="gap")
         object.__setattr__(self, "unit", unit)
         object.__setattr__(self, "anchor", anchor)
-        object.__setattr__(
-            self,
-            "features",
-            _named_nodes(
-                features,
-                (
-                    MetricAgg,
-                    MetricQuantile,
-                    ApproxMetricQuantile,
-                    ApproxMetricDistinct,
-                    RetentionMetric,
-                    AttributeAsOf,
-                    EventTime,
-                    Gt,
-                    Eq,
-                    IsNull,
-                    And,
-                ),
-                "features",
-            ),
+        outputs = (
+            MetricAgg,
+            MetricQuantile,
+            ApproxMetricQuantile,
+            ApproxMetricDistinct,
+            RetentionMetric,
+            AttributeAsOf,
+            EventTime,
+            *_PREDICATE_NODES,
         )
+        object.__setattr__(self, "features", _named_nodes(features, outputs, "features"))
+        object.__setattr__(self, "outcomes", _named_nodes(outcomes, outputs, "outcomes"))
         object.__setattr__(
-            self,
-            "outcomes",
-            _named_nodes(
-                outcomes,
-                (
-                    MetricAgg,
-                    MetricQuantile,
-                    ApproxMetricQuantile,
-                    ApproxMetricDistinct,
-                    RetentionMetric,
-                    AttributeAsOf,
-                    EventTime,
-                    Gt,
-                    Eq,
-                    IsNull,
-                    And,
-                ),
-                "outcomes",
-            ),
-        )
-        object.__setattr__(
-            self, "eligibility", _named_nodes(eligibility, (Gt, Eq, IsNull, And), "eligibility")
+            self, "eligibility", _named_nodes(eligibility, _PREDICATE_NODES, "eligibility")
         )
         if isinstance(shape, StatePanel):
             for name in shape.baseline_features:

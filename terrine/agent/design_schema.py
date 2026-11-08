@@ -36,8 +36,8 @@ def design_schema() -> dict[str, Any]:
     scalar = {"type": ["string", "number", "boolean", "null"]}
     duration = {
         "type": "string",
-        "pattern": "^[+-]?[0-9]+[smhdw]$",
-        "description": "Elapsed duration: a signed integer with an s, m, h, d or w unit.",
+        "pattern": "^[+-]?(?:[0-9]+(min|[shdw])|[0-9]+h[0-9]+min)$",
+        "description": "Elapsed duration: a signed integer with an s, min, h, d or w unit.",
     }
     definitions = {"Temporal": obj({"type": {"enum": ["date", "datetime"]}, "value": text})}
     definitions["Cutpoint"] = {
@@ -54,7 +54,8 @@ def design_schema() -> dict[str, Any]:
         ]
     }
     expression = union("MetricAgg", "AttributeAsOf", "EventTime")
-    predicate = union("Gt", "Eq", "IsNull", "And")
+    comparisons = ("Eq", "Ne", "Gt", "Gte", "Lt", "Lte")
+    predicate = union(*comparisons, "IsIn", "Between", "IsNull", "And", "Or", "Not")
     named = mapping(expression)
     outputs = mapping({"anyOf": [expression, predicate]})
     nodes = {
@@ -69,7 +70,7 @@ def design_schema() -> dict[str, Any]:
         "Schedule": {
             "every": {
                 "type": "string",
-                "pattern": "^(\\+?[0-9]+[smhdw]|[0-9]+(mo|y))$",
+                "pattern": "^(\\+?(?:[0-9]+(?:min|[shdw])|[0-9]+h[0-9]+min)|[0-9]+(mo|y))$",
                 "description": (
                     "Positive step between anchors: an elapsed duration such as 1w, or "
                     "calendar months such as 1mo or 1y, each clamped to its month's last day."
@@ -111,10 +112,13 @@ def design_schema() -> dict[str, Any]:
             "relative_to": nullable(ref("EventTime")),
             "measure": {"enum": ["time", "elapsed"]},
         },
-        "Gt": {"expr": expression, "value": scalar},
-        "Eq": {"expr": expression, "value": scalar},
+        **{name: {"expr": expression, "value": scalar} for name in comparisons},
+        "IsIn": {"expr": expression, "values": {**array(scalar), "minItems": 1}},
+        "Between": {"expr": expression, "low": scalar, "high": scalar},
         "IsNull": {"expr": expression, "negate": boolean},
-        "And": {"terms": array(predicate)},
+        "And": {"terms": {**array(predicate), "minItems": 1}},
+        "Or": {"terms": {**array(predicate), "minItems": 1}},
+        "Not": {"term": predicate},
         "Treatment": {"attribute": text, "at": duration, "known_at_t0": boolean},
         "StateObservations": {
             "property": text,

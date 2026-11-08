@@ -32,7 +32,7 @@ def _inputs():
     """)
     catalog = Catalog.model_validate(
         {
-            "schema_version": 2,
+            "schema_version": 3,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": {
@@ -82,6 +82,9 @@ def _inputs():
             "true_and_unknown": tr.all_of(tr.eq(short, 0), tr.gt(week, 0)),
             "many_items": tr.gt(distinct, 2),
             "items_7d": distinct,
+            "false_or_unknown": tr.any_of(tr.gt(short, 0), tr.gt(week, 0)),
+            "true_or_unknown": tr.any_of(tr.eq(short, 0), tr.gt(week, 0)),
+            "not_converted": tr.not_(tr.gt(week, 0)),
         },
     )
     return con, model, design
@@ -92,7 +95,7 @@ def boolean_result():
     con, model, design = _inputs()
     try:
         frame = design.build(model)
-        result = frame.materialize(tr.Budget(max_rows=10, strict_scan=False))
+        result = frame.materialize(budget=tr.Budget(max_rows=10, strict_scan=False))
         return BooleanResult(
             result.table, frame._compiled.columns, frame._compiled.expression_timings
         )
@@ -139,6 +142,93 @@ def test_churned_30d_eq_zero(boolean_result):
     }
 
 
+def test_any_of_not_combine(boolean_result):
+    unknown = (None, False, "incomplete_observation")
+    assert _states(boolean_result, "true_or_unknown")["c"] == (True, True, None)
+    assert _states(boolean_result, "false_or_unknown")["c"] == unknown
+    assert _states(boolean_result, "not_converted") == {
+        "a": (False, True, None),
+        "b": (True, True, None),
+        "c": unknown,
+    }
+
+
+NEGATION_STATES = {
+    "t": (False, True, None),
+    "f": (True, True, None),
+    "n": (None, False, "all_values_null"),
+}
+
+
+def negation_states(con):
+    """``not_`` of a known TRUE, FALSE and NULL roster flag: value, completeness, reason."""
+    con.raw_sql("CREATE TABLE users(user_id VARCHAR, flag BOOLEAN)")
+    con.raw_sql("INSERT INTO users VALUES ('t', TRUE), ('f', FALSE), ('n', NULL)")
+    con.raw_sql("CREATE TABLE visits(user_id VARCHAR, ts TIMESTAMPTZ)")
+    con.raw_sql(
+        "INSERT INTO visits SELECT user_id, TIMESTAMPTZ '2024-12-31 00:00:00+00' FROM users"
+    )
+    model = tr.Model.from_tables(
+        con,
+        units={"user": tr.UnitSource("users", "user_id", attributes=("flag",))},
+        events={
+            "visits": tr.Events(
+                "visits", time="ts", key="user_id", complete=("2024-12-01", "2024-12-31")
+            )
+        },
+    )
+    design = tr.Design(
+        "user",
+        tr.FixedDate("2025-01-01"),
+        features={"not_flag": tr.not_(tr.eq(tr.asof("flag"), True))},
+    )
+    frame = design.build(model)
+    result = frame.materialize(budget=tr.Budget(max_rows=10, strict_scan=False))
+    return _states(BooleanResult(result.table, frame._compiled.columns, {}), "not_flag")
+
+
+def test_not_over_true_false_and_null_keeps_completeness():
+    con = ibis.duckdb.connect()
+    try:
+        assert negation_states(con) == NEGATION_STATES
+    finally:
+        con.disconnect()
+
+
+def test_fewer_than_three_orders_eligibility():
+    con = ibis.duckdb.connect()
+    con.raw_sql("CREATE TABLE users AS SELECT * FROM (VALUES ('none'), ('two'), ('three')) t(id)")
+    con.raw_sql("""
+        CREATE TABLE orders AS SELECT id, ts::TIMESTAMP AS ts
+        FROM (VALUES ('none', '2024-12-20'), ('two', '2025-01-10'), ('two', '2025-01-20'),
+                     ('three', '2025-01-05'), ('three', '2025-01-15'), ('three', '2025-01-25'))
+            AS o(id, ts)
+    """)
+    model = tr.Model.from_tables(
+        con,
+        units={"user": tr.UnitSource("users", "id")},
+        events={
+            "orders": tr.Events(
+                "orders",
+                time="ts",
+                key="id",
+                metrics={"orders": tr.count()},
+                complete=("2024-12-01", "2025-01-31"),
+            )
+        },
+    )
+    design = tr.Design(
+        "user",
+        tr.FixedDate("2025-02-01"),
+        eligibility={"low": tr.lt(tr.agg("orders", window=("-30d", "0s")), 3)},
+    )
+    try:
+        result = design.build(model).materialize(budget=tr.Budget(max_rows=10, strict_scan=False))
+        assert sorted(result.table["unit"].to_pylist()) == ["none", "two"]
+    finally:
+        con.disconnect()
+
+
 def test_is_null_event_time_feature_and_arrow_metadata_round_trip(boolean_result):
     assert _states(boolean_result, "no_prior_order") == {unit: (True, True, None) for unit in "abc"}
     assert boolean_result.columns["no_prior_order"].role == "feature"
@@ -160,7 +250,7 @@ def test_predicate_over_nonadditive_operand_gets_range_plan(boolean_result):
         )
         assert set(plan_ranges(design, model)) == {operand}
         frame = design.build(model)
-        result = frame.materialize(tr.Budget(max_rows=10, strict_scan=False))
+        result = frame.materialize(budget=tr.Budget(max_rows=10, strict_scan=False))
         predicate_only = BooleanResult(
             result.table, frame._compiled.columns, frame._compiled.expression_timings
         )
@@ -187,7 +277,7 @@ def test_time_split_assigns_boolean_label_by_its_window():
                 label=label,
                 incomplete_labels="keep",
                 split=TimeSplit(train_until="2025-01-05"),
-            ).materialize(tr.Budget(max_rows=10, strict_scan=False))
+            ).materialize(budget=tr.Budget(max_rows=10, strict_scan=False))
             splits.append(
                 {
                     row["unit"]: (row["__terrine_split"], row["__terrine_split_reason"])
@@ -259,7 +349,7 @@ def test_false_conjunction_retains_unresolved_operand_support_for_time_split():
             incomplete_labels="keep",
             split=TimeSplit(train_until="2025-01-10"),
         )
-        materialized = frame.materialize(tr.Budget(max_rows=10, strict_scan=False))
+        materialized = frame.materialize(budget=tr.Budget(max_rows=10, strict_scan=False))
         row = next(row for row in materialized.table.to_pylist() if row["unit"] == "b")
         meta = materialized.columns["label"]
         assert (row["label"], row[meta.complete_column], row[meta.reason_column]) == (

@@ -407,10 +407,20 @@ def compile_observed_state_panel(
     columns.update(
         {
             "from_state": ColumnMeta(
-                None, "prior_state", None, None, "from_state_complete", "from_state_reason"
+                window=None,
+                role="prior_state",
+                observed_from_column=None,
+                observed_until_column=None,
+                complete_column="from_state_complete",
+                reason_column="from_state_reason",
             ),
             "to_state": ColumnMeta(
-                None, "outcome", None, None, "to_state_complete", "to_state_reason"
+                window=None,
+                role="outcome",
+                observed_from_column=None,
+                observed_until_column=None,
+                complete_column="to_state_complete",
+                reason_column="to_state_reason",
             ),
         }
     )

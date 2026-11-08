@@ -14,6 +14,12 @@ from terrine.backends.numeric import _scaled_text
 from terrine.backends.registry import supported_engine_route
 from terrine.backends.timestamps import _UNSUPPORTED, _epoch, native_day_start, native_local_day
 
+
+def _duckdb_at_least(major: int, minor: int) -> bool:
+    installed = tuple(int(part) for part in version("duckdb").split(".")[:2])
+    return installed >= (major, minor)
+
+
 _EXACT = dt.Unknown(raw_type=sge.DataType.build("BIGNUM", dialect="duckdb"))
 _HUGE = dt.Unknown(raw_type=sge.DataType.build("HUGEINT", dialect="duckdb"))
 # A HUGEINT column read back from a stored relation.
@@ -103,6 +109,9 @@ def _timestamp_isfinite(value) -> bool:
 class DuckDBDialect(Dialect):
     __slots__ = ()
     bounds_accumulations = False
+    # Binary64 arithmetic follows IEEE 754: overflow yields an infinity and a
+    # quotient underflows to zero, so results are checked finite after the fact.
+    bounds_float_arithmetic = False
     has_native_asof = True
     operations = frozenset(
         {
@@ -292,6 +301,17 @@ class DuckDBDialect(Dialect):
         # the cast only aligns the declared scale of equal native types.
         return point, state.cast(point.type())
 
+    def comparison_keys(
+        self, left: ir.TimestampValue, right: ir.TimestampValue
+    ) -> tuple[ir.Value, ir.Value] | None:
+        """Microsecond instants, infinities included, compare natively as lookups do."""
+        if all(
+            isinstance(dtype, dt.Timestamp) and dtype.scale in (None, 6)
+            for dtype in (left.type(), right.type())
+        ):
+            return self.lookup_keys(left, right)
+        return None
+
     def reverse_time_key(self, value: ir.TimestampValue) -> ir.Value:
         key = self.timestamp_order_key(value)
         return ibis.struct(
@@ -334,7 +354,7 @@ class DuckDBDialect(Dialect):
         return ibis.greatest(*values)
 
     def supports_exact_prefix(self, backend_name: str) -> bool:
-        return backend_name == self.name and version("duckdb") == "1.5.6"
+        return backend_name == self.name and _duckdb_at_least(1, 5)
 
 
 def identify(con: Any) -> None:

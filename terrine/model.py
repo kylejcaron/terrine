@@ -36,7 +36,7 @@ from terrine.temporal.readiness import Readiness
 
 if TYPE_CHECKING:
     from terrine.execution.inputs import ExecutionContext, VerifiedInputBinding
-__all__ = ["Model"]
+__all__ = ["Catalog", "EventMetric", "Model", "Ratio", "Readiness"]
 
 _INVALID = RefusalSpec(
     "terrine.model.invalid_binding",
@@ -533,8 +533,20 @@ class Model:
             catalog_events[name] = {"source": name, "column": None}
             for column, value_event in value_events.items():
                 catalog_events[value_event] = {"source": name, "column": column}
-            if event.labels:
-                columns = schema(event.table)
+            # Native arithmetic applies to float values only, so it needs their column types.
+            native = any(
+                isinstance(metric, EventMetric)
+                and not metric.exact
+                and metric.aggregation not in ("count", "count_distinct")
+                for metric in event.metrics.values()
+            )
+            columns = schema(event.table) if event.labels or native else None
+            floats = (
+                set()
+                if columns is None
+                else {column for column, dtype in columns.items() if dtype.is_floating()}
+            )
+            if columns is not None:
                 for label in event.labels:
                     if label not in columns.names:
                         raise _SCHEMA.error(field=f"label {label}", column=label)
@@ -558,6 +570,12 @@ class Model:
                     "aggregation": metric.aggregation,
                     "filters": metric.filters,
                 }
+                if (
+                    not metric.exact
+                    and metric.aggregation not in ("count", "count_distinct")
+                    and metric.column in floats
+                ):
+                    measures[metric_name]["exact"] = False
                 metrics[metric_name] = {"kind": "mean", "unit": unit, "measure": metric_name}
             sources[name] = {
                 "relation": {"kind": "table", "name": event.table},
@@ -599,7 +617,7 @@ class Model:
                     "properties": [name],
                 }
         catalog = {
-            "schema_version": 2,
+            "schema_version": 3,
             "dialect": dialect,
             "day_boundary": day_boundary,
             "sources": sources,

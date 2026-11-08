@@ -39,7 +39,7 @@ def column_model():
     con.raw_sql("CREATE TABLE users AS SELECT * FROM (VALUES ('a'), ('b')) AS u(id)")
     catalog = Catalog.model_validate(
         {
-            "schema_version": 2,
+            "schema_version": 3,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": {
@@ -949,7 +949,7 @@ def test_since_refuses_in_state_panel_baseline_and_ltv(column_model, shape):
                 start_event="amount",
                 metric="total",
                 period="1d",
-                periods=2,
+                max_periods=2,
                 features={"recency": elapsed},
             )
         else:
@@ -1032,8 +1032,8 @@ def test_filter_lowering_parity(column_model):
     from terrine.compile._predicates import CompiledValue, compile_predicate
     from terrine.data import ColumnMeta, FeatureCutoff
     from terrine.semantic.bind import source_filter_predicate
-    from terrine.semantic.filters import lower_filter
     from terrine.semantic.models import BoundFilter, Filter, PropertyBinding
+    from terrine.semantic.predicates import lower_predicate
     from terrine.temporal.daily import _predicate
 
     table = column_model.con.sql("""
@@ -1052,13 +1052,20 @@ def test_filter_lowering_parity(column_model):
         },
     )
     measure = column_model.metrics["total"].measures[0]
-    meta = ColumnMeta(None, "feature", "observed_from", "observed_until", "complete", "reason")
+    meta = ColumnMeta(
+        window=None,
+        role="feature",
+        observed_from_column="observed_from",
+        observed_until_column="observed_until",
+        complete_column="complete",
+        reason_column="reason",
+    )
     for column, threshold, expected in (
         ("money", "10.50", [False, True, None]),
         ("score", 11.0, [False, True, None]),
     ):
         filt = Filter(property=column, op="equals", values=(threshold,))
-        lowered = lower_filter(table, filt, table[column])
+        lowered = lower_predicate(filt, table.__getitem__)
         membership = source_filter_predicate(table, replace(source, where=(filt,)))
         metric = _predicate(
             table, replace(measure, filters=(BoundFilter(column, "equals", (threshold,)),)), source
@@ -1067,7 +1074,13 @@ def test_filter_lowering_parity(column_model):
         predicate = compile_predicate(
             table,
             eq(expression, threshold),
-            {expression: CompiledValue(column, meta, FeatureCutoff(0, True, "recorded_at"))},
+            {
+                expression: CompiledValue(
+                    column,
+                    meta,
+                    FeatureCutoff(latest_seconds=0, strict=True, knowledge="recorded_at"),
+                )
+            },
             output="eligible",
             role="eligibility",
         )

@@ -34,7 +34,7 @@ from tests.compile.test_persisted_layers import _persisted_prefixes
 def _catalog() -> Catalog:
     return Catalog.model_validate(
         {
-            "schema_version": 2,
+            "schema_version": 3,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": {
@@ -88,7 +88,7 @@ def test_saved_plan_materializes_retained_model_and_design_in_fresh_process(tmp_
     design = Design(
         "user", FixedDate("2025-01-02"), features={"total": agg("total", window=("-1d", "0s"))}
     )
-    expected = design.build(model).materialize(Budget())
+    expected = design.build(model).materialize(budget=Budget())
     expected_path = tmp_path / "expected.arrow"
     with pa.OSFile(str(expected_path), "wb") as sink:
         with pa.ipc.new_file(sink, expected.to_pyarrow().schema) as writer:
@@ -308,12 +308,12 @@ import json, sys
 import ibis
 from terrine.runtime.owner import RuntimeOwner
 from terrine.runtime.snapshot import ReopenableSnapshot, SnapshotAuthority
-from terrine.semantic.models import Catalog
+from terrine.semantic.io import validate_catalog
 
 state_path, snapshot_root, receipt_path = sys.argv[1:]
 owner = RuntimeOwner(state_path=state_path, snapshot_root=snapshot_root)
 receipt = ReopenableSnapshot.from_json(open(receipt_path).read())
-catalog = Catalog.model_validate(json.loads(receipt.catalog_json))
+catalog = validate_catalog(json.loads(receipt.catalog_json))
 connection = ibis.duckdb.connect(state_path)
 execution = SnapshotAuthority(owner).reopen(receipt, con=connection, namespace='runtime')
 relation = execution.resolve(catalog.sources['events'].relation)
@@ -412,7 +412,7 @@ def test_saved_panel_publication_preserves_ordinary_provenance(column_model, tmp
                 period="1h",
             )
         budget = Budget(max_rows=100, max_output_bytes=1_000_000)
-        expected = design.build(model).materialize(budget)
+        expected = design.build(model).materialize(budget=budget)
         assert expected.table.num_rows > 0
         authority = SnapshotAuthority(owner)
         snapshot = authority.capture(

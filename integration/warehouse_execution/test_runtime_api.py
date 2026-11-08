@@ -49,7 +49,7 @@ def test_saved_plan_execution_reopens_retained_snapshot_for_each_task(tmp_path):
     con.raw_sql("INSERT INTO other_users VALUES (999)")
     catalog = Catalog.model_validate(
         {
-            "schema_version": 2,
+            "schema_version": 3,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": {
@@ -317,6 +317,91 @@ def test_saved_plan_execution_reopens_retained_snapshot_for_each_task(tmp_path):
         for field in fields(ordinary.provenance)
         if field.name not in {"source_generations", "execution_snapshot"}
     }
+
+
+def test_reopen_retained_snapshot_with_v2_catalog_json(tmp_path):
+    """A version 2 Catalog retains its recorded payload and restores a saved execution."""
+    from pathlib import Path
+
+    import pyarrow.parquet as pq
+
+    from terrine.runtime.snapshot import ReopenableSnapshot
+    from terrine.spec import from_json
+    from terrine.spec.validate import validate_design
+
+    corpus = Path(__file__).parents[2] / "tests" / "artifacts" / "1"
+    recorded = ReopenableSnapshot.from_json((corpus / "receipt.json").read_text(encoding="utf-8"))
+    path = tmp_path / "owner.duckdb"
+    con = ibis.duckdb.connect(str(path))
+    try:
+        for table in sorted((corpus / "data").glob("*.parquet")):
+            con.create_table(table.stem, pq.read_table(table))
+        model = Model.from_catalog(
+            corpus / "catalog.yaml",
+            con=con,
+            units={"customer": UnitSource("customers", "customer_id")},
+            readiness={"orders": Coverage("2025-01-01", "2025-02-28")},
+        )
+        design = from_json((corpus / "design.json").read_text(encoding="utf-8"))
+        order = [("unit", "ascending"), ("anchor_id", "ascending")]
+        expected = design.build(model).materialize().table.sort_by(order)
+        authority = SnapshotAuthority(
+            RuntimeOwner(state_path=path, snapshot_root=tmp_path / "snapshots")
+        )
+        store = RuntimeStore(con.con, namespace="runtime")
+        store.initialize()
+        snapshot = authority.capture(
+            model, design=design, con=con, namespace="runtime", run_id="v2", budget=Budget()
+        )
+        # The retained payload and model hash are the ones the corpus receipt recorded.
+        assert (snapshot.catalog_json, snapshot.model_hash) == (
+            recorded.catalog_json,
+            recorded.model_hash,
+        )
+        plan = plan_refresh(
+            namespace="runtime",
+            dataset="corpus",
+            definition_hash=design.spec_hash,
+            snapshot_id=snapshot.snapshot_id,
+            graph=dependency_graph(
+                model,
+                design,
+                sources=validate_design(design, model).required_sources,
+                definition_hash=design.spec_hash,
+                partitions=("all",),
+            ),
+        )
+        saved = SavedPlan.create(
+            plan_json=plan.serialize(),
+            design=design,
+            model=ModelReference.from_model(model, owner_key="model"),
+            destination=DestinationRef("output.duckdb", "analytics", "corpus"),
+            namespace="runtime",
+            expected_base_manifest=None,
+        )
+        saved.pin_snapshot(store)
+        con.raw_sql("DELETE FROM orders")
+
+        class Resolver:
+            def resolve(self, reference):
+                return model
+
+        result = runtime.run_serialized_plan(
+            saved.to_json(),
+            con=con.con,
+            namespace="runtime",
+            request_key="v2",
+            resolver=Resolver(),
+            snapshot_authority=authority,
+        )
+        published = runtime.open_published_frame(result, con=con.con, namespace="runtime")
+        assert result.state == "succeeded"
+        assert (
+            published.table.select(expected.column_names).sort_by(order).to_pylist()
+            == expected.to_pylist()
+        )
+    finally:
+        con.disconnect()
 
 
 @pytest.mark.parametrize("expression", ["none", "metric", "relative_metric"])

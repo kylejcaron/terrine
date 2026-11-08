@@ -51,13 +51,15 @@ def test_surrogate_round_trip_retains_selected_event_relative_timing(frame):
     for offset, name in enumerate(support):
         table = table.append_column(name, pa.array([origin + timedelta(days=offset)] * 2))
     timing = ExpressionTiming(
-        "event_time",
-        "session",
-        (0, 86400),
-        (-345600, -86400),
-        ("session",),
-        {"session": (-345600, -172800)},
-        *support,
+        kind="event_time",
+        selector_ref="session",
+        relative_offsets=(0, 86400),
+        support_seconds=(-345600, -86400),
+        selector_dependencies=("session",),
+        selector_support_seconds={"session": (-345600, -172800)},
+        point_time_column=support[0],
+        start_bound_column=support[1],
+        end_bound_column=support[2],
     )
     materialized = replace(
         frame,
@@ -108,7 +110,11 @@ def test_surrogate_round_trip_retains_sampled_sequential_roles(frame):
             target_weight="target_weight",
             trial_weight="trial_weight",
         ),
-        provenance=replace(frame.provenance, shape="sequential", sampling=SamplingMeta((), 2, 27)),
+        provenance=replace(
+            frame.provenance,
+            shape="sequential",
+            sampling=SamplingMeta(strata=(), controls_per_treated=2, seed=27),
+        ),
     )
     exported = to_surrogate_arrow(materialized, features=(), outcomes=("a",))
     restored = ArrowSurrogate.from_arrow(exported.to_arrow())

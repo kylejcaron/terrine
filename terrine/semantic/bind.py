@@ -14,6 +14,7 @@ import ibis.expr.types as ir
 
 from terrine.backends.registry import Engine, expression_dialect, resolve_engine
 from terrine.errors import RefusalSpec, freeze
+from terrine.semantic.io import invalid_definition
 from terrine.semantic.models import (
     BoundDimension,
     BoundFilter,
@@ -225,6 +226,15 @@ def normalize_source(
             _require_exact_type(
                 provider, execution_dialect, columns[event.column], event.column, engine
             )
+    native_values = tuple(
+        (("measures", measure_name, "exact"), "exact_value_type")
+        for measure_name, measure in catalog.measures.items()
+        if not measure.exact
+        and measure.event in events
+        and (events[measure.event] is None or not columns[events[measure.event]].is_floating())
+    )
+    if native_values:
+        raise invalid_definition(native_values)
     properties = {}
     for name in source.properties:
         prop = _reference(catalog.properties, name, "property")
@@ -358,6 +368,7 @@ def bind_metric(catalog: Catalog, metric_name: str) -> BoundMetric:
                 tuple(filters),
                 measure.window_days,
                 None,
+                measure.exact,
             )
         )
     transform = (freeze(metric.winsorization),) if metric.winsorization is not None else ()
@@ -374,11 +385,11 @@ def bind_metric(catalog: Catalog, metric_name: str) -> BoundMetric:
 
 def source_filter_predicate(table: ibis.Table, source: BoundSource) -> ir.BooleanValue:
     """Preserve unknown membership until the source-integrity check decides it."""
-    from terrine.semantic.filters import lower_filter
+    from terrine.semantic.predicates import lower_predicate
 
     predicate = cast(ir.BooleanValue, ibis.literal(True))
     for filt in source.where:
-        predicate &= lower_filter(table, filt, table[filt.property])
+        predicate &= lower_predicate(filt, table.__getitem__)
     return predicate
 
 

@@ -3,9 +3,12 @@
 Terrine's native `Catalog` describes source relations and their meaning without
 requiring the optional increment adapter. A catalog can be constructed from a
 Python mapping with `Catalog.model_validate(...)` or loaded from safe YAML with
-`load_catalog(path)`. YAML text uses the same strict version-2 schema gate;
+`load_catalog(path)`. YAML text uses the same strict version-3 schema gate;
 unknown fields, duplicate YAML keys, unsafe YAML tags, and unsupported schema
-versions are rejected.
+versions are rejected. `load_catalog`, `load_catalog_text` and
+`Model.from_catalog` also accept version 2 documents, which load with every
+measure exact and keep their model hash; `Catalog.model_validate(...)` accepts
+version 3 only.
 
 Schema failures from `load_catalog` and `load_catalog_text` raise `TerrineError`
 with code `terrine.catalog.invalid_definition`. Inspect its immutable
@@ -85,7 +88,7 @@ Source filters use the same operators and typed comparisons as metric filters,
 but their keys name physical columns; those columns need not be in `labels=`.
 They apply before metrics, event selectors, anchors, survival, sequences and
 event-backed `asof` lookups. `Events` detaches the mapping and freezes collection
-values, and source filters round-trip in the version-2 catalog. Changing a source
+values, and source filters round-trip in the version-3 catalog. Changing a source
 filter also changes its features' definition identities, so fitted transforms
 cannot be reused with a different event population.
 
@@ -102,7 +105,10 @@ Metrics are named by you and built with `tr.count()`, `tr.sum(column)`,
 days), `tr.min`, `tr.max`, `tr.count_distinct(column)` and
 `tr.ratio(numerator, denominator)` over two metrics of the same `Events`.
 Metric names are unique across the model; a metric may share its event's name.
-Consume them with ordinary `agg` expressions.
+Consume them with ordinary `agg` expressions. `tr.sum`, `tr.mean`, `tr.min` and
+`tr.max` allow native float64 arithmetic for float columns unless given
+`exact=True`; counts, distinct counts and integer or decimal columns are always
+exact (see [Native Catalog declarations](#native-catalog-declarations)).
 
 `labels=` names event columns that become event-time properties with the same
 name, usable in metric `where=`, in `event_time(..., label_property=, equals=)`, in
@@ -169,7 +175,7 @@ refuses with `terrine.model.invalid_binding` (`reason="name_collision"`,
 context `kind` of `metric`, `label` or `event`, `name`, and the sorted
 `owners`, such as `("events:orders.amount", "labels:orders")`).
 
-`model.to_catalog()` writes the equivalent schema-version-2 catalog as YAML.
+`model.to_catalog()` writes the equivalent schema-version-3 catalog as YAML.
 Pass that YAML directly to `Model.from_catalog(model.to_catalog(), con=con,
 units=model.units, readiness=model.readiness, event_ids=model.event_ids)` to
 bind the same model with an equal `model_hash`. A catalog contains only source,
@@ -213,7 +219,7 @@ design = recipes.time_series(
     every="7d", start="2025-01-01", end="2025-01-07", outcomes=outcomes,
 )
 result = design.build(model).materialize(
-    Budget(max_rows=1_000, max_output_bytes=1_000_000)
+    budget=Budget(max_rows=1_000, max_output_bytes=1_000_000)
 )
 ```
 
@@ -261,7 +267,7 @@ results, and materializes cumulative event-origin values.
 ## Native Catalog declarations
 
 ```yaml
-schema_version: 2
+schema_version: 3
 day_boundary: UTC
 dialect: duckdb
 sources:
@@ -285,6 +291,15 @@ metrics:
 Here `kind: mean` describes the downstream population summary; `aggregation:
 count` describes the per-unit session count. It does not average events or
 change a requested feature window.
+
+A `sum`, `avg_event`, `avg_calendar_day`, `min` or `max` measure over float
+values allows native float64 arithmetic with `exact: false`; without the key
+it is exact. Counts, distinct counts and integer or decimal event values always
+aggregate exactly, so `exact: false` on them refuses with
+`terrine.catalog.invalid_definition`. `Model.from_tables` writes `exact: false`
+for float metrics declared without `exact=True`. The mode is part of the
+measure's identity: switching it changes the model hash and rebuilds persisted
+layers rather than reusing them.
 
 `day_boundary` accepts `UTC` or a fixed signed `HH:MM` offset, with an optional
 `UTC` prefix (for example, `+05:30` or `UTC-05:00`). Coverage days are local to
@@ -584,17 +599,17 @@ literals mean their stored binary64 values. On an exact numeric property, a
 native literal contract, not a claim of compatibility with another system's
 implicit coercions. Quote decimal prices and rates for every comparator:
 
-| Operator | Example threshold(s) for an exact `price` property |
-| --- | --- |
-| `equals` | `"0.10"` |
-| `not_equals` | `"0.10"` |
-| `gt` | `"0.105"` |
-| `gte` | `"0.10"` |
-| `lt` | `"0.105"` |
-| `lte` | `"0.10"` |
-| `in` | `["0.10", "0.20"]` |
-| `not_in` | `["0.10", "0.20"]` |
-| `between` | `["0.10", "0.20"]` (inclusive) |
+| Operator | `where=` key | Design predicate | Example threshold(s) for an exact `price` property |
+| --- | --- | --- | --- |
+| `equals` | `price` | `tr.eq` | `"0.10"` |
+| `not_equals` | `price__ne` | `tr.ne` | `"0.10"` |
+| `gt` | `price__gt` | `tr.gt` | `"0.105"` |
+| `gte` | `price__gte` | `tr.gte` | `"0.10"` |
+| `lt` | `price__lt` | `tr.lt` | `"0.105"` |
+| `lte` | `price__lte` | `tr.lte` | `"0.10"` |
+| `in` | `price` (a list) or `price__in` | `tr.isin` | `["0.10", "0.20"]` |
+| `not_in` | `price__not_in` | `tr.not_(tr.isin(...))` | `["0.10", "0.20"]` |
+| `between` | `price__between` | `tr.between` | `["0.10", "0.20"]` (inclusive) |
 
 For example, an exact decimal price `0.10` equals `"0.1"`, but does **not**
 equal float `0.1`; that binary64 value is slightly larger than exact
@@ -623,6 +638,16 @@ filters remain typed.
 For DuckDB's signed `HUGEINT`, threshold clipping covers its full signed
 128-bit range even when Ibis reports the column as `Decimal(38, 0)`.
 
+Design comparisons share these operators and their typed lowering with
+`where=` filters and Catalog filters: each record's `op` is the Catalog
+operator, and a Design comparison over a value compiles to the same predicate
+as the matching filter over a column. A Design comparison over an incomplete
+or null value is unknown (null) with that value's reason; a null literal gives
+`null_comparison`. `all_of`, `any_of` and `not_` combine comparisons and
+`is_null` with SQL three-valued AND, OR and NOT: a known false term settles
+`all_of`, a known true term settles `any_of`, and `not_` of an unknown rule
+stays unknown.
+
 ### Exact numeric state
 
 On the supported native DuckDB 1.5.6 route, integer and decimal sums use
@@ -646,8 +671,10 @@ wrapping, so no genuine count or difference leaves the type. The published
 written outside the bound (an external relation, a damaged persisted layer)
 refuses `terrine.temporal.exact_overflow`, never a wrapped integer. A stored
 `HUGEINT` reads back as `DECIMAL(38, 0)`, which holds every count exactly;
-persisted prefix layers carry counts as Arrow `decimal128(38, 0)`, and
-layers written in the earlier text form restore and compose identically.
+persisted prefix layers carry counts as Arrow `decimal128(38, 0)` and restore
+them as `HUGEINT` by name, so a frame composed from layers runs the
+exact-arithmetic known answers only where direct compilation does. Layers
+written in the earlier text form restore and compose identically.
 The other engines count in their coefficient type.
 
 Raw BIGNUM is **not** an Arrow numeric export. Diagnostic projections must
@@ -657,22 +684,35 @@ and refuse a nonrepresentable required result before export. Checked-cast
 nulls cannot masquerade as missing data. Native decimal precision above 38 is
 not available on this route.
 
-Float32 widens to Float64. Every finite float entering a sum is quantized
-once to `DECIMAL(38, 9)`-scale values by the engine's float-to-decimal
-conversion (nearest, ties away from zero, with about $10^{-16}$ relative
-binary64 conversion error), so values within that error of a halfway point
-may round either way; only the stated window-sum bound is promised.
-The result takes the declared-decimal coefficient path at scale 9.
-Thus `6e-10` becomes `1e-9`,
-and the exact tie `1/1024` becomes `0.000976563`. Float state carries
-`value_scale=9` and counts of non-finite and out-of-range inputs, without
-data-derived scales. DuckDB accumulates in unbounded `BIGNUM`, PostgreSQL
-in `NUMERIC`, BigQuery in `BIGNUMERIC`, and Snowflake in `NUMBER(38, 0)`.
-Bounded engines use the declared-decimal accumulation guards and refuse
-`terrine.temporal.exact_overflow` rather than publish incomplete state.
-Subtracting prefixes is exact, so older history cannot cancel a small window.
+Float32 widens to Float64. A float measure declared `exact: false` (the
+`Model.from_tables` default) keeps no exact state: its group sum is the
+engine's binary64 `SUM` of the finite values, the prefix the running `SUM`
+of those group sums (`numeric_policy` is `native`), and non-finite inputs are
+counted in `float64_nonfinite_count` instead of added. Where the policy
+bounds float arithmetic, the state also carries the group's scaled magnitude
+bound (`sum_bound`) and withheld-row count (`sum_withheld`), and the prefix
+withholds states whose accumulated magnitudes may leave half the range, as
+the fixed-precision prefix does. The window publishes the binary64 prefix
+difference within $2\,n_P\,2^{-53}\sum_{i\in P}|x_i|$ of the exact sum, $P$
+the unit's history through the window end.
 
-For original float inputs in window $W$, the published sum satisfies
+Every finite float of an exact measure is quantized once to
+`DECIMAL(38, 9)`-scale values by the engine's float-to-decimal conversion
+(nearest, ties away from zero, with about $10^{-16}$ relative binary64
+conversion error), so values within that error of a halfway point may round
+either way; only the stated window-sum bound is promised. The result takes
+the declared-decimal coefficient path at scale 9. Thus `6e-10` becomes
+`1e-9`, and the exact tie `1/1024` becomes `0.000976563`. Float state
+carries `value_scale=9` and counts of non-finite, out-of-range and
+below-resolution inputs (`float64_below_resolution_count`: nonzero values
+that quantized to zero), without data-derived scales. DuckDB accumulates in
+unbounded `BIGNUM`, PostgreSQL in `NUMERIC`, BigQuery in `BIGNUMERIC`, and
+Snowflake in `NUMBER(38, 0)`. Bounded engines use the declared-decimal
+accumulation guards and refuse `terrine.temporal.exact_overflow` rather than
+publish incomplete state. Subtracting prefixes is exact, so older history
+cannot cancel a small window.
+
+For original float inputs in window $W$, the published exact sum satisfies
 $|\hat S-S| \le e_S = 10^{-9}n_W+10^{-12}\sum_{i\in W}|x_i|$.
 Means divide that bound by their actual denominator, including per-day means.
 Means and ratios convert each exact operand once at its own scale, then
@@ -688,11 +728,15 @@ $$
 
 When $0<|\hat D|\le e_D$, the ratio is still returned without a stated
 accuracy bound. Floats have no bitwise or order-independence promise.
-Nonzero float measures below $5\cdot10^{-10}$ disappear from sums: declare
-them as decimals (for example `DECIMAL(18, 12)` for a `1e-12` measure),
-or record micro-units so `1e-12` becomes `1e-6` before binding the measure.
-Row predicates compare original values; output thresholds compare the
-published quantized result.
+Nonzero float measures below $5\cdot10^{-10}$ disappear from exact sums; the
+window's discarded-term count (a prefix difference of
+`float64_below_resolution_count`) then sets `__reason` to `below_resolution`
+beside the published sum of the retained terms, with `__complete` unchanged,
+and means and ratios of that sum carry the note. Declare such measures as
+decimals (for example `DECIMAL(18, 12)` for a `1e-12` measure), or record
+micro-units so `1e-12` becomes `1e-6` before binding the measure. Row
+predicates compare original values; output thresholds compare the published
+result.
 
 Window aggregation keeps its data-dependent checks as boolean flag columns
 of its own relation (`TemporalResult.row_checks`: endpoint alignment,
@@ -725,9 +769,11 @@ aggregate failed counts and identifiers only, never customer rows, keys, or
 values. `terrine.temporal.float64_precision` identifies, in `context["reason"]`,
 `nonfinite_input` (a non-finite value at or before the end of a non-empty
 window), `out_of_range` (an exact binary64 magnitude at least $10^{29}$), or
-`bound_overflow` (a result beyond binary64's range). The literal `1e29` is
-admitted because its exact value is just below $10^{29}$; the next float up
-is refused.
+`bound_overflow` (a result beyond binary64's range; on a policy that bounds
+float arithmetic also a finite result withheld before the engine could raise:
+a history whose magnitude sum reaches half the range, or a quotient or
+product outside the guarded range). The literal `1e29` is admitted because
+its exact value is just below $10^{29}$; the next float up is refused.
 
 ## Exact timestamp windows
 
@@ -785,16 +831,18 @@ original scale; counts use a checked exact integer representation.
 not a wide internal prefix whose later window fits. Conversion booleans have
 no numeric precision policy.
 
-A float window differences exact scale-9 coefficient prefixes, then converts
-the result to float64 under the quantized bounds above. Means and ratios
-convert each exact operand once and divide once in float64, including nested
-ratios of means; they do not retain unrounded intermediate quotients.
-Float outputs carry `numeric_policy=None` and no error column on every
-backend; eligibility thresholds and state-panel bins compare the published
-value. A known quantized zero denominator is NULL with `zero_denominator`.
-Cohort totals and means and
-cumulative lifetime value reduce published binary64 values natively and refuse
-`bound_overflow` when the result is not finite.
+An exact float window differences scale-9 coefficient prefixes, then converts
+the result to float64 under the quantized bounds above; a native float window
+differences binary64 running sums and publishes the difference unconverted.
+Means and ratios convert each exact operand once and divide once in float64,
+including nested ratios of means; they do not retain unrounded intermediate
+quotients. Float outputs carry `numeric_policy=None`, `arithmetic` set to
+`native` or `exact`, and no error column on every backend; eligibility
+thresholds and state-panel bins compare the published value. A known
+quantized zero denominator is NULL with `zero_denominator`. Cohort totals
+and means and cumulative lifetime value reduce published binary64 values
+natively and refuse `bound_overflow` when the result is not finite or when a
+policy that bounds float arithmetic withheld it.
 
 Run the focused fast boundary and window checks with
 `uv run pytest tests/temporal/test_prefix_lookup.py tests/temporal/test_window_aggregates.py`.

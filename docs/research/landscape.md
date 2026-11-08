@@ -131,3 +131,37 @@ All sources below are first-party docs, source repositories, or papers. Accessed
 - **[S31]** Narrator dbt Activity Schema package: https://github.com/narratorai/dbt-activity-schema
 - **[S32]** Hernán MA, Robins JM. “Using Big Data to Emulate a Target Trial When a Randomized Trial Is Not Available.” *American Journal of Epidemiology* 2016;183(8):758–764. https://doi.org/10.1093/aje/kwv254
 - **[S33]** Kaufman S, Rosset S, Perlich C, Stitelman O. “Leakage in data mining: formulation, detection, and avoidance.” *ACM Transactions on Knowledge Discovery from Data* 2012;6(4). https://doi.org/10.1145/2382577.2382579
+
+[S1]: #sources
+[S2]: #sources
+[S3]: #sources
+[S4]: #sources
+[S5]: #sources
+[S6]: #sources
+[S7]: #sources
+[S8]: #sources
+[S9]: #sources
+[S10]: #sources
+[S11]: #sources
+[S12]: #sources
+[S13]: #sources
+[S14]: #sources
+[S15]: #sources
+[S16]: #sources
+[S17]: #sources
+[S18]: #sources
+[S19]: #sources
+[S20]: #sources
+[S21]: #sources
+[S22]: #sources
+[S23]: #sources
+[S24]: #sources
+[S25]: #sources
+[S26]: #sources
+[S27]: #sources
+[S28]: #sources
+[S29]: #sources
+[S30]: #sources
+[S31]: #sources
+[S32]: #sources
+[S33]: #sources

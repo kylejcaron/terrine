@@ -7,6 +7,7 @@ import pytest
 
 from terrine.backends.dialect import current_dialect, dialect_scope
 from terrine.backends.timestamps import (
+    compare_timestamps,
     lookup_keys,
     lossless_scale,
     timestamp_parts,
@@ -140,6 +141,48 @@ def test_duckdb_lookup_keys_are_native_for_microsecond_pairs_and_structs_for_nan
     with dialect_scope("postgres"):
         point, state = lookup_keys(t.aware, t.naive)
         assert point.type() == state.type() == dt.Timestamp(scale=6)
+
+
+def test_duckdb_microsecond_comparisons_order_infinities_nulls_and_naive_utc_clocks():
+    """Aware against naive instants under a non-UTC session, against their rank order."""
+    con, _ = _new_york_session()
+    texts = [
+        "-infinity",
+        "1969-12-31 23:59:59.999999",
+        "1970-01-01 00:00:00",
+        "2025-03-09 06:30:00",
+        "2025-03-09 06:30:00.000001",
+        "infinity",
+        None,
+    ]
+    values = ", ".join(
+        f"({index}, {'NULL' if text is None else repr(text)})" for index, text in enumerate(texts)
+    )
+    ops = ("lt", "le", "gt", "ge", "eq")
+    try:
+        con.raw_sql(
+            "CREATE TABLE v AS SELECT i, timezone('UTC', CAST(text AS TIMESTAMP)) AS aware, "
+            f"CAST(text AS TIMESTAMP) AS naive FROM (VALUES {values}) AS v(i, text)"
+        )
+        left, right = con.table("v").view(), con.table("v").view()
+        pairs = left.cross_join(right, lname="left_{name}", rname="right_{name}")
+        rows = con.to_pyarrow(
+            pairs.select(
+                "left_i",
+                "right_i",
+                **{op: compare_timestamps(pairs.left_aware, pairs.right_naive, op) for op in ops},
+            )
+        ).to_pylist()
+    finally:
+        con.disconnect()
+    missing = len(texts) - 1
+    assert len(rows) == len(texts) ** 2
+    for row in rows:
+        a, b = row["left_i"], row["right_i"]
+        expected = {"lt": a < b, "le": a <= b, "gt": a > b, "ge": a >= b, "eq": a == b}
+        if missing in (a, b):
+            expected = dict.fromkeys(ops)
+        assert {op: row[op] for op in ops} == expected, (a, b)
 
 
 @pytest.mark.parametrize(

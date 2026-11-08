@@ -51,10 +51,10 @@ jobs:
         with:
           enable-cache: true
 
-      - name: Require successful CI for this commit
+      - name: Require release checks for this commit
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python scripts/require_green_ci.py --sha "$GITHUB_SHA"
+        run: python scripts/require_green_ci.py --sha "$GITHUB_SHA" --tag "$GITHUB_REF_NAME"
 
       - run: uv build --sdist --wheel --out-dir dist
 

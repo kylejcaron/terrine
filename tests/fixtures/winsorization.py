@@ -6,7 +6,7 @@ from terrine.spec import Design, Schedule, agg, asof
 def bind_model(con, *, label_end="2025-01-12", scoring=False):
     catalog = Catalog.model_validate(
         {
-            "schema_version": 2,
+            "schema_version": 3,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": {

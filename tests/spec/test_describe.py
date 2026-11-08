@@ -101,7 +101,7 @@ def shapes_model():
 
 _DESIGNS = {
     "survival": lambda: recipes.survival(start_event="signup", end_event="churn"),
-    "ltv": lambda: recipes.ltv(start_event="signup", metric="spend", period="7d", periods=3),
+    "ltv": lambda: recipes.ltv(start_event="signup", metric="spend", period="7d", max_periods=3),
     "state_panel": lambda: recipes.state_panel(
         state_source=StateObservations("health", ("well", "ill")),
         every="1w",
@@ -306,6 +306,35 @@ def test_describe_reads_expression_metadata_and_only_required_sources(shapes_mod
     ):
         assert identifier in text
     assert "churn" not in text
+
+
+def test_describe_renders_new_predicates(shapes_model):
+    purchases = tr.agg("purchases", window=("-9d", "-1d"))
+    plan = tr.asof("plan", before="-1d")
+    design = Design(
+        None,
+        FixedDate("2025-02-01"),
+        eligibility={
+            "eligible": tr.all_of(
+                tr.any_of(tr.lt(purchases, 3), tr.gte(purchases, 10)),
+                tr.not_(tr.isin(plan, ["free", "trial"])),
+            ),
+            "band": tr.between(purchases, 1, 5),
+            "capped": tr.lte(purchases, 7),
+            "changed": tr.ne(plan, "basic"),
+        },
+        gap="1d",
+    )
+    text = " ".join(design.describe(shapes_model).split())
+    for fragment in (
+        "< 3 or ",
+        ">= 10) and not (",
+        " in ('free', 'trial'))",
+        " between 1 and 5",
+        " <= 7",
+        " != 'basic'",
+    ):
+        assert fragment in text
 
 
 def test_describe_retains_calendar_clamping_and_bounds_long_schedules(shapes_model):

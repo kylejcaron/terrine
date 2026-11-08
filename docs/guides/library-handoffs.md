@@ -26,7 +26,7 @@ For local consumers, start with a verified `MaterializedFrame`:
 ```python
 from terrine.export import preflight_export
 
-# materialized = frame.materialize(budget)
+# materialized = frame.materialize(budget=budget)
 checked = preflight_export(materialized, drop_incomplete=True)
 print(dict(checked.excluded_counts))
 ```
@@ -88,7 +88,7 @@ every account-event row and produce identical treatments.
 Save this as `semantic.yaml`:
 
 ```yaml
-schema_version: 2
+schema_version: 3
 day_boundary: UTC
 dialect: duckdb
 sources:
@@ -172,7 +172,7 @@ try:
             features=covariates,
             outcomes={"y": tr.agg(metric, window=("0s", "28d"))},
         )
-        materialized = design.build(model).materialize(budget)
+        materialized = design.build(model).materialize(budget=budget)
         checked = preflight_export(materialized)
         r = materialized.roles
         materialized_frames[event, metric] = materialized

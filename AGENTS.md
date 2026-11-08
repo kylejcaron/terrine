@@ -107,7 +107,9 @@ Reached schedules and deadlines use notify.* for the current owner, or the autho
   `TERRINE_TEST_POSTGRES_*` settings. Start a throwaway local server with
   `eval "$(uv run python -m tests.integration.postgres_scratch start)"` and stop it
   with `uv run python -m tests.integration.postgres_scratch stop`. CI runs them
-  on every push against a PostgreSQL 16 service container. Each probe owns a
+  on every push against a PostgreSQL 16 service container. Cases also marked
+  `scale` run only in the scheduled scale tier, which has its own PostgreSQL 16
+  service. Each probe owns a
   uniquely named schema; never share a warehouse namespace between tests.
 - `uv run pytest integration/conformance` runs known answers on DuckDB by default,
   with parameters derived from the verified engine registry. Select the same cases
@@ -256,26 +258,51 @@ Reached schedules and deadlines use notify.* for the current owner, or the autho
 - Aggregate calculations cover large offsets, neighboring floating-point
   values, input-order changes, merged partitions, and values near overflow.
   Prefer centered, mergeable moments and overflow-safe cross terms.
-- Floats entering sums quantize once to `DECIMAL(38, 9)`-scale values using
-  the engine's float-to-decimal conversion (nearest, ties away from zero,
-  with about `1e-16` relative binary64 conversion error), so values within
-  that error of a halfway point may round either way; only the stated
-  window-sum bound is promised.
-  Quantized values share declared-decimal exact coefficients on every engine.
-  Against the exact sum of original floats, use
-  `e_S = 1e-9 * n_W + 1e-12 * sum(abs(x) for x in W)`; divide by the actual
-  denominator for means, including per-day means. Ratios convert each exact
-  operand once at its own scale and divide once in float64; test propagated
-  bounds with `tests/_float_bound.py`, never exact float bits.
-  Zero quantized denominators yield `zero_denominator`; nonzero denominators
-  within their bound of zero have no stated accuracy. Values below `5e-10`
-  vanish: declare decimals or rescale (for example into micro-units).
-  Original values still drive row filters; thresholds use published results.
-  Exact input magnitudes at least `10**29`, non-finite input and output overflow
-  refuse `terrine.temporal.float64_precision` with reasons `out_of_range`,
-  `nonfinite_input` and `bound_overflow`; `1e29` itself is just below the exact
-  boundary and is admitted. Bounded coefficient accumulation refuses
-  `terrine.temporal.exact_overflow`; DuckDB's BIGNUM remains unbounded.
+- Float measures have two arithmetic modes; counts, integers, declared
+  decimals, keys and timestamps are always exact. Test propagated bounds with
+  `tests/_float_bound.py`, never exact float bits; neither mode promises
+  bitwise or order-independent results.
+  - Native (default): binary64 sums; windows are prefix differences, so the
+    bound is against the unit's history prefix `P` through the window end,
+    `2 * n_P * 2**-53 * sum(abs(x) for x in P)` (`native_window_bound`). A
+    small window after a large history is only as accurate as the history
+    total allows; `backend-compatibility.md` says so and names exact mode as
+    the remedy. Means divide by the actual denominator; ratios convert each
+    operand once, divide once, and propagate both native bounds. Values below
+    `5e-10` are kept. Non-finite input refuses `nonfinite_input`; a result
+    beyond binary64 refuses `bound_overflow` (both
+    `terrine.temporal.float64_precision`).
+  - Exact (`exact=True`): floats entering sums quantize once to
+    `DECIMAL(38, 9)`-scale values using the engine's float-to-decimal
+    conversion (nearest, ties away from zero, about `1e-16` relative
+    conversion error, so halfway values may round either way) and share
+    declared-decimal exact coefficients on every engine. Against the exact
+    sum of original floats the window bound is
+    `e_S = 1e-9 * n_W + 1e-12 * sum(abs(x) for x in W)` (`window_sum_bound`),
+    independent of history. Nonzero values below `5e-10` vanish: the window
+    publishes the retained sum with `__reason = "below_resolution"` and
+    `__complete` unchanged (the one reason that accompanies a value; it is
+    tracked as a per-window count of discarded nonzero terms, so all-zero and
+    all-null windows keep their reasons, and means, ratios, cumulative values
+    and complete cohort summaries carry it). Exact input magnitudes at least
+    `10**29` refuse `out_of_range`; `1e29` itself is admitted. Bounded
+    coefficient accumulation refuses `terrine.temporal.exact_overflow`;
+    DuckDB's BIGNUM remains unbounded.
+  - Zero denominators yield `zero_denominator`; nonzero denominators within
+    their bound of zero have no stated accuracy. Original values drive row
+    filters; thresholds use published results.
+  - Policies that bound float arithmetic (PostgreSQL, portable; BigQuery and
+    Snowflake inherit) withhold binary64 sums, quotients and products before
+    the engine evaluates them, so `bound_overflow` there also refuses finite
+    results whose admission bound leaves the safe range: a history whose
+    magnitude sum reaches about `MAX / 2` even where values cancel, quotients
+    that could round to zero (below `2**-1020` with a divisor of magnitude at
+    least one) or overflow (above `2**1020` with a divisor below one), cohort
+    means whose scaled quotient or product leaves that range (products also
+    above `MAX / 2`), cohort totals and cumulative values past half the range.
+    DuckDB (IEEE 754) publishes those finite results. Never wrap an aggregate
+    in a CASE to avoid an engine error: the aggregate is still evaluated;
+    withhold its inputs.
 - When a result can be unavailable, preserve a numeric null and its exact
   reason through schemas, conversions, serialization, and saved fixtures.
 - Portable or hashed formats define collection order, tuple encoding, alias

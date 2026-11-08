@@ -213,5 +213,12 @@ def first_occurrence(
         )
     output["no_event"] = ~eligible
     result = joined.select(**output)
-    meta = ColumnMeta(None, "event", None, None, None, None)
+    meta = ColumnMeta(
+        window=None,
+        role="event",
+        observed_from_column=None,
+        observed_until_column=None,
+        complete_column=None,
+        reason_column=None,
+    )
     return TemporalResult(result, {"first_timestamp": meta}, checks)

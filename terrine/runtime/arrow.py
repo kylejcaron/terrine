@@ -8,10 +8,14 @@ import os
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pyarrow as pa
 
 from terrine.data import _OUTPUT_BYTES_EXCEEDED, _ROWS_EXCEEDED, Budget
+
+if TYPE_CHECKING:
+    from terrine.execution.inputs import ArrowReader
 
 _PREFIX = b"terrine.arrow.output.v1\n"
 
@@ -32,7 +36,7 @@ class ArrowOutput:
     nbytes: int
 
     @classmethod
-    def write(cls, reader: pa.RecordBatchReader, *, root: Path, budget: Budget | None = None):
+    def write(cls, reader: ArrowReader, *, root: Path, budget: Budget | None = None):
         root.mkdir(parents=True, exist_ok=True)
         path = root / f"{uuid.uuid4().hex}.arrow"
         temporary = path.with_suffix(".tmp")

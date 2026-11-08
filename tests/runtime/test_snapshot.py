@@ -20,7 +20,7 @@ from terrine.spec import Design, FixedDate, agg
 def _catalog() -> Catalog:
     return Catalog.model_validate(
         {
-            "schema_version": 2,
+            "schema_version": 3,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": {

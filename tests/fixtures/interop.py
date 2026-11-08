@@ -36,7 +36,7 @@ def interop_frame(con, *, empty=False, full=True):
         con.raw_sql("DELETE FROM users")
     catalog = Catalog.model_validate(
         {
-            "schema_version": 2,
+            "schema_version": 3,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": {

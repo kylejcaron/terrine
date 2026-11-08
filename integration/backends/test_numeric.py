@@ -1,7 +1,8 @@
 import math
-from decimal import Decimal
+from decimal import Decimal, localcontext
 from fractions import Fraction
 
+import ibis
 import pyarrow as pa
 import pytest
 
@@ -14,8 +15,15 @@ from integration.warehouse_execution.postgres_fixtures import (
 from integration.warehouse_execution.snowflake_fixtures import (
     snowflake_scratch as snowflake_scratch,  # noqa: F401
 )
-from terrine.backends.numeric import decimal_coefficient, exact_sum, exact_to_float, quantized_float
-from tests._float_bound import window_sum_bound
+from terrine.backends.numeric import (
+    below_resolution,
+    decimal_coefficient,
+    exact_sum,
+    exact_to_float,
+    float_is_finite,
+    quantized_float,
+)
+from tests._float_bound import native_window_bound, window_sum_bound
 from tests.backends.test_numeric import _floats, _rows
 from tests.backends.test_numeric import connection as connection  # noqa: F401
 
@@ -36,11 +44,18 @@ def test_quantized_float_sums_meet_window_bound(connection):
         value=[value for values in _GROUPS.values() for value in values],
     )
     quantized, nonfinite, out_of_range = quantized_float(table.value)
+    exact = decimal_coefficient(quantized, 9)
     state = table.mutate(
-        exact=decimal_coefficient(quantized, 9), nonfinite=nonfinite, invalid=out_of_range
+        exact=exact,
+        nonfinite=nonfinite,
+        invalid=out_of_range,
+        discarded=below_resolution(table.value, exact),
     )
     totals = state.group_by("grp").aggregate(
-        total=exact_sum(state.exact), nonfinite=state.nonfinite.sum(), invalid=state.invalid.sum()
+        total=exact_sum(state.exact),
+        nonfinite=state.nonfinite.sum(),
+        invalid=state.invalid.sum(),
+        discarded=state.discarded.sum(),
     )
     value, nonfinite, out_of_range = exact_to_float(totals.total, 9)
     rows = _rows(
@@ -49,6 +64,7 @@ def test_quantized_float_sums_meet_window_bound(connection):
             "grp",
             "nonfinite",
             "invalid",
+            "discarded",
             value=value,
             value_nonfinite=nonfinite,
             out_of_range=out_of_range,
@@ -61,8 +77,37 @@ def test_quantized_float_sums_meet_window_bound(connection):
         assert abs(Fraction(row["value"]) - sum(map(Fraction, finite))) <= window_sum_bound(finite)
         assert row["nonfinite"] == sum(not math.isfinite(value) for value in values)
         assert row["invalid"] == 0
+        # Only a nonzero finite input that quantizes to zero is a discarded contribution.
+        assert row["discarded"] == sum(value != 0 and abs(value) < 5e-10 for value in finite)
         assert row["value_nonfinite"] is False
         assert row["out_of_range"] is False
+
+
+def test_native_float_sums_meet_native_bound(connection):
+    """The engine's binary64 sum of a group's finite values stays within the native
+    bound of their exact sum; non-finite inputs are excluded, as the native state does."""
+    table = _floats(
+        connection,
+        "native_floats",
+        grp=[name for name, values in _GROUPS.items() for _ in values],
+        value=[value for values in _GROUPS.values() for value in values],
+    )
+    finite = float_is_finite(table.value)
+    state = table.mutate(term=finite.ifelse(table.value, ibis.null("float64")))
+    totals = state.group_by("grp").aggregate(total=state.term.sum())
+    rows = _rows(connection, totals.select("grp", "total"))
+    assert len(rows) == len(_GROUPS)
+    for row in rows:
+        values = [value for value in _GROUPS[row["grp"]] if math.isfinite(value)]
+        assert abs(Fraction(row["total"]) - sum(map(Fraction, values))) <= native_window_bound(
+            values
+        ), row["grp"]
+
+
+def _is_exact_nano_tie(value: float) -> bool:
+    with localcontext() as context:
+        context.prec = 800
+        return abs(Decimal(value) * Decimal(10**9)) % 1 == Decimal("0.5")
 
 
 def _assert_float_cast_rounds_to_nearest_nano_unit(con):
@@ -94,7 +139,7 @@ def _assert_float_cast_rounds_to_nearest_nano_unit(con):
             "case", text=quantized.cast("string"), nonfinite=nonfinite, out_of_range=out_of_range
         ).order_by("case")
     ).to_pylist()
-    assert [Decimal(row["text"]) for row in rows[:7]] == [
+    expected = [
         Decimal("0.100000000"),
         Decimal("0"),
         Decimal("0"),
@@ -103,6 +148,13 @@ def _assert_float_cast_rounds_to_nearest_nano_unit(con):
         Decimal("0.000976563"),
         Decimal("-0.000976563"),
     ]
+    for value, row, expected_value in zip(values[:7], rows[:7], expected, strict=True):
+        observed = Decimal(row["text"])
+        if _is_exact_nano_tie(value):
+            neighbor = expected_value - Decimal("1e-9").copy_sign(Decimal(value))
+            assert observed in {expected_value, neighbor}
+        else:
+            assert observed == expected_value
     for value, row in zip(values[:-2], rows[:-2], strict=True):
         assert row["nonfinite"] is False and row["out_of_range"] is False
         assert abs(Fraction(Decimal(row["text"])) - Fraction(value)) <= window_sum_bound([value])
@@ -116,12 +168,15 @@ def _assert_float_cast_rounds_to_nearest_nano_unit(con):
 @pytest.mark.parametrize(
     "fixture",
     [
+        pytest.param("connection", id="duckdb"),
         pytest.param("bigquery_scratch", marks=pytest.mark.bigquery, id="bigquery"),
         pytest.param("snowflake_scratch", marks=pytest.mark.snowflake, id="snowflake"),
     ],
 )
 def test_float_cast_rounds_to_nearest_nano_unit(request, fixture):
-    _assert_float_cast_rounds_to_nearest_nano_unit(request.getfixturevalue(fixture).con)
+    backend = request.getfixturevalue(fixture)
+    con = backend if fixture == "connection" else backend.con
+    _assert_float_cast_rounds_to_nearest_nano_unit(con)
 
 
 @pytest.mark.postgres

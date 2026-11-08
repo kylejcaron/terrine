@@ -6,6 +6,7 @@ from dataclasses import replace
 from typing import TYPE_CHECKING, cast
 
 import ibis
+import ibis.expr.datatypes as dt
 import ibis.expr.types as ir
 
 import terrine.reasons as reason_codes
@@ -180,57 +181,63 @@ def compile_ltv(design: Design, model: Model) -> CompiledStudy:
         or name == compiled.roles.treatment
     }
     output_columns["period_value"] = ColumnMeta(
-        Window(0, trajectory.period),
-        "outcome",
-        "period_value_observed_from",
-        "period_value_observed_until",
-        "period_value_complete",
-        "period_value_reason",
+        window=Window(0, trajectory.period),
+        role="outcome",
+        observed_from_column="period_value_observed_from",
+        observed_until_column="period_value_observed_until",
+        complete_column="period_value_complete",
+        reason_column="period_value_reason",
         numeric_policy=compiled.columns[names[0]].numeric_policy,
+        arithmetic=compiled.columns[names[0]].arithmetic,
     )
     outcome_names = ["period_value"]
     checks = list(compiled._checks)
     if trajectory.cumulative:
         partition = ["unit", "anchor_id", "cohort_time"]
-        scratch: list[str] = []
-        if table.period_value.type().is_decimal():
-            numeric_type = table.period_value.type()
+        numeric_type = table.period_value.type()
+        scale = None
+        if isinstance(numeric_type, dt.Decimal):
             scale = numeric_type.scale
             assert scale is not None
             decimal_text = table.period_value.cast("string")
             separator = decimal_text.find(".")
             fractional_digits = ibis.ifelse(separator < 0, 0, decimal_text.length() - separator - 1)
             coefficient_text = decimal_text.replace(".", "")
-            coefficient = coefficient_text.rpad(
+            term: ir.Value = coefficient_text.rpad(
                 coefficient_text.length() + scale - fractional_digits, "0"
             ).cast(exact_literal(0).type())
-            # A fixed-precision policy withholds each period's coefficient once
-            # the magnitudes accumulated through it may leave the domain, so
-            # the backend never evaluates a running sum outside it; any
-            # withheld period at or before an age makes that age's total NULL,
-            # which the exact-overflow check below refuses.
-            original = table.columns
-            table, coefficient, admitted = guard_accumulation(
-                table, coefficient, partition=partition, order="age"
-            )
-            scratch = [name for name in table.columns if name not in original]
-            frame = ibis.window(
-                group_by=[table[name] for name in partition], order_by=[table.age], rows=(None, 0)
-            )
-            exact_total = exact_sum(coefficient, admitted=admitted is not None).over(frame)
-            if admitted is not None:
-                flags = cast(ir.IntegerColumn, (~admitted).cast("int32"))
-                withheld = cast(ir.IntegerColumn, flags.sum().over(frame)) > 0
-                exact_total = withheld.ifelse(ibis.null().cast(exact_total.type()), exact_total)
-            total = narrow_exact(exact_total, scale, numeric_type)
         else:
-            frame = ibis.window(
-                group_by=[table[name] for name in partition], order_by=[table.age], rows=(None, 0)
+            term = table.period_value
+        # A bounding policy withholds each period's decimal coefficient or
+        # binary64 value once the magnitudes accumulated through it may leave
+        # the domain (a fixed-precision type, or half the binary64 range where
+        # float arithmetic raises), so the backend never evaluates a running
+        # sum outside it; any withheld period at or before an age makes that
+        # age's total NULL, which the checks below refuse. Integer periods sum
+        # in their native domain.
+        original = table.columns
+        admitted = None
+        if scale is not None or numeric_type.is_floating():
+            table, term, admitted = guard_accumulation(
+                table, term, partition=partition, order="age"
             )
-            total = table.period_value.sum().over(frame)
+        scratch = [name for name in table.columns if name not in original]
+        frame = ibis.window(
+            group_by=[table[name] for name in partition], order_by=[table.age], rows=(None, 0)
+        )
+        running = (
+            exact_sum(term, admitted=admitted is not None).over(frame)
+            if scale is not None
+            else cast(ir.NumericColumn, term).sum().over(frame)
+        )
+        if admitted is not None:
+            flags = cast(ir.IntegerColumn, (~admitted).cast("int32"))
+            withheld = cast(ir.IntegerColumn, flags.sum().over(frame)) > 0
+            running = withheld.ifelse(ibis.null().cast(running.type()), running)
+        total = narrow_exact(running, scale, numeric_type) if scale is not None else running
         # Through INT: PostgreSQL cannot cast boolean to BIGINT.
         missing = table.period_value.isnull().cast("int32").sum().over(frame) > 0
-        if table.period_value.type().is_decimal():
+        if scale is not None:
             failure_column = "failed_cumulative_exact_overflow"
             check_table = table.filter(~missing & total.isnull()).aggregate(
                 ibis._.count().cast("string").name(failure_column)
@@ -247,16 +254,13 @@ def compile_ltv(design: Design, model: Model) -> CompiledStudy:
                     ),
                 )
             )
-        cumulative = missing.ifelse(ibis.null().cast(total.type()), total)
-        table = table.mutate(cumulative_value=cumulative)
-        if scratch:
-            table = table.drop(*scratch)
-        if table.cumulative_value.type().is_floating():
-            # A native binary64 running total that leaves the finite range
-            # refuses instead of publishing an infinity or NaN.
+        elif numeric_type.is_floating():
+            # A native binary64 running total that leaves the finite range, or
+            # one a bounding policy withheld, refuses instead of publishing an
+            # infinity, NaN or incomplete sum.
             failure_column = "failed_cumulative_nonfinite"
             check_table = table.filter(
-                table.cumulative_value.notnull() & ~float_is_finite(table.cumulative_value)
+                ~missing & (total.isnull() | ~float_is_finite(total))
             ).aggregate(ibis._.count().cast("string").name(failure_column))
             checks.append(
                 _Check(
@@ -270,20 +274,35 @@ def compile_ltv(design: Design, model: Model) -> CompiledStudy:
                     ),
                 )
             )
+        cumulative = missing.ifelse(ibis.null().cast(total.type()), total)
+        table = table.mutate(cumulative_value=cumulative)
+        if scratch:
+            table = table.drop(*scratch)
         table = table.mutate(
             cumulative_value_complete=~missing & table.period_value_complete.fill_null(False)
         )
-        first_reason = ibis.coalesce(
-            *(
-                table.period_value_reason.lag(offset=offset).over(frame)
-                for offset in reversed(range(trajectory.periods))
+        # A period's reason either explains its missing value or, beside a
+        # published value, notes what it omits (``below_resolution``). The
+        # cumulative value takes the earliest missing period's reason, else the
+        # earliest note among the periods it adds.
+        no_reason = ibis.null().cast("string")
+        period_missing = table.period_value.isnull()
+
+        def earliest(reason):
+            return ibis.coalesce(
+                *(
+                    reason.lag(offset=offset).over(frame)
+                    for offset in reversed(range(trajectory.periods))
+                )
             )
-        )
+
+        first_missing = earliest(period_missing.ifelse(table.period_value_reason, no_reason))
+        first_note = earliest(period_missing.ifelse(no_reason, table.period_value_reason))
         table = table.mutate(
             cumulative_value_reason=ibis.ifelse(
                 missing,
-                first_reason.fill_null(ibis.literal(reason_codes.INCOMPLETE_CONTRIBUTION)),
-                ibis.null().cast("string"),
+                first_missing.fill_null(ibis.literal(reason_codes.INCOMPLETE_CONTRIBUTION)),
+                first_note,
             )
         )
         output_columns["cumulative_value"] = replace(

@@ -53,7 +53,7 @@ def nonadditive_model():
     con.create_table("users", pa.table({"id": ["a", "b", "c"]}))
     catalog = Catalog.model_validate(
         {
-            "schema_version": 2,
+            "schema_version": 3,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": {

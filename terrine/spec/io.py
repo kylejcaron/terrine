@@ -17,16 +17,25 @@ from terrine.errors import RefusalSpec, TerrineError
 from terrine.spec.anchors import AnchorRange, EventAnchor, FixedDate, Schedule
 from terrine.spec.design import Design, Treatment
 from terrine.spec.expressions import (
+    _PREDICATE_NODES,
     And,
     ApproxMetricDistinct,
     ApproxMetricQuantile,
     AttributeAsOf,
+    Between,
     Eq,
     EventTime,
     Gt,
+    Gte,
+    IsIn,
     IsNull,
+    Lt,
+    Lte,
     MetricAgg,
     MetricQuantile,
+    Ne,
+    Not,
+    Or,
     RetentionMetric,
 )
 from terrine.spec.panels import (
@@ -47,7 +56,13 @@ from terrine.spec.state_panel import (
     encode_cutpoint,
 )
 from terrine.spec.trajectory import CohortSpec, LifeTable, TimeToEvent, Trajectory
-from terrine.windows import Window
+from terrine.windows import (
+    Duration,
+    Months,
+    Window,
+    _seconds,
+    calendar_or_duration,
+)
 
 __all__ = [
     "SCHEMA_VERSION",
@@ -112,6 +127,16 @@ _DEFAULTS: Mapping[str, Mapping[str, Any]] = {
     "IsNull": {"negate": False},
     "Treatment": {"at": "0s", "known_at_t0": False},
 }
+# Single-literal comparisons share one node shape, {"type", "expr", "value"}.
+_COMPARISONS: Mapping[str, type[Eq | Ne | Gt | Gte | Lt | Lte]] = {
+    "Eq": Eq,
+    "Ne": Ne,
+    "Gt": Gt,
+    "Gte": Gte,
+    "Lt": Lt,
+    "Lte": Lte,
+}
+_COMPARISON_TAGS = {kind: tag for tag, kind in _COMPARISONS.items()}
 
 
 def _canonical_bytes(payload: Any) -> bytes:
@@ -128,6 +153,8 @@ def canonical_digest(payload: Mapping[str, Any]) -> str:
     decoded from it.
     """
     return hashlib.sha256(_canonical_bytes(payload)).hexdigest()
+
+
 
 
 def _is_default(item: Any, default: Any) -> bool:
@@ -477,16 +504,32 @@ def _encode(value: Any) -> Any:
                 "measure": value.measure,
             },
         )
-    if isinstance(value, Gt):
-        return {"type": "Gt", "expr": _encode(value.expr), "value": value.value}
-    if isinstance(value, Eq):
-        return {"type": "Eq", "expr": _encode(value.expr), "value": value.value}
+    if isinstance(value, (Eq, Ne, Gt, Gte, Lt, Lte)):
+        return {
+            "type": _COMPARISON_TAGS[type(value)],
+            "expr": _encode(value.expr),
+            "value": value.value,
+        }
+    if isinstance(value, IsIn):
+        return {"type": "IsIn", "expr": _encode(value.expr), "values": list(value.values)}
+    if isinstance(value, Between):
+        return {
+            "type": "Between",
+            "expr": _encode(value.expr),
+            "low": value.low,
+            "high": value.high,
+        }
     if isinstance(value, IsNull):
         return _omit_defaults(
             "IsNull", {"type": "IsNull", "expr": _encode(value.expr), "negate": value.negate}
         )
-    if isinstance(value, And):
-        return {"type": "And", "terms": [_encode(term) for term in value.terms]}
+    if isinstance(value, (And, Or)):
+        return {
+            "type": "And" if isinstance(value, And) else "Or",
+            "terms": [_encode(term) for term in value.terms],
+        }
+    if isinstance(value, Not):
+        return {"type": "Not", "term": _encode(value.term)}
     if isinstance(value, Treatment):
         return _omit_defaults(
             "Treatment",
@@ -583,10 +626,18 @@ def _decimal_string(value: Any) -> Decimal:
     return Decimal(value)
 
 
-def _duration_text(value: Any) -> str:
+def _duration_text(value: Any) -> Duration:
     if not isinstance(value, str):
         raise ValueError("duration must be text")
-    return value
+    return Duration(_seconds(value, field="document", legacy_minutes=True))
+
+
+def _step_text(value: Any) -> Duration | Months:
+    if not isinstance(value, str):
+        raise ValueError("schedule interval must be text")
+    if value.endswith(("mo", "y")):
+        return calendar_or_duration(value, field="document")
+    return Duration(_seconds(value, field="document", legacy_minutes=True))
 
 
 def _node(value: Any) -> Any:
@@ -629,7 +680,7 @@ def _node(value: Any) -> Any:
         start, end = _read_date(item["start"]), _read_date(item["end"])
         if isinstance(start, datetime) or isinstance(end, datetime):
             raise ValueError("Schedule bounds require dates")
-        return Schedule(_duration_text(item["every"]), start, end)
+        return Schedule(_step_text(item["every"]), start, end)
     if tag == "AnchorRange":
         item = _fields(value, "AnchorRange", {"type"})
         start = None if item["start"] is None else _read_date(item["start"])
@@ -793,20 +844,29 @@ def _node(value: Any) -> Any:
             None if item["relative_to"] is None else _node(item["relative_to"]),
             measure=item["measure"],
         )
-    if tag == "Gt":
+    if tag in _COMPARISONS:
         item = _object(value, {"type", "expr", "value"})
-        return Gt(_node(item["expr"]), item["value"])
-    if tag == "Eq":
-        item = _object(value, {"type", "expr", "value"})
-        return Eq(_node(item["expr"]), item["value"])
+        return _COMPARISONS[tag](_node(item["expr"]), item["value"])
+    if tag == "IsIn":
+        item = _object(value, {"type", "expr", "values"})
+        if not isinstance(item["values"], list):
+            raise ValueError("IsIn values must be a list")
+        return IsIn(_node(item["expr"]), item["values"])
+    if tag == "Between":
+        item = _object(value, {"type", "expr", "low", "high"})
+        return Between(_node(item["expr"]), item["low"], item["high"])
     if tag == "IsNull":
         item = _fields(value, "IsNull", {"type", "expr"})
         return IsNull(_node(item["expr"]), item["negate"])
-    if tag == "And":
+    if tag in ("And", "Or"):
         item = _object(value, {"type", "terms"})
         if not isinstance(item["terms"], list):
-            raise ValueError("And terms must be a list")
-        return And(tuple(_node(term) for term in item["terms"]))
+            raise ValueError(f"{tag} terms must be a list")
+        terms = tuple(_node(term) for term in item["terms"])
+        return And(terms) if tag == "And" else Or(terms)
+    if tag == "Not":
+        item = _object(value, {"type", "term"})
+        return Not(_node(item["term"]))
     if tag == "Treatment":
         item = _fields(value, "Treatment", {"type", "attribute"})
         return Treatment(item["attribute"], _duration_text(item["at"]), item["known_at_t0"])
@@ -842,42 +902,22 @@ def _design(value: Any) -> Design:
     unit = item["unit"]
     if unit is not None and not isinstance(unit, str):
         raise TypeError("unit must be a string or null")
+    outputs = (
+        MetricAgg,
+        MetricQuantile,
+        ApproxMetricQuantile,
+        ApproxMetricDistinct,
+        RetentionMetric,
+        AttributeAsOf,
+        EventTime,
+        *_PREDICATE_NODES,
+    )
     return Design(
         unit,
         anchor,
-        features=named(
-            item["features"],
-            (
-                MetricAgg,
-                MetricQuantile,
-                ApproxMetricQuantile,
-                ApproxMetricDistinct,
-                RetentionMetric,
-                AttributeAsOf,
-                EventTime,
-                Gt,
-                Eq,
-                IsNull,
-                And,
-            ),
-        ),
-        outcomes=named(
-            item["outcomes"],
-            (
-                MetricAgg,
-                MetricQuantile,
-                ApproxMetricQuantile,
-                ApproxMetricDistinct,
-                RetentionMetric,
-                AttributeAsOf,
-                EventTime,
-                Gt,
-                Eq,
-                IsNull,
-                And,
-            ),
-        ),
-        eligibility=named(item["eligibility"], (Gt, Eq, IsNull, And)),
+        features=named(item["features"], outputs),
+        outcomes=named(item["outcomes"], outputs),
+        eligibility=named(item["eligibility"], _PREDICATE_NODES),
         treatment=treatment,
         gap=_duration_text(item["gap"]),
         shape=item["shape"] if isinstance(item["shape"], str) else _node(item["shape"]),

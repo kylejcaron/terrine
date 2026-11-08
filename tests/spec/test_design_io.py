@@ -8,7 +8,24 @@ import pytest
 from terrine.errors import TerrineError
 from terrine.spec.anchors import AnchorRange, EventAnchor, FixedDate, Schedule
 from terrine.spec.design import Design, Treatment
-from terrine.spec.expressions import agg, all_of, asof, eq, event_time, gt, is_null, since
+from terrine.spec.expressions import (
+    agg,
+    all_of,
+    any_of,
+    asof,
+    between,
+    eq,
+    event_time,
+    gt,
+    gte,
+    is_null,
+    isin,
+    lt,
+    lte,
+    ne,
+    not_,
+    since,
+)
 from terrine.spec.io import from_json, from_yaml, to_json, to_yaml
 from terrine.spec.panels import EventPanelSpec, Initiation, SequentialSpec
 from terrine.spec.trajectory import CohortGrouping, CohortSpec, LifeTable, TimeToEvent, Trajectory
@@ -17,7 +34,7 @@ from terrine.windows import Duration, Months
 
 def test_subday_duration_forms_share_canonical_spec_hashes():
     anchor = FixedDate("2025-03-01")
-    for left, right in (("60s", "1m"), ("60m", "1h"), ("24h", "1d")):
+    for left, right in (("60s", "1min"), ("60min", "1h"), ("24h", "1d")):
         one = Design(
             unit="user",
             anchor=anchor,
@@ -73,6 +90,21 @@ def test_unit_null_round_trips():
     assert error.value.code == "terrine.design.invalid"
     assert error.value.context["reason"] == "malformed_document"
 
+
+
+def test_schema4_document_with_m_loads_and_resaves_as_min():
+    design = Design("user", FixedDate("2025-01-01"), gap="5min")
+    legacy = to_yaml(design).replace("5min", "5m")
+
+    restored = from_yaml(legacy)
+
+    assert restored.gap == Duration(300)
+    assert "gap: 5min" in to_yaml(restored)
+
+
+def test_design_unit_defaults_to_none():
+    design = Design(anchor=FixedDate("2025-01-01"))
+    assert design.unit is None
 
 def test_canonical_document_omits_default_fields():
     minimal = Design("user", FixedDate("2025-03-01"))
@@ -135,13 +167,13 @@ def test_saved_design_documents_hold_canonical_duration_text(shape_name):
     shape: str | EventPanelSpec | SequentialSpec | LifeTable = "cross_section"
     elapsed_fields: dict[str, str] = {}
     if shape_name == "event_panel":
-        shape = EventPanelSpec((-1, 0, 1), period="60m", reference_period=-1)
+        shape = EventPanelSpec((-1, 0, 1), period="60min", reference_period=-1)
         elapsed_fields = {"period": "1h"}
     elif shape_name == "sequential":
         anchor = Schedule("24h", "2025-01-01", "2025-01-02")
         shape = SequentialSpec(
             Initiation("started", history_start=datetime(2024, 1, 1, tzinfo=UTC)),
-            anticipation="120m",
+            anticipation="120min",
             reference_period="-3h",
         )
         elapsed_fields = {"anticipation": "2h", "reference_period": "-3h"}
@@ -177,23 +209,35 @@ def test_saved_design_documents_hold_canonical_duration_text(shape_name):
     assert error.value.context["reason"] == "malformed_document"
 
 
-def test_predicate_outcome_round_trips_json():
+def test_predicate_round_trip_json_yaml():
+    week = agg("orders", window=("0s", "7d"))
+    history = agg("orders", window=("-30d", "0s"))
+    tier = asof("tier", before="0s")
     design = Design(
         "user",
         FixedDate("2025-01-01"),
-        features={"missing": is_null(asof("tier", before="0s"))},
+        features={"missing": is_null(tier), "not_free": ne(tier, "free")},
         outcomes={
-            "converted_7d": gt(agg("orders", window=("0s", "7d")), 0),
+            "converted_7d": gt(week, 0),
             "churned_30d": eq(agg("orders", window=("0s", "30d")), 0),
-            "both": all_of(
-                gt(agg("orders", window=("0s", "7d")), 0),
-                eq(agg("orders", window=("7d", "30d")), 0),
-            ),
+            "both": all_of(gt(week, 0), eq(agg("orders", window=("7d", "30d")), 0)),
+            "few": lte(week, 2.5),
+            "either": any_of(gte(week, 3), not_(isin(tier, ["gold", None]))),
+        },
+        eligibility={
+            "low": lt(history, 3),
+            "band": between(history, "0.5", 10),
+            "paid": isin(tier, {"gold", "silver"}),
         },
     )
     for restored in (from_json(to_json(design)), from_yaml(to_yaml(design))):
         assert restored == design
         assert restored.spec_hash == design.spec_hash
+    document = json.loads(to_json(design))
+    document["design"]["eligibility"]["paid"]["values"] = "gold"
+    with pytest.raises(TerrineError) as error:
+        from_json(json.dumps(document))
+    assert error.value.context["reason"] == "malformed_document"
 
 
 def test_schedule_uses_positive_elapsed_cadence_and_ordered_dates():
@@ -483,3 +527,9 @@ def test_since_round_trips_design_documents():
             },
         ).spec_hash
     )
+def test_design_unit_wrong_type_reason():
+    with pytest.raises(TerrineError) as error:
+        Design(cast(str, 1), FixedDate("2025-01-01"))
+    assert error.value.code == "terrine.design.invalid"
+    assert error.value.context["reason"] == "wrong_type"
+    assert error.value.context["field"] == "unit"

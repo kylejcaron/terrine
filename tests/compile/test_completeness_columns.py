@@ -28,10 +28,26 @@ def test_life_table_keeps_list_valued_reasons_under_the_suffix():
     assert pa.types.is_list(table.schema.field("events__reason").type)
     assert table["events__complete"].to_pylist() == [False]
     frame = MaterializedFrame(
-        table,
-        Roles("unit", "anchor_id", "t0", None, (), ("events",)),
-        {"events": ColumnMeta(None, "outcome", None, None, "events__complete", "events__reason")},
-        _provenance(),
+        table=table,
+        roles=Roles(
+            unit="unit",
+            anchor="anchor_id",
+            t0="t0",
+            treatment=None,
+            features=(),
+            outcomes=("events",),
+        ),
+        columns={
+            "events": ColumnMeta(
+                window=None,
+                role="outcome",
+                observed_from_column=None,
+                observed_until_column=None,
+                complete_column="events__complete",
+                reason_column="events__reason",
+            )
+        },
+        provenance=_provenance(),
     )
     result = preflight_export(frame, drop_incomplete=True)
     assert result.table.num_rows == 0
@@ -60,19 +76,26 @@ def test_null_reason_round_trips_arrow_and_manifest_under_new_names():
         }
     )
     frame = MaterializedFrame(
-        table,
-        Roles("unit", "anchor_id", "t0", None, (), ("revenue",)),
-        {
+        table=table,
+        roles=Roles(
+            unit="unit",
+            anchor="anchor_id",
+            t0="t0",
+            treatment=None,
+            features=(),
+            outcomes=("revenue",),
+        ),
+        columns={
             "revenue": ColumnMeta(
-                None,
-                "outcome",
-                "revenue_observed_from",
-                "revenue_observed_until",
-                "revenue__complete",
-                "revenue__reason",
+                window=None,
+                role="outcome",
+                observed_from_column="revenue_observed_from",
+                observed_until_column="revenue_observed_until",
+                complete_column="revenue__complete",
+                reason_column="revenue__reason",
             )
         },
-        _provenance(),
+        provenance=_provenance(),
     )
     arrow = frame.to_pyarrow()
     assert arrow.column_names == table.column_names
@@ -124,23 +147,38 @@ def test_lossless_arrow_keeps_observation_evidence_with_sorted_filtered_rows():
     from terrine.data import ExpressionTiming
 
     frame = MaterializedFrame(
-        table,
-        Roles("unit", "anchor_id", "t0", None, (), ("value",)),
-        {
+        table=table,
+        roles=Roles(
+            unit="unit",
+            anchor="anchor_id",
+            t0="t0",
+            treatment=None,
+            features=(),
+            outcomes=("value",),
+        ),
+        columns={
             "value": ColumnMeta(
-                None,
-                "outcome",
-                "value__observed_from",
-                "value__observed_until",
-                "value__complete",
-                "value__reason",
+                window=None,
+                role="outcome",
+                observed_from_column="value__observed_from",
+                observed_until_column="value__observed_until",
+                complete_column="value__complete",
+                reason_column="value__reason",
             )
         },
-        replace(
+        provenance=replace(
             _provenance(),
             expression_timings={
                 "value": ExpressionTiming(
-                    "fixed_t0", None, None, (0, 0), (), {}, "resolved_time", None, None
+                    kind="fixed_t0",
+                    selector_ref=None,
+                    relative_offsets=None,
+                    support_seconds=(0, 0),
+                    selector_dependencies=(),
+                    selector_support_seconds={},
+                    point_time_column="resolved_time",
+                    start_bound_column=None,
+                    end_bound_column=None,
                 ),
             },
         ),
@@ -168,10 +206,26 @@ def test_compact_arrow_refuses_missing_bookkeeping_with_pickle_safe_context():
 
     origin = datetime(2025, 1, 1, tzinfo=UTC)
     frame = MaterializedFrame(
-        pa.table({"unit": ["u"], "value": [None], "value__observed_from": [origin]}),
-        Roles("unit", "anchor_id", "t0", None, (), ("value",)),
-        {"value": ColumnMeta(None, "outcome", "value__observed_from", None, None, None)},
-        _provenance(),
+        table=pa.table({"unit": ["u"], "value": [None], "value__observed_from": [origin]}),
+        roles=Roles(
+            unit="unit",
+            anchor="anchor_id",
+            t0="t0",
+            treatment=None,
+            features=(),
+            outcomes=("value",),
+        ),
+        columns={
+            "value": ColumnMeta(
+                window=None,
+                role="outcome",
+                observed_from_column="value__observed_from",
+                observed_until_column=None,
+                complete_column=None,
+                reason_column=None,
+            )
+        },
+        provenance=_provenance(),
     )
     arrow = frame.to_pyarrow().select(["unit", "value"])
     with pytest.raises(TerrineError) as error:

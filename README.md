@@ -1,7 +1,6 @@
 # terrine
 
-> [!WARNING]
-> Terrine is an experimental idea for simplifying dataset curation. It is pre-alpha: the API will change without notice, and it is not ready for production use.
+0.x: the API may change between minor releases; each change is listed in the changelog.
 
 **Build datasets directly from event logs.**
 
@@ -153,7 +152,7 @@ from modeling inputs.
 | --- | --- |
 | **Unit:** who each row is about, read from a table so nobody silently drops out | `customers.customer_id` |
 | **t0:** the snapshot time of each row. `every` is an elapsed duration (`"7d"`, `"4w"`) or a calendar step (`"1mo"`, `"3mo"`, `"1y"`); a monthly schedule from the 31st lands on Jan 31, Feb 28, Mar 31 | `every="1mo"`: the first of each month from 2025-02-01 through 2025-03-01, both days included |
-| **Windows:** relative to t0, start included, end excluded. Features must end at or before t0; outcomes must start at or after t0. Windows are elapsed time: `"-1mo"` is refused, use `"-30d"` or `"-4w"` | `("-30d", "0s")` is the 30 days before t0; `("0s", "30d")` is the 30 days after |
+| **Windows:** relative to t0, start included, end excluded. Features must end at or before t0; outcomes must start at or after t0. Windows are elapsed time: minutes use `min` (not `m`), and `"-1mo"` is refused; use `"-30d"` or `"-4w"` | `("-30d", "0s")` is the 30 days before t0; `("0s", "30d")` is the 30 days after |
 | **Completeness:** the calendar days, inclusive, that you declare fully loaded for each event table (not just the first and last event you happen to have). Windows outside them are unknown, not zero | `complete=("2025-01-01", "2025-03-20")` |
 
 ## Other datasets
@@ -175,6 +174,7 @@ More feature recipes are in [common feature patterns](https://github.com/kylejca
 ## Where it runs
 
 Queries run where your data lives; nothing is uploaded. DataFrames and Arrow tables, as above, are queried in a private in-process DuckDB. For a warehouse, pass its Ibis connection first and name the tables: `tr.Model.from_tables(con, units={"customer": tr.UnitSource("customers", "customer_id")}, events={"orders": tr.Events("orders", ...)})`. Results come back as pandas, Polars or Arrow.
+Dataset staging and durable materialization are currently DuckDB-only. `Dataset`, `Frame.stage`, and the materialization runtime are provisional and may change in a minor release.
 
 | Backend | Status |
 | --- | --- |

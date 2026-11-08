@@ -132,7 +132,7 @@ def test_from_tables_ltv_cumulative_age_zero_includes_origin_event():
             shape=CohortSpec("orders", Trajectory("spend", "7d", periods=2, cumulative=True)),
         )
         design = recipes.ltv(
-            "customer", start_event="orders", metric="spend", period="7d", periods=2
+            "customer", start_event="orders", metric="spend", period="7d", max_periods=2
         )
         assert design == low_level
         assert design.spec_hash == low_level.spec_hash

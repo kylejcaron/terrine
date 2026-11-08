@@ -1,0 +1,32 @@
+design:
+  anchor:
+    end:
+      type: date
+      value: '2025-02-02'
+    every: 1d
+    start:
+      type: date
+      value: '2025-02-01'
+    type: Schedule
+  features:
+    orders_30d:
+      metric: orders
+      type: MetricAgg
+      window:
+        end: 0s
+        start: -30d
+        type: Window
+  shape:
+    periods: 2
+    state:
+      cutpoints:
+      - type: int
+        value: '0'
+      levels:
+      - no_spend
+      - spend
+      metric: spend
+      type: BinnedMetricState
+    type: StatePanel
+  unit: null
+schema_version: 4

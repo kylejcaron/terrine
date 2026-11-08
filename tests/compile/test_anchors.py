@@ -48,7 +48,7 @@ def native_model():
         ),
     )
     catalog = {
-        "schema_version": 2,
+        "schema_version": 3,
         "day_boundary": "UTC-05:00",
         "dialect": "duckdb",
         "sources": {
@@ -475,7 +475,7 @@ def _submicro_model(value: int):
     )
     catalog = Catalog.model_validate(
         {
-            "schema_version": 2,
+            "schema_version": 3,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": {

@@ -1,6 +1,7 @@
 # Your first dataset
 
 Requires CPython 3.12 to 3.14 and the `duckdb,pandas` extras for this example.
+Dataset staging is currently DuckDB-only. `Dataset` and `Frame.stage` are provisional and may change in a minor release.
 For an installed distribution:
 
 ```sh
@@ -34,9 +35,9 @@ uv run python examples/first_dataset.py
    constructor in `tr.recipes`; it returns an ordinary Design, not a wrapper.
    Names become output columns, with temporal validation on the same expressions.
    `design.describe(model)` explains rows, windows, completeness and output
-   columns before any source rows are read. Schedules accept calendar steps such
-   as `"1mo"` and include their end date; relative windows remain elapsed and
-   end-exclusive.
+   columns before any source rows are read. Durations use `min` for minutes
+   (for example, `"30min"`); schedules also accept calendar steps such as `"1mo"`
+   and include their end date. Relative windows remain elapsed and end-exclusive.
 3. **Frame** is a lazy compiled dataset. `Design.build(model)` does not materialize
    source rows. `frame.materialize()` collects a result with roles, column
    completeness, null reasons and provenance; an explicit budget bounds output.
@@ -79,13 +80,13 @@ refusal code, then choose a sufficient explicit row and byte budget:
 ```python
 frame = design.build(model)
 try:
-    frame.materialize(tr.Budget(max_rows=1, strict_scan=False))
+    frame.materialize(budget=tr.Budget(max_rows=1, strict_scan=False))
 except tr.TerrineError as error:
     assert error.code == "terrine.budget.rows_exceeded"
 else:
     raise AssertionError("the one-row output cap must refuse two roster users")
 budget = tr.Budget(max_rows=10, max_output_bytes=1_000_000, strict_scan=False)
-result = frame.materialize(budget)
+result = frame.materialize(budget=budget)
 ```
 
 Limits abort rather than return truncated success. They do **not** bound source

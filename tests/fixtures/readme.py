@@ -37,8 +37,11 @@ def readme_tables() -> dict[str, pa.Table]:
     }
 
 
-def readme_model(con: Any | None = None) -> Model:
-    """The README binding: table names on ``con``, or its pandas frames on a private DuckDB."""
+def readme_model(con: Any | None = None, *, exact: bool = False) -> Model:
+    """The README binding: table names on ``con``, or its pandas frames on a private DuckDB.
+
+    ``exact`` declares the spend sum with exact arithmetic instead of the native default.
+    """
     tables = (
         {name: table.to_pandas() for name, table in readme_tables().items()}
         if con is None
@@ -52,7 +55,7 @@ def readme_model(con: Any | None = None) -> Model:
                 tables["orders"],
                 time="ordered_at",
                 key="customer_id",
-                metrics={"orders": count(), "spend": sum("amount")},
+                metrics={"orders": count(), "spend": sum("amount", exact=exact)},
                 complete=("2025-01-01", "2025-03-20"),
             )
         },

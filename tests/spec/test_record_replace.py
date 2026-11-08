@@ -36,7 +36,7 @@ RECORDS = (
     Design("customer", EventAnchor("orders", offset="2h"), gap="1w"),
     SequentialSpec(Initiation("orders", history_start=_HISTORY), None, "1d", "-2d"),
     EventPanelSpec((-1, 0, 1), "1d", -1),
-    SessionSpec("30m"),
+    SessionSpec("30min"),
     FunnelSpec("kind", ("view", "buy"), within="2h"),
     Trajectory("spend", "30d", 2),
     CohortGrouping("30d", datetime(2025, 1, 1, tzinfo=UTC)),

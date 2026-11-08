@@ -17,7 +17,7 @@ def test_capture_keeps_client_buffers_bounded_as_source_rows_increase(tmp_path, 
     con = ibis.duckdb.connect(str(path))
     catalog = Catalog.model_validate(
         {
-            "schema_version": 2,
+            "schema_version": 3,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": {

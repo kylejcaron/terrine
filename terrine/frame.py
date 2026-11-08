@@ -644,7 +644,7 @@ class Frame:
         )
         definition = import_module("terrine.dataset.reference")._definition_for(self)
         return transforms.fit_winsorization(
-            self.materialize(budget),
+            self.materialize(budget=budget),
             column=column,
             lower=probabilities[0],
             upper=probabilities[1],
@@ -669,22 +669,17 @@ class Frame:
         if bound.fit is not None:
             fit = bound.fit
             if self._training_view is not None:
-                definition_hash = (
-                    import_module("terrine.dataset.reference")
-                    ._definition_for(self, include_transforms=False)
-                    .digest
+                definition = import_module("terrine.dataset.reference")._definition_for(
+                    self, include_transforms=False
                 )
-                compatible = definition_hash == fit.definition_hash
+                compatible = definition.digest == fit.definition_hash
             else:
                 compatible = (
                     self._scoring_view is not None
                     and self._scoring_view.parent_design_hash == fit.design_hash
                 )
-            if (
-                not compatible
-                or _feature_definition_hash(self._design, (transform.column,), self._model)
-                != fit.feature_definition_hash
-            ):
+            feature_hash = _feature_definition_hash(self._design, (transform.column,), self._model)
+            if not compatible or feature_hash != fit.feature_definition_hash:
                 raise transforms.identity_error(transform.column)
         result = Frame(self._design, self._model)
         object.__setattr__(result, "_training_view", self._training_view)
@@ -710,7 +705,7 @@ class Frame:
         stage_frame = import_module("terrine.dataset.reference").stage_frame
         return stage_frame(self, table, budget=budget)
 
-    def materialize(self, budget: Budget | None = None) -> MaterializedFrame:
+    def materialize(self, *, budget: Budget | None = None) -> MaterializedFrame:
         """Read dataset rows with integrity checks and retain their metadata and completeness.
 
 
@@ -869,12 +864,12 @@ class Frame:
                     if budget.max_rows is not None and table.num_rows > budget.max_rows:
                         raise _ROWS_EXCEEDED.error(limit=budget.max_rows)
                 roles = Roles(
-                    "unit",
-                    "anchor_id",
-                    "t0",
-                    None,
-                    (*life_table.group_by, "time_bin"),
-                    (
+                    unit="unit",
+                    anchor="anchor_id",
+                    t0="t0",
+                    treatment=None,
+                    features=(*life_table.group_by, "time_bin"),
+                    outcomes=(
                         "at_risk",
                         "events",
                         "censored",
@@ -884,11 +879,23 @@ class Frame:
                     ),
                 )
                 columns = {name: compiled.columns[name] for name in life_table.group_by}
-                columns["time_bin"] = ColumnMeta(None, "feature", None, None, None, None)
+                columns["time_bin"] = ColumnMeta(
+                    window=None,
+                    role="feature",
+                    observed_from_column=None,
+                    observed_until_column=None,
+                    complete_column=None,
+                    reason_column=None,
+                )
                 columns.update(
                     {
                         name: ColumnMeta(
-                            None, "outcome", None, None, f"{name}__complete", f"{name}__reason"
+                            window=None,
+                            role="outcome",
+                            observed_from_column=None,
+                            observed_until_column=None,
+                            complete_column=f"{name}__complete",
+                            reason_column=f"{name}__reason",
                         )
                         for name in (*roles.outcomes, "censored_by_reason")
                     }
@@ -954,9 +961,9 @@ class Frame:
                 panel=panel,
                 sampling=(
                     SamplingMeta(
-                        self._design.sample.strata,
-                        self._design.sample.controls_per_treated,
-                        self._design.sample.seed,
+                        strata=self._design.sample.strata,
+                        controls_per_treated=self._design.sample.controls_per_treated,
+                        seed=self._design.sample.seed,
                     )
                     if self._design.sample is not None
                     else None
@@ -966,7 +973,9 @@ class Frame:
                 cohort_operation=cohort_operation,
             )
             provenance = self._view_provenance(provenance, excluded_counts)
-            result = MaterializedFrame(table, roles, columns, provenance)
+            result = MaterializedFrame(
+                table=table, roles=roles, columns=columns, provenance=provenance
+            )
             if budget is not None and budget.max_output_bytes is not None:
                 if result.table.nbytes > budget.max_output_bytes:
                     raise _OUTPUT_BYTES_EXCEEDED.error(limit=budget.max_output_bytes)
@@ -1106,7 +1115,7 @@ class Frame:
 
         Example: frame.to_pyarrow()
         """
-        return self.materialize(budget).to_pyarrow()
+        return self.materialize(budget=budget).to_pyarrow()
 
     def to_pandas(
         self,
@@ -1137,7 +1146,7 @@ class Frame:
             values_only=values_only,
             library="pandas",
         )
-        return self.materialize(budget).to_pandas(
+        return self.materialize(budget=budget).to_pandas(
             include_observation_metadata=include_observation_metadata,
             values_only=values_only,
         )
@@ -1171,7 +1180,7 @@ class Frame:
             values_only=values_only,
             library="polars",
         )
-        return self.materialize(budget).to_polars(
+        return self.materialize(budget=budget).to_polars(
             include_observation_metadata=include_observation_metadata,
             values_only=values_only,
         )
@@ -1190,7 +1199,7 @@ class Frame:
         Example:
             from datetime import datetime, UTC
 
-            tr.recipes.ltv(start_event="orders", metric="spend", period="7d", periods=2).build(
+            tr.recipes.ltv(start_event="orders", metric="spend", period="7d", max_periods=2).build(
                 model
             ).cohorts(
                 grouping=spec.CohortGrouping("30d", datetime(2025, 1, 1, tzinfo=UTC)),
@@ -1234,12 +1243,12 @@ class CohortTable:
             json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest()
         operation = CohortOperationMeta(
-            self.grouping.bucket.seconds,
-            self.grouping.bucket_origin,
-            self.grouping.statistic,
-            self.value_column,
-            parent_design_hash,
-            operation_hash,
+            bucket_seconds=self.grouping.bucket.seconds,
+            bucket_origin=self.grouping.bucket_origin,
+            statistic=self.grouping.statistic,
+            value_column=self.value_column,
+            parent_design_hash=parent_design_hash,
+            derived_operation_hash=operation_hash,
         )
         from terrine.compile.columns import expression_policy
         from terrine.compile.dispatch import compile_cohort_summary

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 
 import ibis
 
@@ -44,10 +44,17 @@ def compose_runtime_frame(
     *,
     persisted: Mapping[LayerKey, ibis.Table],
     budget: Budget | None = None,
+    admit: Callable[..., None] | None = None,
 ) -> CompiledStudy:
-    """Compose and validate a runtime frame before it can enter publication staging."""
+    """Compose and validate a runtime frame before it can enter publication staging.
+
+    ``admit`` receives every relation the frame may read before the first of
+    them runs, so an execution context can refuse arithmetic it cannot trust.
+    """
     enforce_shape_budget(design.shape, budget)
     ensure_runtime_expressions_supported(design)
     compiled = compose_materialized_frame(design, model, persisted=persisted, budget=budget)
+    if admit is not None:
+        admit(*compiled.reads())
     validate_compiled_output(compiled, model.con.to_pyarrow)
     return compiled

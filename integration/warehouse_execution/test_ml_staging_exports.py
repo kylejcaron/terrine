@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pyarrow as pa
@@ -66,7 +67,7 @@ try:
     old = pa.Table.from_batches([first, *old_reader]).sort_by("unit")
     streamed = pa.Table.from_batches(list(refreshed.to_arrow_batches(batch_size=1)))
     actual = MaterializedFrame.from_arrow(streamed)
-    clean = training_view(model).materialize(budget)
+    clean = training_view(model).materialize(budget=budget)
     assert actual.table.sort_by("unit").equals(clean.table.sort_by("unit"))
     assert actual.roles == clean.roles and actual.columns == clean.columns
     assert actual.provenance.dataset_view == clean.provenance.dataset_view
@@ -626,7 +627,7 @@ def test_refresh_reconstructs_definition_without_mutating_pinned_reader(events_w
     new = pa.Table.from_batches(list(refreshed.to_arrow_batches()))
     assert sorted(old["sessions"].to_pylist()) == [1, 1]
     assert sorted(new["sessions"].to_pylist()) == [0, 1]
-    clean = refreshed.manifest.definition.build(model).materialize(budget)
+    clean = refreshed.manifest.definition.build(model).materialize(budget=budget)
     order = [("unit", "ascending"), ("anchor_id", "ascending")]
     assert (
         new.select(clean.table.column_names)
@@ -679,6 +680,156 @@ def test_refresh_nochange_reuses_only_same_definition_and_rejects_stale_base(
     with pytest.raises(TerrineError) as error:
         dataset.refresh(frame._model, changes=empty, budget=budget)
     assert error.value.code == "terrine.dataset.stale_generation"
+    con.disconnect()
+
+
+def test_refresh_after_mode_change_rebuilds_layers_and_matches_fresh_build(tmp_path):
+    """Switching a float sum from exact to native arithmetic rebuilds its persisted layers.
+
+    A refresh without source changes replans every task for the changed declaration, and the
+    refreshed rows equal a fresh build of the native declaration. This checks invalidation and
+    equality with a fresh build, not the native error bound.
+    """
+    import ibis
+
+    import terrine as tr
+    from terrine.compile.layers import plan_layers
+
+    con = ibis.duckdb.connect(str(tmp_path / "owner.duckdb"))
+    con.create_table("customers", pa.table({"customer_id": ["alice", "bob"]}))
+    ordered_at = [datetime(2025, 1, day, 9, tzinfo=UTC) for day in (3, 12, 20)]
+    con.create_table(
+        "orders",
+        pa.table(
+            {
+                "customer_id": ["alice", "alice", "bob"],
+                "ordered_at": pa.array(ordered_at, pa.timestamp("us", tz="UTC")),
+                "amount": [30.25, 45.5, 80.125],
+            }
+        ),
+    )
+
+    def bind(exact: bool):
+        return tr.Model.from_tables(
+            con,
+            units={"customer": tr.UnitSource("customers", "customer_id")},
+            events={
+                "orders": tr.Events(
+                    "orders",
+                    time="ordered_at",
+                    key="customer_id",
+                    metrics={"spend": tr.sum("amount", exact=exact)},
+                    complete=("2025-01-01", "2025-01-31"),
+                )
+            },
+        )
+
+    models = {"exact": bind(True), "native": bind(False)}
+    design = Design(
+        "customer", FixedDate("2025-01-31"), features={"spend": agg("spend", window=("-30d", "0s"))}
+    )
+    prefixes = {
+        mode: {key for key in plan_layers(design, model).keys if key.layer == "prefix"}
+        for mode, model in models.items()
+    }
+    assert prefixes["exact"] and prefixes["native"]
+    assert prefixes["exact"].isdisjoint(prefixes["native"])
+    assert {key.measure for key in prefixes["exact"]}.isdisjoint(
+        {key.measure for key in prefixes["native"]}
+    )
+    budget = Budget(strict_scan=False)
+    dataset = design.build(models["exact"]).stage("spend", budget=budget)
+    unchanged = ChangeSet((), "operator")
+    assert not dataset.plan_refresh(models["exact"], changes=unchanged, budget=budget).tasks
+    assert dataset.plan_refresh(models["native"], changes=unchanged, budget=budget).tasks
+    refreshed = dataset.refresh(models["native"], changes=unchanged, budget=budget)
+    assert refreshed.manifest.model_hash == models["native"].model_hash
+    assert refreshed.manifest.model_hash != dataset.manifest.model_hash
+    fresh = (
+        design.build(models["native"]).materialize(budget=budget).table.replace_schema_metadata(None)
+    )
+    rows = pa.Table.from_batches(list(refreshed.to_arrow_batches()))
+    order = [("unit", "ascending"), ("anchor_id", "ascending")]
+    assert (
+        rows.select(fresh.column_names)
+        .replace_schema_metadata(None)
+        .sort_by(order)
+        .equals(fresh.sort_by(order))
+    )
+    con.disconnect()
+
+
+def test_native_and_exact_measures_on_same_column_stage_and_refresh(tmp_path):
+    """Native and exact sums of one float column keep distinct persisted layers.
+
+    Staging composes the frame from both prefix layers and a refresh after an insert rebuilds
+    them; both generations equal fresh builds and keep each column's arithmetic.
+    """
+    import ibis
+
+    import terrine as tr
+    from terrine.compile.layers import plan_layers
+    from terrine.data import MaterializedFrame
+
+    con = ibis.duckdb.connect(str(tmp_path / "owner.duckdb"))
+    con.create_table("customers", pa.table({"customer_id": ["alice", "bob"]}))
+    ordered_at = [datetime(2025, 1, day, 9, tzinfo=UTC) for day in (3, 12, 20)]
+    con.create_table(
+        "orders",
+        pa.table(
+            {
+                "customer_id": ["alice", "alice", "bob"],
+                "ordered_at": pa.array(ordered_at, pa.timestamp("us", tz="UTC")),
+                "amount": [30.25, 45.5, 80.125],
+            }
+        ),
+    )
+    model = tr.Model.from_tables(
+        con,
+        units={"customer": tr.UnitSource("customers", "customer_id")},
+        events={
+            "orders": tr.Events(
+                "orders",
+                time="ordered_at",
+                key="customer_id",
+                metrics={"native": tr.sum("amount"), "exact": tr.sum("amount", exact=True)},
+                complete=("2025-01-01", "2025-01-31"),
+            )
+        },
+    )
+    design = Design(
+        "customer",
+        FixedDate("2025-01-31"),
+        features={name: agg(name, window=("-30d", "0s")) for name in ("native", "exact")},
+    )
+    prefixes = [key for key in plan_layers(design, model).keys if key.layer == "prefix"]
+    assert len({key.measure for key in prefixes}) == 2
+    budget = Budget(strict_scan=False)
+    order = [("unit", "ascending"), ("anchor_id", "ascending")]
+
+    def staged_rows(dataset):
+        staged = MaterializedFrame.from_arrow(
+            pa.Table.from_batches(list(dataset.to_arrow_batches()))
+        )
+        fresh = design.build(model).materialize(budget=budget)
+        assert {name: staged.columns[name].arithmetic for name in ("native", "exact")} == {
+            "native": "native",
+            "exact": "exact",
+        }
+        assert staged.columns == fresh.columns
+        table = staged.table.select(fresh.table.column_names).replace_schema_metadata(None)
+        assert table.sort_by(order).equals(fresh.table.replace_schema_metadata(None).sort_by(order))
+        return {row["unit"]: row for row in table.to_pylist()}
+
+    dataset = design.build(model).stage("spend", budget=budget)
+    staged_rows(dataset)
+    # Below the exact path's resolution, only the native sum retains the insert, so the
+    # refreshed columns differ only if each kept its own layer.
+    con.raw_sql("INSERT INTO orders VALUES ('bob', TIMESTAMPTZ '2025-01-21 09:00:00+00', 4e-10)")
+    changes = ChangeSet((Change("insert", "orders"),), "operator")
+    refreshed = dataset.refresh(model, changes=changes, budget=budget)
+    bob = staged_rows(refreshed)["bob"]
+    assert bob["native"] != bob["exact"]
     con.disconnect()
 
 

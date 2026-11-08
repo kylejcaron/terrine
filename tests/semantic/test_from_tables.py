@@ -11,7 +11,7 @@ import pytest
 import yaml
 
 import terrine as tr
-from terrine.data import Events, History, UnitSource
+from terrine.data import EventMetric, Events, History, UnitSource
 from terrine.errors import TerrineError
 from terrine.model import Model
 from terrine.spec import Design, EventAnchor, FixedDate, Treatment, agg, asof, event_time
@@ -311,7 +311,7 @@ def test_events_where_round_trips_catalog(con):
     rebound = Model.from_catalog(
         model.to_catalog(), con=con, units=UNITS, readiness=model.readiness
     )
-    assert rebound.catalog.schema_version == 2
+    assert rebound.catalog.schema_version == 3
     assert rebound.catalog.sources["orders"].where == model.catalog.sources["orders"].where
     assert rebound.sources["orders"].where == model.sources["orders"].where
     assert rebound.model_hash == model.model_hash
@@ -556,6 +556,73 @@ def test_to_catalog_round_trip_has_equal_model_hash(con):
     assert restored.model_hash == model.model_hash
     assert set(model.catalog.dimensions) == {"plan"}
     assert model.catalog.sources["plan_change"].dimensions == ()
+
+
+def test_sum_exact_flag_round_trips_through_catalog(con):
+    con.raw_sql("ALTER TABLE orders ADD COLUMN price DECIMAL(10, 2)")
+    declared = {
+        "spend": (tr.sum("amount"), False),
+        "exact_spend": (tr.sum("amount", exact=True), True),
+        "daily_spend": (tr.mean("amount", per="day"), False),
+        "largest": (tr.max("amount"), False),
+        "units": (tr.sum("qty"), True),
+        "revenue": (tr.sum("price"), True),
+    }
+    model = Model.from_tables(
+        con,
+        units=UNITS,
+        events={"orders": orders(metrics={name: metric for name, (metric, _) in declared.items()})},
+    )
+    expected = {name: exact for name, (_, exact) in declared.items()}
+    assert {name: measure.exact for name, measure in model.catalog.measures.items()} == expected
+    assert {name: metric.measures[0].exact for name, metric in model.metrics.items()} == expected
+    restored = Model.from_catalog(
+        model.to_catalog(), con=model.con, units=model.units, readiness=model.readiness
+    )
+    assert restored.catalog == model.catalog
+    assert restored.model_hash == model.model_hash
+    with pytest.raises(TerrineError) as error:
+        tr.sum("amount", exact=cast(Any, "yes"))
+    assert error.value.code == "terrine.model.invalid_binding"
+    assert error.value.context == {"reason": "invalid_argument", "field": "exact"}
+
+
+def test_count_is_always_exact(con):
+    assert tr.count().exact and tr.count_distinct("qty").exact
+    # A declaration built without the constructors still binds its counts exactly.
+    model = Model.from_tables(
+        con,
+        units=UNITS,
+        events={
+            "orders": orders(
+                metrics={
+                    "orders": EventMetric("count", None, ()),
+                    "amounts": EventMetric("count_distinct", "amount", ()),
+                }
+            )
+        },
+    )
+    assert all(measure.exact for measure in model.catalog.measures.values())
+
+
+def test_count_distinct_admits_string_date_and_boolean_columns(con):
+    model = Model.from_tables(
+        con,
+        units=UNITS,
+        events={
+            "orders": orders(
+                metrics={
+                    "statuses": tr.count_distinct("status"),
+                    "days": tr.count_distinct("day"),
+                    "flags": tr.count_distinct("flag"),
+                }
+            )
+        },
+    )
+    assert set(model.metrics) == {"statuses", "days", "flags"}
+    assert all(metric.measures[0].exact for metric in model.metrics.values())
+
+
 
 
 README_ROWS = {
@@ -1056,3 +1123,9 @@ def test_cross_unit_source_property_refuses_with_incompatible_unit(con):
         ).validate(model)
     assert error.value.code == "terrine.design.incompatible_unit"
     assert error.value.context == {"unit": "account", "name": "status"}
+def test_events_time_wrong_type_reason():
+    with pytest.raises(TerrineError) as error:
+        Events("orders", time=cast(Any, 1), key="customer_id")
+    assert error.value.code == "terrine.model.invalid_binding"
+    assert error.value.context["reason"] == "wrong_type"
+    assert error.value.context["field"] == "time"

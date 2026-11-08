@@ -11,6 +11,7 @@ import ibis
 import ibis.expr.datatypes as dt
 import ibis.expr.types as ir
 
+from terrine.backends.dialect import current_dialect
 from terrine.backends.joins import has_native_asof, union_unit_keys
 from terrine.backends.numeric import is_exact_type
 from terrine.backends.timestamps import lookup_keys
@@ -76,69 +77,64 @@ def lookup_prefix(
 
     # Each cutoff needs a distinct relation, even when points already contain this prefix.
     prefix = prefix.view()
-    used = {name.casefold() for name in (*points.columns, *prefix.columns)}
-    point_unit = _allocate(used, "__terrine_point_unit")
-    point_time = _allocate(used, "__terrine_point_time")
-    state_unit = _allocate(used, "__terrine_state_unit")
-    state_time = _allocate(used, "__terrine_state_time")
-    point_present = _allocate(used, "__terrine_point_timestamp_present")
-    state_present = _allocate(used, "__terrine_state_timestamp_present")
-    kind_name = _allocate(used, "__terrine_kind")
-    marker_name = _allocate(used, "__terrine_marker")
-    matched_name = _allocate(used, "__terrine_matched")
-    timeline_points = {
-        name: _allocate(used, f"__terrine_point_{index}")
-        for index, name in enumerate(points.columns)
-    }
-    state_aliases = {
-        field: _allocate(used, f"__terrine_state_{index}")
-        for index, field in enumerate(state_fields)
-    }
-    output_aliases = {
-        field: _allocate(used, f"__terrine_lookup_{index}")
-        for index, field in enumerate(state_fields)
-    }
-
     point_key, state_key = lookup_keys(points[timestamp_column], prefix._timestamp)
-    left = points.select(
-        **{name: points[name] for name in points.columns},
-        **{point_unit: points[unit_column], point_time: point_key},
-        **{point_present: points[timestamp_column].notnull()},
-    )
-    right = prefix.select(
-        **{state_unit: prefix._unit, state_time: state_key},
-        **{state_present: ibis.literal(True)},
-        **{state_aliases[name]: prefix[name] for name in state_fields},
-    )
+    used = {name.casefold() for name in (*points.columns, *prefix.columns)}
+    # Short internal aliases: each is listed at every level of the statement.
+    matched_name = _allocate(used, "__m")
+    output_aliases = {
+        field: _allocate(used, f"__l{index}") for index, field in enumerate(state_fields)
+    }
 
     if strategy == "native":
-        joined = left.asof_join(
-            right,
-            on=left[point_time] > right[state_time],
+        # Successive lookups over the same points join into one chain of ASOF joins.
+        # A NULL cutoff matches no state; an engine may order a NULL order key last.
+        joined = points.asof_join(
+            prefix,
+            on=cast(ir.BooleanColumn, point_key > state_key),
             predicates=[
-                left[point_unit] == right[state_unit],
-                left[point_present] == right[state_present],
+                points[unit_column] == prefix._unit,
+                points[timestamp_column].notnull() == prefix._timestamp.notnull(),
             ],
         )
+        projection = {name: points[name] for name in points.columns}
+        found = prefix._timestamp
+        states = {field: prefix[field] for field in state_fields}
     else:
-        left_unit_key, right_unit_key = union_unit_keys(left[point_unit], right[state_unit])
+        point_unit = _allocate(used, "__pu")
+        point_time = _allocate(used, "__pt")
+        state_unit = _allocate(used, "__su")
+        state_time = _allocate(used, "__st")
+        kind_name = _allocate(used, "__k")
+        marker_name = _allocate(used, "__mk")
+        timeline_points = {
+            name: _allocate(used, f"__p{index}") for index, name in enumerate(points.columns)
+        }
+        state_aliases = {
+            field: _allocate(used, f"__s{index}") for index, field in enumerate(state_fields)
+        }
+        right = prefix.select(
+            **{state_unit: prefix._unit, state_time: state_key},
+            **{state_aliases[name]: prefix[name] for name in state_fields},
+        )
+        left_unit_key, right_unit_key = union_unit_keys(points[unit_column], right[state_unit])
+        policy = current_dialect(points[timestamp_column], prefix._timestamp)
         states = right.select(
             **{
                 point_unit: right_unit_key,
                 point_time: right[state_time],
                 kind_name: ibis.literal(1).cast("int8"),
                 **{
-                    timeline_points[name]: ibis.null().cast(points[name].type())
+                    timeline_points[name]: policy.typed_null(points[name].type())
                     for name in points.columns
                 },
             }
         )
-        requests = left.select(
+        requests = points.select(
             **{
                 point_unit: left_unit_key,
-                point_time: left[point_time],
+                point_time: point_key,
                 kind_name: ibis.literal(0).cast("int8"),
-                **{timeline_points[name]: left[name] for name in points.columns},
+                **{timeline_points[name]: points[name] for name in points.columns},
             }
         )
         timeline = states.union(requests, distinct=False)
@@ -173,15 +169,14 @@ def lookup_prefix(
                 markers[marker_name] == right[state_time],
             ],
         )
+        projection = {name: joined[timeline_points[name]] for name in points.columns}
+        found = joined[state_time]
+        states = {field: joined[state_aliases[field]] for field in state_fields}
 
-    matched = joined[state_time].notnull()
-    projection = {
-        name: joined[name] if strategy == "native" else joined[timeline_points[name]]
-        for name in points.columns
-    }
+    matched = found.notnull()
     projection[matched_name] = matched
     for field in state_fields:
-        value = joined[state_aliases[field]]
+        value = states[field]
         dtype = prefix[field].type()
         if field == "value_scale":
             output = value

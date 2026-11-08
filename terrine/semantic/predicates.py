@@ -1,13 +1,19 @@
-"""Typed comparisons with SQL three-valued membership semantics."""
+"""Comparison and membership predicates with SQL three-valued semantics.
+
+Design comparisons (whose operands are measured expressions) and ``where=``
+filters (whose operands are source columns) share one operator vocabulary, the
+``op`` of each record, and lower through :func:`lower_predicate`.
+"""
 
 from __future__ import annotations
 
 import math
 import operator
 import re
+from collections.abc import Callable
 from datetime import date
 from fractions import Fraction
-from typing import cast
+from typing import TYPE_CHECKING, Any, cast, overload
 
 import ibis
 import ibis.expr.types as ir
@@ -19,9 +25,12 @@ from terrine.backends.numeric import (
     float_is_finite,
 )
 from terrine.semantic.bind import _SCHEMA
-from terrine.semantic.models import Filter
+from terrine.semantic.models import Filter, FilterOp
 
-__all__ = ["lower_filter"]
+if TYPE_CHECKING:
+    from terrine.spec.expressions import Comparison, Expr
+
+__all__ = ["lower_predicate"]
 
 
 _COMPARISONS = {
@@ -167,34 +176,69 @@ def _filter_literal(value, item, name):
     raise _SCHEMA.error(field=f"typed filter {name}", column=name)
 
 
-def lower_filter(table: ibis.Table, filt: Filter, column: ir.Column) -> ir.BooleanValue:
-    """Compare without narrowing integer/decimal properties or numeric literals.
+type _CompareFn = Callable[[object, str], ir.BooleanValue]
 
-    For an exact coefficient z and rational threshold q, z>q iff z>floor(q),
-    z>=q iff z>=ceil(q), with the dual rules for < and <=. Fractional q cannot
-    equal an integer coefficient. This also preserves SQL null propagation.
-    """
-    value = column
+
+def _comparator(value, name: str) -> _CompareFn:
+    """Prepare one operand once; the returned function compares it with a literal."""
     dtype = value.type()
-    exact = dtype.is_integer() or dtype.is_decimal()
-    if exact:
+    if dtype.is_integer() or dtype.is_decimal():
         scale = dtype.scale if dtype.is_decimal() else 0
         bounds = coefficient_bounds(value)
         coefficient = decimal_coefficient(value, scale)
-    elif dtype.is_floating():
+        return lambda item, op: _exact_comparison(value, coefficient, scale, bounds, item, op, name)
+    if dtype.is_floating():
         value = value.cast("float64")
         value = float_is_finite(value).ifelse(value, ibis.null().cast("float64"))
+    return lambda item, op: _COMPARISONS[op](value, _filter_literal(value, item, name))
 
-    def compare(item, op):
-        if exact:
-            return _exact_comparison(value, coefficient, scale, bounds, item, op, filt.property)
-        return _COMPARISONS[op](value, _filter_literal(value, item, filt.property))
 
-    if filt.op in {"in", "not_in"}:
-        result = cast(ir.BooleanValue, ibis.literal(False))
-        for item in filt.values:
-            result |= compare(item, "equals")
-        return ~result if filt.op == "not_in" else result
-    if filt.op == "between":
-        return compare(filt.values[0], "gte") & compare(filt.values[1], "lte")
-    return compare(filt.values[0], filt.op)
+def _single(compare: _CompareFn, values: tuple, op: str) -> ir.BooleanValue:
+    return compare(values[0], op)
+
+
+def _membership(compare: _CompareFn, values: tuple, op: str) -> ir.BooleanValue:
+    result = cast(ir.BooleanValue, ibis.literal(False))
+    for item in values:
+        result |= compare(item, "equals")
+    return ~result if op == "not_in" else result
+
+
+def _between(compare: _CompareFn, values: tuple, op: str) -> ir.BooleanValue:
+    return compare(values[0], "gte") & compare(values[1], "lte")
+
+
+_HANDLERS: dict[FilterOp, Callable[[_CompareFn, tuple, str], ir.BooleanValue]] = {
+    "equals": _single,
+    "not_equals": _single,
+    "gt": _single,
+    "gte": _single,
+    "lt": _single,
+    "lte": _single,
+    "in": _membership,
+    "not_in": _membership,
+    "between": _between,
+}
+
+
+@overload
+def lower_predicate(node: Filter, resolve: Callable[[str], ir.Value]) -> ir.BooleanValue: ...
+@overload
+def lower_predicate(node: Comparison, resolve: Callable[[Expr], ir.Value]) -> ir.BooleanValue: ...
+def lower_predicate(
+    node: Comparison | Filter, resolve: Callable[[Any], ir.Value]
+) -> ir.BooleanValue:
+    """Compare without narrowing integer/decimal operands or numeric literals.
+
+    ``resolve`` returns the column an operand names: a source column for a
+    filter's property, the compiled value for a Design expression. For an exact
+    coefficient z and rational threshold q, z>q iff z>floor(q), z>=q iff
+    z>=ceil(q), with the dual rules for < and <=. Fractional q cannot equal an
+    integer coefficient. This also preserves SQL null propagation.
+    """
+    if isinstance(node, Filter):
+        value, name = resolve(node.property), node.property
+    else:
+        value = resolve(node.expr)
+        name = value.get_name()
+    return _HANDLERS[node.op](_comparator(value, name), node.values, node.op)

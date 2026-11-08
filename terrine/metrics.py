@@ -9,11 +9,9 @@ from pydantic import ValidationError
 
 from terrine.data import EventMetric, Ratio, Where
 from terrine.errors import RefusalSpec
-from terrine.semantic.models import Filter
+from terrine.semantic.models import Filter, FilterOp
 
 __all__ = ["count", "sum", "mean", "min", "max", "count_distinct", "ratio"]
-
-type _Op = Literal["equals", "not_equals", "in", "not_in", "gt", "gte", "lt", "lte", "between"]
 
 _INVALID_FILTER = RefusalSpec(
     "terrine.model.invalid_binding",
@@ -24,9 +22,9 @@ _INVALID_FILTER = RefusalSpec(
 _INVALID_ARGUMENT = RefusalSpec(
     "terrine.model.invalid_binding",
     "Metric argument {field!r} is unusable: name a column or metric, pass per='event' "
-    "or per='day', and give where= as a mapping keyed by label.",
+    "or per='day' and exact=True or exact=False, and give where= as a mapping keyed by label.",
 )
-_OPERATORS: dict[str, _Op] = {
+_OPERATORS: dict[str, FilterOp] = {
     "ne": "not_equals",
     "in": "in",
     "not_in": "not_in",
@@ -42,6 +40,12 @@ _LISTS = (list, tuple, set, frozenset)
 def _name(value: object, field: str) -> str:
     if not isinstance(value, str) or not value:
         raise _INVALID_ARGUMENT.error(reason="invalid_argument", field=field)
+    return value
+
+
+def _exact(value: object) -> bool:
+    if not isinstance(value, bool):
+        raise _INVALID_ARGUMENT.error(reason="invalid_argument", field="exact")
     return value
 
 
@@ -62,7 +66,9 @@ def _filter(key: object, value: object) -> Filter:
     label, separator, suffix = key.partition("__")
     if not label or "__" in suffix or (separator and suffix not in _OPERATORS):
         raise _INVALID_FILTER.error(reason="invalid_filter", key=key)
-    op: _Op = _OPERATORS[suffix] if separator else "in" if isinstance(value, _LISTS) else "equals"
+    op: FilterOp = (
+        _OPERATORS[suffix] if separator else "in" if isinstance(value, _LISTS) else "equals"
+    )
     if op == "between":
         # A range is an ordered pair: a set has no order and a reversed pair matches nothing.
         if not isinstance(value, (list, tuple)) or len(value) != 2 or _reversed(*value):
@@ -99,31 +105,37 @@ def count(*, where: Where | None = None) -> EventMetric:
         where: Label-name mapping to scalar equality or membership values; None includes all events.
 
     Returns:
-        An event-count metric declaration; complete empty windows count as zero.
+        An exact event-count metric declaration; complete empty windows count as zero.
 
     Example: tr.count()
     """
-    return EventMetric("count", None, _filters(where))
+    return EventMetric("count", None, _filters(where), exact=True)
 
 
-def sum(column: str, *, where: Where | None = None) -> EventMetric:
+def sum(column: str, *, where: Where | None = None, exact: bool = False) -> EventMetric:
     """Declare the sum of ``column`` over matching events.
 
 
     Args:
         column: Event-table column name whose values are aggregated.
         where: Label-name mapping to scalar equality or membership values; None includes all events.
+        exact: Whether float values must sum exactly at nano-unit resolution; False allows
+            native float64 summation. Integer and decimal values always sum exactly.
 
     Returns:
         An event-sum metric declaration; complete empty windows sum to zero.
 
     Example: tr.sum("amount")
     """
-    return EventMetric("sum", _name(column, "column"), _filters(where))
+    return EventMetric("sum", _name(column, "column"), _filters(where), exact=_exact(exact))
 
 
 def mean(
-    column: str, *, per: Literal["event", "day"] = "event", where: Where | None = None
+    column: str,
+    *,
+    per: Literal["event", "day"] = "event",
+    where: Where | None = None,
+    exact: bool = False,
 ) -> EventMetric:
     """Declare the mean of ``column`` per event or per local calendar day of a window.
 
@@ -133,6 +145,8 @@ def mean(
         per: "event" averages matching event values; "day" averages local calendar-day totals;
             default "event".
         where: Label-name mapping to scalar equality or membership values; None includes all events.
+        exact: Whether float values must sum exactly at nano-unit resolution before dividing;
+            False allows native float64 summation. Integer and decimal values always sum exactly.
 
     Returns:
         An event- or day-mean metric declaration with completeness retained.
@@ -142,39 +156,43 @@ def mean(
     if per not in ("event", "day"):
         raise _INVALID_ARGUMENT.error(reason="invalid_argument", field="per")
     aggregation = "avg_event" if per == "event" else "avg_calendar_day"
-    return EventMetric(aggregation, _name(column, "column"), _filters(where))
+    return EventMetric(aggregation, _name(column, "column"), _filters(where), exact=_exact(exact))
 
 
-def min(column: str, *, where: Where | None = None) -> EventMetric:
+def min(column: str, *, where: Where | None = None, exact: bool = False) -> EventMetric:
     """Declare the smallest ``column`` value over matching events.
 
 
     Args:
         column: Event-table column name whose values are aggregated.
         where: Label-name mapping to scalar equality or membership values; None includes all events.
+        exact: Whether float values must use exact arithmetic; False allows native float64.
+            Integer and decimal values are always exact.
 
     Returns:
         An event-minimum metric declaration; an empty complete window is unavailable.
 
     Example: tr.min("amount")
     """
-    return EventMetric("min", _name(column, "column"), _filters(where))
+    return EventMetric("min", _name(column, "column"), _filters(where), exact=_exact(exact))
 
 
-def max(column: str, *, where: Where | None = None) -> EventMetric:
+def max(column: str, *, where: Where | None = None, exact: bool = False) -> EventMetric:
     """Declare the largest ``column`` value over matching events.
 
 
     Args:
         column: Event-table column name whose values are aggregated.
         where: Label-name mapping to scalar equality or membership values; None includes all events.
+        exact: Whether float values must use exact arithmetic; False allows native float64.
+            Integer and decimal values are always exact.
 
     Returns:
         An event-maximum metric declaration; an empty complete window is unavailable.
 
     Example: tr.max("amount")
     """
-    return EventMetric("max", _name(column, "column"), _filters(where))
+    return EventMetric("max", _name(column, "column"), _filters(where), exact=_exact(exact))
 
 
 def count_distinct(column: str, *, where: Where | None = None) -> EventMetric:
@@ -186,11 +204,11 @@ def count_distinct(column: str, *, where: Where | None = None) -> EventMetric:
         where: Label-name mapping to scalar equality or membership values; None includes all events.
 
     Returns:
-        A distinct-value-count metric declaration over non-null column values.
+        An exact distinct-value-count metric declaration over non-null column values.
 
     Example: tr.count_distinct("amount")
     """
-    return EventMetric("count_distinct", _name(column, "column"), _filters(where))
+    return EventMetric("count_distinct", _name(column, "column"), _filters(where), exact=True)
 
 
 def ratio(numerator: str, denominator: str) -> Ratio:

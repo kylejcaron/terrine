@@ -80,7 +80,7 @@ WORKLOADS: tuple[Workload, ...] = (
 def _catalog() -> Catalog:
     return Catalog.model_validate(
         {
-            "schema_version": 2,
+            "schema_version": 3,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": {
@@ -298,7 +298,7 @@ def _sample(design: Design, model: Model, budget: Budget) -> tuple[dict[str, flo
     start = time.perf_counter()
     frame = design.build(model)
     built = time.perf_counter()
-    result = frame.materialize(budget)
+    result = frame.materialize(budget=budget)
     done = time.perf_counter()
     return {
         "build_seconds": built - start,

@@ -51,7 +51,7 @@ def main() -> None:
         con.create_table("events", events)
         con.create_table("assessments", statuses)
         catalog = {
-                "schema_version": 2,
+                "schema_version": 3,
                 "day_boundary": "UTC",
                 "dialect": "duckdb",
                 "sources": {
@@ -113,7 +113,7 @@ def main() -> None:
             features={"sessions_before": agg("weekly_sessions", window=("-4w", "0d"))},
         )
         materialized = design.build(model).materialize(
-            tr.Budget(max_rows=10_000, max_output_bytes=8_000_000)
+            budget=tr.Budget(max_rows=10_000, max_output_bytes=8_000_000)
         )
         restored = MaterializedFrame.from_arrow(materialized.to_pyarrow())
         panel_meta = restored.provenance.state_panel
@@ -138,7 +138,7 @@ def main() -> None:
             end="2025-03-30",
         )
         status_frame = status_design.build(model).materialize(
-            tr.Budget(max_rows=10_000, max_output_bytes=8_000_000)
+            budget=tr.Budget(max_rows=10_000, max_output_bytes=8_000_000)
         )
         status_restored = MaterializedFrame.from_arrow(status_frame.to_pyarrow())
         status_meta = status_restored.provenance.state_panel
