@@ -1,6 +1,6 @@
 [project]
 name = "terrine"
-version = "0.1.0"
+version = "0.1.0a1"
 description = "Typed dataset construction and analytical workflows"
 classifiers = [
     "Development Status :: 4 - Beta",
