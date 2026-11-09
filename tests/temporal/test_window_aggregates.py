@@ -2,13 +2,11 @@ from __future__ import annotations
 
 import math
 import random
-import sys
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from fractions import Fraction
 
-import duckdb
 import ibis
 import pyarrow as pa
 import pytest
@@ -25,11 +23,10 @@ from terrine.semantic.models import (
     PropertyBinding,
     TableRef,
 )
-from terrine.temporal.daily import _sparse_group, resolve_measure, sparse_daily
-from terrine.temporal.prefix import sparse_prefix
+from terrine.temporal.daily import resolve_measure
 from terrine.temporal.readiness import Readiness
 from terrine.windows import Window
-from tests._float_bound import native_window_bound, ratio_bound, window_sum_bound
+from tests._float_bound import ratio_bound, window_sum_bound
 
 _DEFAULT_WINDOW = Window(0, "1d")
 _REFUSAL = RefusalSpec("terrine.test.failed_rows", "{failed_count} rows failed")
@@ -44,7 +41,7 @@ def con():
         connection.disconnect()
 
 
-def _state(
+def _local(
     con,
     values,
     *,
@@ -53,12 +50,11 @@ def _state(
     times=None,
     units=None,
     name="postings",
-    resolution="event",
     boundary="UTC",
     active=None,
     exact=True,
-    local=False,
 ):
+    """Resolve a measure against real normalized source events, without aggregation."""
     n = len(values)
     fields = {"user_id": "string", "occurred_at": "timestamp('UTC')", "amount": dtype}
     data = {
@@ -92,17 +88,7 @@ def _state(
         BoundMeasure("revenue", name, aggregation, filters, None, None, exact=exact),
         source=source,
     )
-    if local:
-        return measure, (events, source)
-    grouped = (
-        sparse_daily(events, measure, boundary, "user_id", source=source)
-        if resolution == "day"
-        else _sparse_group(
-            events, measure, {"_timestamp": events._timestamp}, "user_id", source=source
-        )
-    )
-    prefix = sparse_prefix(grouped, measure, resolution=resolution)
-    return measure, con.create_table(f"{name}_prefix", prefix, overwrite=True)
+    return measure, (events, source)
 
 
 def _anchors(con, *, time="2025-01-02 00:00:00+00", units=("a",), extra=""):
@@ -122,55 +108,16 @@ def _result(
     readiness=None,
     boundary="UTC",
     resolution="event",
-    strategy="native",
     output="requested",
 ):
-    from terrine.temporal.aggregate import aggregate_window
-
-    if isinstance(pairs[0][1], tuple):
-        return _batch(
-            anchors,
-            [(output, pairs, window, kind)],
-            readiness=readiness,
-            boundary=boundary,
-            resolution=resolution,
-        )
-
-    measures = tuple(pair[0] for pair in pairs)
-    metric = BoundMetric(
-        "revenue",
-        "user",
-        {m.source_name: "user_id" for m in measures},
-        kind,
-        measures,
-        tuple(m.source_name for m in measures),
-        (),
-    )
-    if readiness is None:
-        readiness = Readiness(
-            {
-                m.source_name: BoundCoverage(
-                    datetime(2025, 1, 1, tzinfo=UTC), datetime(2025, 1, 5, tzinfo=UTC)
-                )
-                for m in measures
-            }
-        )
-    return aggregate_window(
+    """Run one request through the same local reducer and finalizer as a batch."""
+    return _batch(
         anchors,
-        metric,
-        dict(pairs),
-        window,
-        readiness,
+        [(output, pairs, window, kind)],
+        readiness=readiness,
         boundary=boundary,
-        output=output,
-        role="outcome",
         resolution=resolution,
-        strategy=strategy,
     )
-
-
-def _local(con, values, **kwargs):
-    return _state(con, values, local=True, **kwargs)
 
 
 def _batch(anchors, specifications, *, readiness=None, boundary="UTC", resolution="event"):
@@ -293,6 +240,7 @@ def test_batch_selected_invalid_and_unknown_filter_candidates_still_refuse(con, 
         _rows(con, result)
     assert error.value.code == "terrine.temporal.float64_precision"
     assert error.value.context["reason"] == "nonfinite_input"
+    assert set(error.value.context) == {"reason", "failed_count", "source", "measure", "output"}
     pair = _local(con, [1], dtype="int64", active=[None])
     result = _batch(
         _anchors(con), [("unknown", [pair], _DEFAULT_WINDOW, "mean")], resolution=resolution
@@ -379,7 +327,7 @@ def test_long_history_small_window_meets_quantized_bound(con):
     history = [generator.uniform(0, 10000) for _ in range(1000)]
     window = [1.25, 2.5, 3.16]
     first = datetime(2025, 1, 1, tzinfo=UTC)
-    pair = _state(
+    pair = _local(
         con,
         history + window,
         times=[first + timedelta(seconds=index) for index in range(len(history))]
@@ -392,13 +340,13 @@ def test_long_history_small_window_meets_quantized_bound(con):
     assert meta.numeric_policy is None
 
 
-def test_float_window_cancels_history_beyond_binary64_precision(con):
-    pair = _state(con, [1e16, 1.0], times=[datetime(2025, 1, d, 12, tzinfo=UTC) for d in (1, 2)])
+def test_float_window_selects_value_beyond_excluded_binary64_history(con):
+    pair = _local(con, [1e16, 1.0], times=[datetime(2025, 1, d, 12, tzinfo=UTC) for d in (1, 2)])
     assert _rows(con, _result(_anchors(con), [pair]))[0]["requested"] == 1.0
 
 
 def test_tiny_value_does_not_change_other_units(con):
-    pair = _state(
+    pair = _local(
         con,
         [1.0, 5e-324, -1.0, 0.1, 0.2],
         units=["tiny", "tiny", "tiny", "other", "other"],
@@ -410,110 +358,59 @@ def test_tiny_value_does_not_change_other_units(con):
 
 
 @pytest.mark.parametrize("exact", [True, False])
-def test_nonfinite_history_refuses(con, exact):
-    pair = _state(
+def test_nonfinite_history_is_excluded_from_available_window(con, exact):
+    pair = _local(
         con,
         [float("nan"), 2.0],
         times=[datetime(2025, 1, d, 12, tzinfo=UTC) for d in (1, 2)],
         exact=exact,
     )
-    with pytest.raises(TerrineError) as error:
-        _rows(con, _result(_anchors(con), [pair]))
-    assert error.value.code == "terrine.temporal.float64_precision"
-    assert error.value.context["reason"] == "nonfinite_input"
-    assert set(error.value.context) == {"reason", "failed_count", "source", "measure", "output"}
+    result = _result(_anchors(con), [pair])
+    (row,) = _rows(con, result)
+    assert row["requested"] == 2.0
+    assert row[result.columns["requested"].reason_column] is None
+    assert row[result.columns["requested"].complete_column] is True
 
 
 @pytest.mark.parametrize("dialect", ["duckdb", "generic"])
-def test_native_prefix_overflow_refuses_instead_of_publishing(con, dialect):
-    """DuckDB publishes an infinite running sum for the finite check to refuse; a
-    policy whose float arithmetic raises withholds the state instead. Both refuse."""
+def test_native_selected_overflow_refuses_without_poisoning_later_windows(con, dialect):
+    """Nonfinite selected sums refuse; excluded earlier arithmetic is irrelevant."""
     from terrine.backends.dialect import dialect_scope
 
     with dialect_scope(dialect):
-        pair = _state(
+        pair = _local(
             con,
             [1.0, 1.7e308, 1.7e308, 1.0],
             times=[datetime(2025, 1, d, 12, tzinfo=UTC) for d in (2, 3, 3, 4)],
             exact=False,
         )
-        # A window ending before the binary64 running sum overflows is unaffected.
-        assert _rows(con, _result(_anchors(con), [pair]))[0]["requested"] == 1.0
-        # Every later window is a difference of non-finite or withheld prefixes,
-        # even one that excludes the large values.
-        for time in ("2025-01-03 00:00:00+00", "2025-01-04 00:00:00+00"):
-            with pytest.raises(TerrineError) as error:
-                _rows(con, _result(_anchors(con, time=time), [pair]))
-            assert error.value.code == "terrine.temporal.float64_precision"
-            assert error.value.context["reason"] == "bound_overflow"
-
-
-def test_bounded_native_prefix_withholds_cumulative_magnitude(con):
-    """Two groups each admitted on their own are withheld once the magnitudes
-    accumulated through the prefix exceed half the range: the window ending between
-    them publishes, every later non-empty window refuses ``bound_overflow``."""
-    from terrine.backends.dialect import dialect_scope
-
-    with dialect_scope("generic"):
-        pair = _state(
-            con,
-            [6e307, 6e307, 1.0],
-            times=[datetime(2025, 1, d, 12, tzinfo=UTC) for d in (2, 3, 4)],
-            exact=False,
-        )
-        assert _rows(con, _result(_anchors(con), [pair]))[0]["requested"] == 6e307
-        for time in ("2025-01-03 00:00:00+00", "2025-01-04 00:00:00+00"):
-            with pytest.raises(TerrineError) as error:
-                _rows(con, _result(_anchors(con, time=time), [pair]))
-            assert error.value.code == "terrine.temporal.float64_precision"
-            assert error.value.context["reason"] == "bound_overflow"
-
-
-def test_bounded_native_sum_admits_up_to_half_the_range(con):
-    """A bounding policy publishes a native sum just below half the binary64 range,
-    refuses one at the derived threshold as ``bound_overflow``, and sums a
-    subnormal input, whose magnitude the bound omits, as zero."""
-    from terrine.backends.dialect import dialect_scope
-    from tests.backends.test_generic import (
-        _admission_threshold,
-        _double_at_least,
-        _double_at_most,
-    )
-
-    threshold = _admission_threshold(Fraction(sys.float_info.max) / 2, 1)
-    refused = _double_at_least(threshold)
-    admitted = _double_at_most(threshold * (1 - 17 * Fraction(1, 2**53)))
-    with dialect_scope("generic"):
-        for values in ([admitted], [-admitted], [5e-324, 1.0]):
-            pair = _state(con, values, exact=False)
-            value = _rows(con, _result(_anchors(con), [pair]))[0]["requested"]
-            assert abs(Fraction(value) - _exact_sum(values)) <= native_window_bound(values)
-        pair = _state(con, [refused], exact=False)
+        for time in ("2025-01-02 00:00:00+00", "2025-01-04 00:00:00+00"):
+            assert _rows(con, _result(_anchors(con, time=time), [pair]))[0]["requested"] == 1.0
         with pytest.raises(TerrineError) as error:
-            _rows(con, _result(_anchors(con), [pair]))
-    assert error.value.code == "terrine.temporal.float64_precision"
-    assert error.value.context["reason"] == "bound_overflow"
+            _rows(con, _result(_anchors(con, time="2025-01-03 00:00:00+00"), [pair]))
+        assert error.value.code == "terrine.temporal.float64_precision"
+        assert error.value.context["reason"] == "bound_overflow"
 
 
 @pytest.mark.parametrize(
     "numerator,denominator,aggregation,kind,expected",
     [
-        # A mean of a subnormal sum over two events would round to zero.
-        ([5e-324, 0.0], None, "avg_event", "mean", "bound_overflow"),
+        # Ordinary native division may underflow, but cannot publish infinity.
+        ([5e-324, 0.0], None, "avg_event", "mean", 0.0),
         ([1e300], [1e-10], "sum", "ratio", "bound_overflow"),
         ([0.0], [1e-300], "sum", "ratio", 0.0),
         ([1e-300], [1e-10], "sum", "ratio", 1e-290),
     ],
 )
-def test_bounded_native_quotient_refuses_outside_the_range(
+def test_native_quotient_underflows_or_refuses_nonfinite_result(
     con, numerator, denominator, aggregation, kind, expected
 ):
     from terrine.backends.dialect import dialect_scope
 
     with dialect_scope("generic"):
-        pairs = [_state(con, numerator, aggregation=aggregation, name="numerator", exact=False)]
+        pairs = [_local(con, numerator, aggregation=aggregation, name="numerator", exact=False)]
         if denominator is not None:
-            pairs.append(_state(con, denominator, name="denominator", exact=False))
+            pairs.append(_local(con, denominator, name="denominator", exact=False))
         result = _result(_anchors(con), pairs, kind=kind)
         if isinstance(expected, str):
             with pytest.raises(TerrineError) as error:
@@ -536,11 +433,7 @@ def _recording(con):
 
 
 def test_validate_runs_one_aggregate_for_every_row_check(con):
-    pair = _state(
-        con,
-        [float("nan"), 2.0],
-        times=[datetime(2025, 1, d, 12, tzinfo=UTC) for d in (1, 2)],
-    )
+    pair = _local(con, [float("nan"), 2.0])
     result = _result(_anchors(con), [pair])
     assert len(result.row_checks) >= 2
     assert all(check.column in result.table.columns for check in result.row_checks)
@@ -554,7 +447,7 @@ def test_validate_runs_one_aggregate_for_every_row_check(con):
 
 
 def test_row_check_columns_are_true_only_on_failing_rows(con):
-    pair = _state(con, [float("nan"), 2.0], units=["bad", "good"])
+    pair = _local(con, [float("nan"), 2.0], units=["bad", "good"])
     result = _result(_anchors(con, units=("bad", "good")), [pair])
     nonfinite = next(
         check for check in result.row_checks if check.context.get("reason") == "nonfinite_input"
@@ -593,7 +486,7 @@ def test_complete_empty_and_all_null_remain_distinct(
 
 
 def test_unit_observation_end_preserves_value_or_exact_unavailable_reason(con):
-    pair = _state(con, [2, 2], dtype="int64", units=["complete", "incomplete"])
+    pair = _local(con, [2, 2], dtype="int64", units=["complete", "incomplete"])
     anchors = _anchors(con, units=("complete", "incomplete"))
     anchors = anchors.mutate(
         _observed_until=(anchors.unit == "complete").ifelse(
@@ -623,7 +516,7 @@ def test_unit_observation_end_preserves_value_or_exact_unavailable_reason(con):
     ],
 )
 def test_calendar_domain_precedes_empty_and_unavailable(con, time, window):
-    pair = _state(con, [None], aggregation="avg_calendar_day", units=["other"])
+    pair = _local(con, [None], aggregation="avg_calendar_day", units=["other"])
     readiness = Readiness(
         {
             "postings": BoundCoverage(
@@ -636,9 +529,9 @@ def test_calendar_domain_precedes_empty_and_unavailable(con, time, window):
     assert error.value.code == "terrine.metric.unaligned_calendar_average"
 
 
-def test_exact_wide_history_retracts_and_retains_decimal_scale(con):
+def test_exact_window_excludes_wide_history_and_retains_decimal_scale(con):
     maximum = Decimal("99999999999999999999999999999999.999999")
-    pair = _state(
+    pair = _local(
         con,
         [maximum, maximum, maximum.copy_negate(), Decimal("0.000001")],
         dtype="decimal(38,6)",
@@ -656,8 +549,8 @@ def test_exact_wide_history_retracts_and_retains_decimal_scale(con):
     assert error.value.code == "terrine.temporal.exact_overflow"
 
 
-def test_unknown_filter_history_cancels_and_unavailable_suppresses_refusal(con):
-    pair = _state(
+def test_unknown_filter_is_window_local_and_unavailable_suppresses_refusal(con):
+    pair = _local(
         con,
         [1, 2],
         dtype="int64",
@@ -687,24 +580,19 @@ def test_unknown_filter_history_cancels_and_unavailable_suppresses_refusal(con):
 
 
 def test_count_and_conversion_ignore_nonfinite_float_inputs(con):
-    pair = _state(con, [float("inf")])
+    pair = _local(con, [float("inf")])
     conversion = _result(_anchors(con), [pair], kind="conversion")
     assert _rows(con, conversion)[0]["requested"] is True
     assert conversion.columns["requested"].numeric_policy is None
-    measure, state = pair
-    count = replace(measure, aggregation="count")
-    state = state.mutate(event_count=exact_literal(2**63))
-    with pytest.raises(TerrineError) as error:
-        _rows(con, _result(_anchors(con), [(count, state)]))
-    assert error.value.code == "terrine.temporal.exact_overflow"
+    measure, source = pair
+    count = _result(_anchors(con), [(replace(measure, aggregation="count"), source)])
+    assert _rows(con, count)[0]["requested"] == 1
 
 
 def test_count_metric_matches_sum_of_ones_and_has_no_unknown_check(con):
     from terrine.semantic.rules import UNKNOWN_FILTER
 
-    measure, state = _state(con, [1.0, 2.0, 3.0], aggregation="count")
-    # A count's sufficient state is the event count alone.
-    pair = (measure, state.select("_unit", "_timestamp", "event_count"))
+    pair = _local(con, [1.0, 2.0, 3.0], aggregation="count")
     result = _result(_anchors(con), [pair])
     assert _rows(con, result)[0]["requested"] == 3
     assert all(check.refusal is not UNKNOWN_FILTER for check in result.row_checks)
@@ -722,7 +610,7 @@ def test_count_metric_matches_sum_of_ones_and_has_no_unknown_check(con):
     ],
 )
 def test_deferred_scalar_checks_fail_closed(con, bad):
-    pair = _state(con, [1.0])
+    pair = _local(con, [1.0])
     result = _result(_anchors(con), [pair])
 
     def malformed(query):
@@ -773,45 +661,56 @@ def test_integer_sum_widens_without_losing_units_above_binary64_precision(con):
     assert result.columns["requested"].numeric_policy == "exact"
 
 
-def _count_groups(con, counts):
-    """Grouped count states twelve hours apart from 2025-01-01 12:00, as stored HUGEINT."""
-    values = ",".join(
-        f"(TIMESTAMPTZ '2025-01-01 12:00:00+00' + INTERVAL {index * 12} HOUR, {count})"
-        for index, count in enumerate(counts)
+def _finalized_counts(con, counts, *, kind="mean"):
+    """Exercise count-domain publication directly, without fabricated source rows."""
+    from terrine.temporal.aggregate import _Builder, _finalize_window, _local_component
+
+    anchors = _anchors(con)
+    builder = _Builder(anchors.mutate(count=exact_literal(counts)), "requested", practical=True)
+    measure = BoundMeasure("revenue", "postings", "count", (), None, None)
+    available = builder.put("available", ibis.literal(True))
+    unavailable = builder.put("unavailable", ibis.null("string"))
+    observed_from = builder.put("observed_from", anchors.t0)
+    observed_until = builder.put("observed_until", anchors.t0 + ibis.interval(days=1))
+    quantity = _local_component(
+        builder,
+        measure,
+        {"event_count": "count"},
+        days=1,
+        conversion=False,
+        context={"source": "postings", "measure": "revenue", "output": "requested"},
     )
-    return con.sql(
-        "SELECT 'a' AS _unit, ts AS _timestamp, n::HUGEINT AS event_count,"
-        " n::HUGEINT AS nonnull_count, n::HUGEINT AS sum_value"
-        f" FROM (VALUES {values}) AS s(ts, n)"
+    measures = (measure, measure) if kind == "ratio" else (measure,)
+    metric = BoundMetric(
+        "revenue", "user", {"postings": "user_id"}, kind, measures, ("postings",), ()
+    )
+    return _finalize_window(
+        builder,
+        anchors,
+        metric,
+        _DEFAULT_WINDOW,
+        "requested",
+        "outcome",
+        [quantity] * len(measures),
+        available,
+        unavailable,
+        observed_from,
+        observed_until,
+        [],
+        (),
     )
 
 
-def test_count_prefixes_beyond_int64_refuse_instead_of_wrapping(con):
-    # Three groups of 2**62 merge to the prefixes 2**62, 2**63 and 3 * 2**62: the
-    # window [t0, t0 + 12h) reads the first two and publishes their difference
-    # exactly, the windows ending at t0 + 1d read a difference of 2**63 or more.
-    measure, _ = _state(con, [1], aggregation="count")
-    prefix = sparse_prefix(_count_groups(con, [2**62] * 3), measure, resolution="event")
-    pair = (measure, prefix)
-    fits = _result(_anchors(con), [pair], window=Window(0, "12h"))
-    assert _rows(con, fits)[0]["requested"] == 2**62
-    for window in (Window(0, "1d"), Window("-1d", "1d")):
+def test_count_finalization_refuses_outside_int64_instead_of_wrapping(con):
+    assert _rows(con, _finalized_counts(con, 2**63 - 1))[0]["requested"] == 2**63 - 1
+    for count in (-1, 2**63, 2**127 - 1):
         with pytest.raises(TerrineError) as error:
-            _rows(con, _result(_anchors(con), [pair], window=window))
+            _rows(con, _finalized_counts(con, count))
         assert error.value.code == "terrine.temporal.exact_overflow"
-    # A prefix at the HUGEINT limit still narrows by refusal, never by wrapping,
-    # and accumulating past the limit raises.
-    prefix = sparse_prefix(_count_groups(con, [0, 2**127 - 1]), measure, resolution="event")
-    with pytest.raises(TerrineError) as error:
-        _rows(con, _result(_anchors(con), [(measure, prefix)]))
-    assert error.value.code == "terrine.temporal.exact_overflow"
-    prefix = sparse_prefix(_count_groups(con, [2**127 - 1, 1]), measure, resolution="event")
-    with pytest.raises(duckdb.OutOfRangeException):
-        _rows(con, _result(_anchors(con), [(measure, prefix)]))
 
 
-def test_day_prefixes_cannot_answer_an_intraday_request(con):
-    pair = _state(con, [2], dtype="int64", resolution="day")
+def test_day_resolution_cannot_answer_an_intraday_request(con):
+    pair = _local(con, [2], dtype="int64")
     result = _result(_anchors(con, time="2025-01-02 12:00:00+00"), [pair], resolution="day")
     with pytest.raises(TerrineError) as error:
         _rows(con, result)
@@ -819,9 +718,9 @@ def test_day_prefixes_cannot_answer_an_intraday_request(con):
 
 
 @pytest.mark.parametrize("exact", [True, False])
-def test_small_window_after_large_history_meets_its_mode_bound(con, exact):
+def test_small_window_after_large_history_keeps_selected_values(con, exact):
     history, window = [1e12] * 1000, [0.01, 0.01, 0.01]
-    pair = _state(
+    pair = _local(
         con,
         history + window,
         times=[datetime(2025, 1, 1, 12, tzinfo=UTC)] * 1000
@@ -829,11 +728,11 @@ def test_small_window_after_large_history_meets_its_mode_bound(con, exact):
         exact=exact,
     )
     value = _rows(con, _result(_anchors(con), [pair]))[0]["requested"]
-    # Native arithmetic is bounded by the history total; exact by the window alone.
-    bound = window_sum_bound(window) if exact else native_window_bound(history + window)
-    assert abs(Fraction(value) - sum(map(Fraction, window))) <= bound
     if exact:
-        assert value != 0
+        assert abs(Fraction(value) - sum(map(Fraction, window))) <= window_sum_bound(window)
+    else:
+        # Three positive selected inputs need only a few binary64 rounding units.
+        assert value == pytest.approx(0.03, rel=1e-15, abs=0)
 
 
 @pytest.mark.parametrize(
@@ -848,7 +747,7 @@ def test_small_window_after_large_history_meets_its_mode_bound(con, exact):
     ],
 )
 def test_quantization_rounds_to_nearest_nano_unit(con, value, expected):
-    pair = _state(con, [value])
+    pair = _local(con, [value])
     actual = _rows(con, _result(_anchors(con), [pair]))[0]["requested"]
     assert actual == pytest.approx(expected, rel=1e-15, abs=1e-24)
     assert abs(Fraction(actual) - Fraction(value)) <= window_sum_bound([value])
@@ -883,9 +782,8 @@ def test_exact_sum_notes_discarded_sub_resolution_contributions(
 
 
 def test_sub_resolution_note_counts_only_the_window_itself(con):
-    """The discarded-term count is a prefix difference: history before the window
-    start does not note a later window, and the window holding the loss does."""
-    pair = _state(
+    """Excluded discarded terms do not note a later window; selected ones do."""
+    pair = _local(
         con,
         [4e-10, 1.0],
         times=[datetime(2025, 1, 1, 12, tzinfo=UTC), datetime(2025, 1, 2, 12, tzinfo=UTC)],
@@ -901,14 +799,14 @@ def test_sub_resolution_note_counts_only_the_window_itself(con):
 
 
 def test_ratio_carries_an_operand_note_and_keeps_blocking_reasons_first(con):
-    numerator = _state(con, [4e-10, 1.0], name="numerator", exact=True)
-    denominator = _state(con, [2.0], name="denominator", exact=True)
+    numerator = _local(con, [4e-10, 1.0], name="numerator", exact=True)
+    denominator = _local(con, [2.0], name="denominator", exact=True)
     result = _result(_anchors(con), [numerator, denominator], kind="ratio")
     (row,) = _rows(con, result)
     assert row["requested"] == 0.5
     assert row[result.columns["requested"].reason_column] == "below_resolution"
     # A quantized zero denominator is unavailable, whatever the numerator noted.
-    zero = _state(con, [4e-10, -4e-10], name="denominator", exact=True)
+    zero = _local(con, [4e-10, -4e-10], name="denominator", exact=True)
     result = _result(_anchors(con), [numerator, zero], kind="ratio")
     (row,) = _rows(con, result)
     assert row["requested"] is None
@@ -917,18 +815,16 @@ def test_ratio_carries_an_operand_note_and_keeps_blocking_reasons_first(con):
 
 def test_native_sum_keeps_sub_resolution_contributions_without_a_note(con):
     values = [1e-10, 2e-10, 4e-10]
-    pair = _state(con, values, exact=False)
+    pair = _local(con, values, exact=False)
     result = _result(_anchors(con), [pair])
     (row,) = _rows(con, result)
-    total = sum(map(Fraction, values), Fraction())
-    assert abs(Fraction(row["requested"]) - total) <= native_window_bound(values)
-    assert row["requested"] == pytest.approx(7e-10, rel=1e-15)
+    assert row["requested"] == pytest.approx(7e-10, rel=1e-15, abs=0)
     assert row[result.columns["requested"].reason_column] is None
 
 
 def test_ratio_with_zero_quantized_denominator_is_null(con):
-    numerator = _state(con, [1.0], name="numerator")
-    denominator = _state(con, [4e-10, -4e-10, 3e-10], name="denominator")
+    numerator = _local(con, [1.0], name="numerator")
+    denominator = _local(con, [4e-10, -4e-10, 3e-10], name="denominator")
     result = _result(_anchors(con), [numerator, denominator], kind="ratio")
     row = _rows(con, result)[0]
     assert row["requested"] is None
@@ -937,7 +833,7 @@ def test_ratio_with_zero_quantized_denominator_is_null(con):
 
 def test_ratio_meets_propagated_bound(con):
     n, d = [0.1234567894, 2.0000000006], [0.3333333334, 1.0]
-    pairs = [_state(con, n, name="numerator"), _state(con, d, name="denominator")]
+    pairs = [_local(con, n, name="numerator"), _local(con, d, name="denominator")]
     value = _rows(con, _result(_anchors(con), pairs, kind="ratio"))[0]["requested"]
     bound = ratio_bound(2.12345679, 1.333333333, window_sum_bound(n), window_sum_bound(d))
     assert bound is not None
@@ -946,22 +842,22 @@ def test_ratio_meets_propagated_bound(con):
 
 def test_per_day_mean_bound_uses_actual_count(con):
     values = [6e-10, 0.1234567894]
-    pair = _state(con, values, aggregation="avg_calendar_day")
+    pair = _local(con, values, aggregation="avg_calendar_day")
     value = _rows(con, _result(_anchors(con), [pair], window=Window(0, "3d")))[0]["requested"]
     assert abs(Fraction(value) - sum(map(Fraction, values)) / 3) <= window_sum_bound(values) / 3
 
 
 @pytest.mark.parametrize("exact", [True, False])
 def test_mean_of_float_measure_is_not_rescaled(con, exact):
-    pair = _state(con, [1.0], aggregation="avg_event", exact=exact)
+    pair = _local(con, [1.0], aggregation="avg_event", exact=exact)
     assert _rows(con, _result(_anchors(con), [pair]))[0]["requested"] == pytest.approx(1.0)
 
 
 def test_mixed_scale_ratio_meets_propagated_bound(con):
     n, d = [Decimal("1.23"), Decimal("4.56")], [0.3333333334, 1.0]
     pairs = [
-        _state(con, n, name="numerator", dtype="decimal(10, 2)"),
-        _state(con, d, name="denominator"),
+        _local(con, n, name="numerator", dtype="decimal(10, 2)"),
+        _local(con, d, name="denominator"),
     ]
     value = _rows(con, _result(_anchors(con), pairs, kind="ratio"))[0]["requested"]
     bound = ratio_bound(5.79, 1.333333333, 0.0, window_sum_bound(d))
@@ -971,10 +867,10 @@ def test_mixed_scale_ratio_meets_propagated_bound(con):
 
 def test_float_range_boundary_is_exact(con):
     for sign in (1, -1):
-        pair = _state(con, [sign * 1e29])
+        pair = _local(con, [sign * 1e29])
         value = _rows(con, _result(_anchors(con), [pair]))[0]["requested"]
         assert abs(Fraction(value) - Fraction(sign * 1e29)) <= window_sum_bound([sign * 1e29])
-        pair = _state(con, [sign * math.nextafter(1e29, math.inf)])
+        pair = _local(con, [sign * math.nextafter(1e29, math.inf)])
         with pytest.raises(TerrineError) as error:
             _rows(con, _result(_anchors(con), [pair]))
         assert error.value.code == "terrine.temporal.float64_precision"
@@ -982,9 +878,9 @@ def test_float_range_boundary_is_exact(con):
 
 
 @pytest.mark.parametrize("amount", [6e28, 9e28])
-def test_wide_float_history_sums_exactly_on_duckdb(con, amount):
+def test_wide_selected_float_sum_stays_quantized_on_duckdb(con, amount):
     values = [amount, amount]
-    pair = _state(con, values)
+    pair = _local(con, values)
     value = _rows(con, _result(_anchors(con), [pair]))[0]["requested"]
     assert abs(Fraction(value) - sum(map(Fraction, values))) <= window_sum_bound(values)
 

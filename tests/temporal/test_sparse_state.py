@@ -9,7 +9,7 @@ import ibis
 import pyarrow as pa
 import pytest
 
-from terrine.backends.numeric import exact_subtract, is_exact_type
+from terrine.backends.numeric import is_exact_type
 from terrine.errors import TerrineError
 from terrine.semantic.bind import normalize_events
 from terrine.semantic.models import (
@@ -23,7 +23,6 @@ from terrine.semantic.models import (
 )
 from terrine.temporal.attributes import enrich_events
 from terrine.temporal.daily import _UNKNOWN_FIELDS, _sparse_group, resolve_measure, sparse_daily
-from terrine.temporal.prefix import sparse_prefix
 
 
 @pytest.fixture
@@ -116,8 +115,6 @@ def test_sparse_days_keep_multiplicity_nulls_and_selected_unit(connection):
     assert [row["observed_null_count"] for row in rows] == ["1", "0"]
     assert [row["sum_value"] for row in rows] == [str(2**53 + 1), "7"]
     assert measure.value_type == "int64"
-    prefix = sparse_prefix(daily, measure, resolution="day")
-    assert _rows(connection, prefix.order_by("local_day"))[-1]["sum_value"] == str(2**53 + 8)
     null_daily, _ = _daily(connection, [None], dtype="int64")
     null_row = _rows(connection, null_daily)[0]
     assert (null_row["event_count"], null_row["nonnull_count"], null_row["sum_value"]) == (
@@ -169,22 +166,15 @@ def test_fixed_offset_day_state_is_independent_of_session_timezone(connection):
         assert [(row["local_day"], row["_timestamp"]) for row in rows] == expected
 
 
-def test_exact_decimal_coefficients_cross_hugeint_and_retract_exactly(connection):
+def test_exact_decimal_groups_cross_hugeint_without_losing_units(connection):
     maximum = 10**38 - 1
     values = [Decimal("99999999999999999999999999999999.999999")] * 2
     values += [Decimal("-99999999999999999999999999999999.999999"), Decimal("0.000001")]
     times = [datetime(2025, 3, day, tzinfo=UTC) for day in (1, 1, 2, 3)]
-    daily, measure = _daily(connection, values, dtype="decimal(38,6)", times=times)
-    prefix = sparse_prefix(daily, measure, resolution="day")
-    rows = _rows(connection, prefix.order_by("local_day"))
-    assert [row["sum_value"] for row in rows] == [str(2 * maximum), str(maximum), str(maximum + 1)]
+    daily, _ = _daily(connection, values, dtype="decimal(38,6)", times=times)
+    rows = _rows(connection, daily.order_by("local_day"))
+    assert [row["sum_value"] for row in rows] == [str(2 * maximum), str(-maximum), "1"]
     assert all(row["value_scale"] == 6 and row["numeric_policy"] == "exact" for row in rows)
-    # Adjacent subtraction never narrows historical prefixes to decimal38.
-    p = prefix.order_by("local_day").mutate(
-        previous=prefix.sum_value.lag().over(order_by=prefix.local_day)
-    )
-    difference = p.select(value=exact_subtract(p.sum_value, p.previous).cast("string"))
-    assert [row["value"] for row in _rows(connection, difference)] == [None, str(-maximum), "1"]
     ordinary, _ = _daily(
         connection,
         [Decimal("12345678901234567890.123400"), Decimal("-12345678901234567890.123399")],
@@ -233,11 +223,9 @@ def test_filters_retain_unknown_provenance_and_false_overrides_unknown(connectio
 
 
 def test_unfiltered_measures_have_no_unknown_filter_state(connection):
-    daily, measure = _daily(connection, [1.0, 2.0])
+    daily, _ = _daily(connection, [1.0, 2.0])
     assert not set(_UNKNOWN_FIELDS) & set(daily.columns)
-    prefix = sparse_prefix(daily, measure, resolution="day")
-    assert not set(_UNKNOWN_FIELDS) & set(prefix.columns)
-    assert _rows(connection, prefix)[0]["event_count"] == "2"
+    assert _rows(connection, daily)[0]["event_count"] == "2"
 
 
 def test_event_grouping_uses_same_filters_and_exact_original_counts(connection):
@@ -248,8 +236,7 @@ def test_event_grouping_uses_same_filters_and_exact_original_counts(connection):
     state = _sparse_group(
         events, measure, {"_timestamp": events._timestamp}, "user_id", source=source
     )
-    prefix = sparse_prefix(state, measure, resolution="event")
-    row = _rows(connection, prefix)[0]
+    row = _rows(connection, state)[0]
     assert (row["event_count"], row["nonnull_count"], row["sum_value"]) == ("3", "3", "3")
 
 
@@ -263,20 +250,19 @@ def test_event_grouping_uses_same_filters_and_exact_original_counts(connection):
         [9e28, 9e28, -9e28],
     ],
 )
-def test_float_prefix_state_meets_quantized_bound(connection, values):
+def test_float_day_groups_meet_per_input_quantized_bound(connection, values):
     from tests._float_bound import window_sum_bound
 
-    # Each exact coefficient prefix must satisfy the window-local error bound.
+    # Every bucket quantizes its original leaves before their exact addition.
     for order in list(dict.fromkeys(permutations(values)))[:3]:
         for days in ([1] * len(order), list(range(1, len(order) + 1))):
             times = [datetime(2025, 3, day, tzinfo=UTC) for day in days]
-            daily, measure = _daily(connection, list(order), times=times)
-            prefix = sparse_prefix(daily, measure, resolution="day")
-            rows = _rows(connection, prefix.order_by("local_day"))
+            daily, _ = _daily(connection, list(order), times=times)
+            rows = _rows(connection, daily.order_by("local_day"))
             assert len(rows) == len(set(days))
             for row in rows:
                 leaves = [
-                    x for x, day in zip(order, days, strict=True) if day <= row["local_day"].day
+                    x for x, day in zip(order, days, strict=True) if day == row["local_day"].day
                 ]
                 exact = sum(map(Fraction, leaves), Fraction())
                 assert row["value_scale"] == 9
@@ -289,53 +275,42 @@ def test_float_prefix_state_meets_quantized_bound(connection, values):
 
 def test_nonfinite_float_leaves_are_counted_not_summed(connection):
     times = [datetime(2025, 3, day, tzinfo=UTC) for day in (1, 2, 3)]
-    daily, measure = _daily(connection, [math.inf, 2.5, math.nan], times=times)
-    prefix = sparse_prefix(daily, measure, resolution="day")
-    rows = _rows(connection, prefix.order_by("local_day"))
+    daily, _ = _daily(connection, [math.inf, 2.5, math.nan], times=times)
+    rows = _rows(connection, daily.order_by("local_day"))
     assert [
         (row["sum_value"], row["value_scale"], row["float64_nonfinite_count"], row["nonnull_count"])
         for row in rows
-    ] == [("0", 9, "1", "1"), ("2500000000", 9, "1", "2"), ("2500000000", 9, "2", "3")]
+    ] == [(None, 9, "1", "1"), ("2500000000", 9, "0", "1"), (None, 9, "1", "1")]
     assert all(row["float64_unrepresentable_count"] == "0" for row in rows)
 
 
-def test_native_float_state_is_a_binary64_running_sum(connection):
-    from tests._float_bound import native_window_bound
-
+def test_native_float_day_groups_keep_finite_values_and_nonfinite_counts(connection):
     values = [0.1, math.inf, 0.2, math.nan, -0.3, 1e300]
     days = [1, 1, 2, 3, 3, 3]
     times = [datetime(2025, 3, day, tzinfo=UTC) for day in days]
-    daily, measure = _daily(connection, values, times=times, exact=False)
-    prefix = sparse_prefix(daily, measure, resolution="day")
-    assert prefix.schema()["sum_value"].is_float64()
-    assert "float64_unrepresentable_count" not in prefix.columns
-    rows = _rows(connection, prefix.order_by("local_day"))
+    daily, _ = _daily(connection, values, times=times, exact=False)
+    assert daily.schema()["sum_value"].is_float64()
+    assert "float64_unrepresentable_count" not in daily.columns
+    rows = _rows(connection, daily.order_by("local_day"))
     assert len(rows) == 3
+    expected = {1: 0.1, 2: 0.2, 3: 1e300}
     for row in rows:
-        leaves = [x for x, day in zip(values, days, strict=True) if day <= row["local_day"].day]
-        # Non-finite inputs are counted, never added, so the running sum stays finite.
-        finite = [x for x in leaves if math.isfinite(x)]
-        exact = sum(map(Fraction, finite), Fraction())
-        assert abs(Fraction(row["sum_value"]) - exact) <= native_window_bound(finite)
-        assert row["float64_nonfinite_count"] == str(len(leaves) - len(finite))
+        leaves = [x for x, day in zip(values, days, strict=True) if day == row["local_day"].day]
+        assert row["sum_value"] == pytest.approx(expected[row["local_day"].day], rel=1e-15, abs=0)
+        assert row["float64_nonfinite_count"] == str(sum(not math.isfinite(x) for x in leaves))
         assert row["nonnull_count"] == str(len(leaves))
         assert row["numeric_policy"] == "native"
 
 
-def test_only_exact_state_needs_the_backends_exact_prefix(connection, monkeypatch):
+def test_only_exact_grouping_requires_backend_exact_capability(connection, monkeypatch):
     from terrine.backends.engines.duckdb import DuckDBDialect
 
-    exact_daily, exact = _daily(connection, [1.5])
     monkeypatch.setattr(DuckDBDialect, "supports_exact_prefix", lambda self, backend: False)
-    native_daily, native = _daily(connection, [1.5], exact=False)
-    assert sparse_prefix(native_daily, native, resolution="day").schema()["sum_value"].is_float64()
-    for build in (
-        lambda: _daily(connection, [1.5]),
-        lambda: sparse_prefix(exact_daily, exact, resolution="day"),
-    ):
-        with pytest.raises(TerrineError) as error:
-            build()
-        assert error.value.code == "terrine.temporal.exact_unsupported"
+    native_daily, _ = _daily(connection, [1.5], exact=False)
+    assert _rows(connection, native_daily)[0]["sum_value"] == 1.5
+    with pytest.raises(TerrineError) as error:
+        _daily(connection, [1.5])
+    assert error.value.code == "terrine.temporal.exact_unsupported"
 
 
 def test_construction_never_executes_queries(connection, monkeypatch):
@@ -351,7 +326,7 @@ def test_construction_never_executes_queries(connection, monkeypatch):
     monkeypatch.setattr(connection, "to_pyarrow", blocked)
     measure = resolve_measure(events, _measure(), source=source)
     daily = sparse_daily(events, measure, "UTC", "user_id", source=source)
-    schema = sparse_prefix(daily, measure, resolution="day").schema()
+    schema = daily.schema()
     assert is_exact_type(schema["sum_value"])
     assert schema["value_scale"].is_integer()
 
@@ -372,13 +347,12 @@ def test_numeric_filters_do_not_round_integer_properties_or_fractional_threshold
 
 
 def test_high_scale_decimal_keeps_its_coefficient_and_scale(connection):
-    daily, measure = _daily(
+    daily, _ = _daily(
         connection,
         [Decimal("0.123456789012345678901234567890"), Decimal("-0.123456789012345678901234567889")],
         dtype="decimal(38,30)",
     )
-    prefix = sparse_prefix(daily, measure, resolution="day")
-    row = _rows(connection, prefix)[0]
+    row = _rows(connection, daily)[0]
     assert (row["sum_value"], row["value_scale"], row["nonnull_count"]) == ("1", 30, "2")
 
 
@@ -470,8 +444,7 @@ def test_state_metadata_cannot_merge_distinct_physical_units(connection, unit_co
     events = normalize_events(raw, source, unit_column)
     measure = resolve_measure(events, _measure(), source=source)
     daily = sparse_daily(events, measure, "UTC", unit_column, source=source)
-    prefix = sparse_prefix(daily, measure, resolution="day")
-    rows = _rows(connection, prefix.order_by("_unit"))
+    rows = _rows(connection, daily.order_by("_unit"))
     assert [(row["_unit"], row["sum_value"], row["event_count"]) for row in rows] == [
         ("a", "1", "1"),
         ("b", "2", "1"),
@@ -591,12 +564,3 @@ def test_nonfinite_filter_properties_remain_unknown_without_poisoning_other_days
     assert [row["unknown_filter_nonfinite_count"] for row in rows] == ["3", "0"]
     assert [row["unknown_filter_null_count"] for row in rows] == ["1", "0"]
     assert [row["sum_value"] for row in rows] == ["7", "11"]
-    cumulative = _rows(
-        connection, sparse_prefix(daily, measure, resolution="day").order_by("local_day")
-    )
-    assert (
-        int(cumulative[1]["unknown_filter_nonfinite_count"])
-        - int(cumulative[0]["unknown_filter_nonfinite_count"])
-        == 0
-    )
-    assert int(cumulative[1]["sum_value"]) - int(cumulative[0]["sum_value"]) == 11
