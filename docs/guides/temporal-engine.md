@@ -519,6 +519,9 @@ sharing incompatible predicates, denominators or availability. Each source is
 reduced at `(unit, anchor_id)` before independent sources are joined, so a ratio
 cannot multiply raw event rows. Duplicate anchor instances with distinct
 anchor IDs remain separate.
+Bounded exact reduction keeps numerical guard intermediates private to each
+source; joining three or more independent exact sources preserves the same
+public values, domains and anchor grain.
 
 Event counts include selected null values; event means divide by the selected
 nonnull count. For values `2, NULL, 3`, the count is `3`, sum is `5`, and event

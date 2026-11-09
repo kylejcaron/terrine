@@ -303,24 +303,31 @@ def test_batch_selected_invalid_and_unknown_filter_candidates_still_refuse(con, 
 
 
 @pytest.mark.parametrize("resolution", ["event", "day"])
-def test_batch_quantizes_each_input_and_preserves_exact_output_domain(con, resolution):
-    # Catches quantizing after reduction and narrowing exact integer sums to int64.
-    small = _local(con, [4e-10, 4e-10], name="small")
-    wide = _local(con, [2**63 - 1, 2**63 - 1], dtype="int64", name="wide")
-    native = _local(con, [4e-10, 4e-10], name="native", exact=False)
-    result = _batch(
-        _anchors(con),
-        [
-            ("small", [small], _DEFAULT_WINDOW, "mean"),
-            ("wide", [wide], _DEFAULT_WINDOW, "mean"),
-            ("native", [native], _DEFAULT_WINDOW, "mean"),
-        ],
-        resolution=resolution,
-    )
-    (row,) = _rows(con, result)
+@pytest.mark.parametrize("policy", ["duckdb", "generic"])
+def test_batch_quantizes_each_input_and_preserves_exact_output_domain(con, resolution, policy):
+    from terrine.backends.dialect import dialect_scope
+
+    # Third exact source also catches bounded guard state escaping into source joins.
+    with dialect_scope(policy):
+        small = _local(con, [4e-10, 4e-10], name="small")
+        wide = _local(con, [2**63 - 1, 2**63 - 1], dtype="int64", name="wide")
+        plain = _local(con, [2, 3], dtype="int64", name="plain")
+        native = _local(con, [4e-10, 4e-10], name="native", exact=False)
+        result = _batch(
+            _anchors(con),
+            [
+                ("small", [small], _DEFAULT_WINDOW, "mean"),
+                ("wide", [wide], _DEFAULT_WINDOW, "mean"),
+                ("plain", [plain], _DEFAULT_WINDOW, "mean"),
+                ("native", [native], _DEFAULT_WINDOW, "mean"),
+            ],
+            resolution=resolution,
+        )
+        (row,) = _rows(con, result)
     assert row["small"] == 0.0
     assert row[result.columns["small"].reason_column] == "below_resolution"
     assert row["wide"] == Decimal(2**64 - 2)
+    assert row["plain"] == Decimal(5)
     assert row["native"] == pytest.approx(8e-10, rel=1e-15)
     assert row[result.columns["native"].reason_column] is None
 

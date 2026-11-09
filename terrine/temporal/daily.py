@@ -297,6 +297,7 @@ def reduce_payload(
     exact_values: Sequence[str],
 ) -> tuple[ibis.Table, dict[str, str]]:
     """Accumulate a selected payload, withholding bounded exact sums before SUM."""
+    payload = [name for name in table.columns if name not in keys]
     withheld = {}
     bounded = set()
     for name in exact_values:
@@ -309,6 +310,7 @@ def reduce_payload(
                 **{name: value, flag: (~admitted).ifelse(count_literal(1), count_literal(0))}
             )
             withheld[name] = flag
+            payload.append(flag)
             bounded.add(name)
     aggregates = {
         name: (
@@ -316,8 +318,7 @@ def reduce_payload(
             if name in native_values
             else exact_sum(table[name], admitted=name in bounded)
         )
-        for name in table.columns
-        if name not in keys
+        for name in payload
     }
     return table.group_by(*keys).aggregate(**aggregates), withheld
 

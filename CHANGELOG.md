@@ -18,6 +18,7 @@
   masks keep count-only buckets and unavailable requests out of numerical
   conversion, checks and sums, without multiplying overlapping contributions.
   Raw/day reduction shares finalization, exact domains and per-input quantization.
+- Preserve independent exact-source batches under bounded arithmetic policies.
 
 ### Breaking changes
 
