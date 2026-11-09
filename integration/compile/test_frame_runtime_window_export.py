@@ -230,6 +230,23 @@ def test_row_checks_count_base_candidates_not_shape_rows(con):
     assert error.value.context["reason"] == "nonfinite_input"
     assert error.value.context["failed_count"] == 1
 
+    con.raw_sql("UPDATE orders SET amount = 0 WHERE user_id = 'b'")
+    materialized = design.build(model).materialize()
+    meta = materialized.columns["spend"]
+    assert sorted(
+        (
+            row["t0"],
+            row["spend"],
+            row[meta.complete_column],
+            row[meta.reason_column],
+        )
+        for row in materialized.table.to_pylist()
+        if row["unit"] == "a"
+    ) == [
+        (datetime(2025, 1, 3, tzinfo=UTC), 0, True, None),
+        (datetime(2025, 1, 4, tzinfo=UTC), 1, True, None),
+    ]
+
 
 # --- the output statement carries the final run and the eligibility summary ------
 

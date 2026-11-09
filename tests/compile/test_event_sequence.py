@@ -510,15 +510,29 @@ def test_sequence_arrays_support_default_empty_property_list(sequence_model):
 
 
 def test_sequence_sessions_are_compiled_per_anchor(sequence_model):
-    from terrine.spec import Design, EventAnchor, EventSequence, SessionSpec
+    from terrine.spec import Design, EventAnchor, EventSequence, SessionSpec, agg
     from terrine.windows import Window
+
+    definition = sequence_model.catalog.model_dump(mode="python")
+    definition["measures"] = {"event_count": {"event": "signup", "aggregation": "count"}}
+    definition["metrics"] = {
+        "event_count": {"kind": "mean", "unit": "user", "measure": "event_count"}
+    }
+    model = Model.from_catalog(
+        Catalog.model_validate(definition),
+        con=sequence_model.con,
+        readiness=sequence_model.readiness,
+        event_ids=sequence_model.event_ids,
+    )
 
     design = Design(
         "user",
         EventAnchor("signup", "each"),
+        features={"preceding": agg("event_count", window=("-1h", "0s"))},
         shape=EventSequence("signup", Window("0s", "2h"), max_events=5, sessions=SessionSpec("1h")),
     )
-    rows = design.build(sequence_model)._compiled.table.to_pyarrow().to_pylist()
+    compiled = design.build(model)._compiled
+    rows = compiled.table.to_pyarrow().to_pylist()
     events = [row for row in rows if row["is_event"]]
     assert events
     assert {row["session_index"] for row in events} == {0}
@@ -526,8 +540,16 @@ def test_sequence_sessions_are_compiled_per_anchor(sequence_model):
         {row["anchor_id"] for row in events}
     )
     headers = [row for row in rows if not row["is_event"]]
+    assert sorted((header["t0"], header["preceding"]) for header in headers) == [
+        (datetime(2025, 1, 1, 12, tzinfo=UTC), 0),
+        (datetime(2025, 1, 1, 12, tzinfo=UTC), 0),
+        (datetime(2025, 1, 1, 13, tzinfo=UTC), 2),
+    ]
+    meta = compiled.columns["preceding"]
     for header in headers:
         anchor_events = [row for row in events if row["anchor_id"] == header["anchor_id"]]
+        assert header[meta.complete_column] is True
+        assert header[meta.reason_column] is None
         assert header["sessions__complete"] is True
         assert header["sessions__reason"] is None
         assert header["sessions"] == [

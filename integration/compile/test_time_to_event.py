@@ -13,7 +13,7 @@ from tests.compile.test_time_to_event import _collect, _model
 
 def test_life_table_grouping_features_retain_conservative_surrogate_timing():
     from examples.trajectories_survival import _model as trajectory_model
-    from terrine import Budget, asof, eq, recipes
+    from terrine import Budget, Model, UnitSource, agg, asof, eq, gt, recipes
     from terrine.export import ArrowSurrogate, to_surrogate_arrow
 
     con, model = trajectory_model()
@@ -48,6 +48,45 @@ def test_life_table_grouping_features_retain_conservative_surrogate_timing():
                     if row["north"]
                     else datetime(2024, 12, 31, tzinfo=UTC)
                 )
+        definition = model.catalog.model_dump(mode="python")
+        definition["sources"]["profiles"]["events"] = ["profile"]
+        definition["events"]["profile"] = {"source": "profiles", "column": None}
+        definition["measures"]["recent_north"] = {
+            "event": "profile",
+            "aggregation": "count",
+            "filters": [{"property": "region", "op": "equals", "values": ["north"]}],
+        }
+        definition["metrics"]["recent_north"] = {
+            "kind": "mean",
+            "unit": "user",
+            "measure": "recent_north",
+        }
+        grouped_model = Model.from_catalog(
+            definition,
+            con=con,
+            units={"user": UnitSource("users", "id")},
+            readiness=model.readiness,
+        )
+        grouped = (
+            recipes.life_table(
+                start_event="purchase",
+                end_event="churn",
+                bin="7d",
+                group_by={"positive_origin": gt(agg("recent_north", window=("-2d", "0s")), 0)},
+                administrative_cutoff=datetime(2025, 1, 22, tzinfo=UTC),
+            )
+            .build(grouped_model)
+            .materialize(budget=Budget(max_rows=100, max_output_bytes=1_000_000))
+        )
+        rows = grouped.table.to_pylist()
+        assert sorted(
+            (row["positive_origin"], row["at_risk"], row["events"])
+            for row in rows
+            if row["time_bin"] == 0
+        ) == [(False, 2, 1), (True, 1, 0)]
+        meta = grouped.columns["positive_origin"]
+        assert all(row[meta.complete_column] is True for row in rows)
+        assert all(row[meta.reason_column] is None for row in rows)
     finally:
         con.disconnect()
 
