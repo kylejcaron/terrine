@@ -725,9 +725,13 @@ def test_refresh_nochange_reuses_only_same_definition_and_rejects_stale_base(
 
         with monkeypatch.context() as patch:
             patch.setattr(SnapshotAuthority, "capture", forbidden_capture)
+            patch.setenv("TERRINE_RUNTIME_NAMESPACE", "other_runtime")
+            reopened = Dataset.from_manifest(
+                dataset.manifest, con=con, namespace="terrine_runtime"
+            )
             for no_op_budget in (Budget(max_scan_bytes=1), budget):
                 assert (
-                    dataset.refresh(frame._model, changes=empty, budget=no_op_budget).manifest
+                    reopened.refresh(frame._model, changes=empty, budget=no_op_budget).manifest
                     == dataset.manifest
                 )
     assert Dataset.from_manifest(dataset.manifest, con=con).manifest.to_json() == saved_manifest

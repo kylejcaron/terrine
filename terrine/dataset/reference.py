@@ -533,7 +533,9 @@ class Dataset:
                     lease=lease,
                     execution_revision=plan.definition.execution_revision,
                 )
-                return Dataset.from_manifest(self.manifest, con=model.con)
+                return Dataset.from_manifest(
+                    self.manifest, con=model.con, namespace=self._namespace
+                )
             finally:
                 leases.release(lease)
         return stage_frame(

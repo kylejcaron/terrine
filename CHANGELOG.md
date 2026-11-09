@@ -53,6 +53,8 @@
   schema upgrade is required.
   Verified no-change dataset refreshes reuse the identical manifest under a
   lease without recapturing sources or applying recomputation scan checks.
+  Reopening that result preserves its explicitly selected runtime namespace
+  even when the environment default differs.
   Restart recovery verifies stored owner or dataset-request identity and
   terminates unverifiable interrupted runs instead of leaving them running.
 - Python 3.12 is the minimum supported version; CPython 3.12, 3.13 and 3.14
