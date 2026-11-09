@@ -10,6 +10,8 @@
   exact coefficient domains, per-input float quantization and discarded-term
   notes are preserved. The ordinary compiler remains on its existing path
   until the coordinated compiler migration.
+- Preserve physical event/filter values when a source column shares the daily
+  bucket name `local_day`.
 
 ### Breaking changes
 

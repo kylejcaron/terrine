@@ -317,12 +317,9 @@ def _sparse_group(
     exact_floats = dtype.is_floating() and measure.aggregation != "count" and not native
     if not native:
         _require_backend(events)
-    events = events.mutate(**keys)
-    keys = {name: events[name] for name in keys}
     if measure.filters:
         predicate = _predicate(events, measure, source)[0]
         events = events.filter(predicate.fill_null(True))
-        keys = {name: events[name] for name in keys}
     events, fields = contributions(events, measure, source=source)
     leaf = events.select(**{"_unit": events[unit_column], **keys, **fields})
     value = leaf.sum_value

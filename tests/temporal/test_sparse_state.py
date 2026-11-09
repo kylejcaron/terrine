@@ -129,6 +129,23 @@ def test_sparse_days_keep_multiplicity_nulls_and_selected_unit(connection):
     assert _rows(connection, empty_daily) == []
 
 
+def test_day_bucket_preserves_same_named_event_and_filter_columns(connection):
+    # Catches a bucket projection replacing physical local_day facts or predicates.
+    source = replace(
+        _source(fact="local_day"),
+        properties={"score": PropertyBinding("score", "local_day", "float", "event_time", None)},
+    )
+    raw = _events(connection, [2, 3, 100], dtype="int64").rename(local_day="amount")
+    events = normalize_events(raw, source, "user_id")
+    measure = _measure(filters=(BoundFilter("score", "between", (1, 10)),))
+    (row,) = _rows(connection, sparse_daily(events, measure, "UTC", "user_id", source=source))
+    assert (row["local_day"], row["event_count"], row["sum_value"]) == (
+        date(2025, 3, 1),
+        "2",
+        "5",
+    )
+
+
 def test_fixed_offset_day_state_is_independent_of_session_timezone(connection):
     source = _source(boundary="UTC-05:00")
     raw = _events(

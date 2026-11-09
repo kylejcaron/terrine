@@ -565,6 +565,9 @@ multiplicity. Another declared entity key is not an additional grouping key.
 State always names the selected key `_unit`, matching event normalization.
 Physical keys such as `value_type` or `event_count` cannot overwrite state
 metadata or merge distinct entities during accumulation.
+Grouping keys are projected after contributions are formed: a physical numeric
+event or filter column named `local_day` retains its original values rather than
+being replaced by the derived calendar bucket.
 `local_day` is a date under the fixed catalog offset; `_timestamp` is that
 bucket's start as an aware UTC instant, independent of the database session
 timezone. Naive source timestamps denote UTC. For day bucketing only, a
