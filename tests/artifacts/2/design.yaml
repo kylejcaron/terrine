@@ -1,0 +1,28 @@
+design:
+  anchor:
+    end:
+      type: date
+      value: '2025-03-01'
+    every: 1mo
+    start:
+      type: date
+      value: '2025-02-01'
+    type: Schedule
+  features:
+    orders_30d:
+      metric: orders
+      type: MetricAgg
+      window:
+        end: 0s
+        start: -30d
+        type: Window
+  outcomes:
+    spend_next_30d:
+      metric: spend
+      type: MetricAgg
+      window:
+        end: 30d
+        start: 0s
+        type: Window
+  unit: null
+schema_version: 4

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-
 import ibis
 
 from terrine.compile.anchors import AnchorTable, compile_anchors
@@ -17,7 +15,6 @@ def compile_event_panel(
     design: Design,
     model,
     *,
-    persisted_prefixes: Mapping[tuple[str, str, str, str], ibis.Table] | None = None,
     persisted_anchors: ibis.Table | None = None,
 ) -> CompiledStudy:
     spec = design.shape
@@ -46,6 +43,4 @@ def compile_event_panel(
     for period_table in expanded[1:]:
         table = table.union(period_table, distinct=False)
     anchors = AnchorTable(table, parent._checks)
-    return compile_columns(
-        design, model, _anchor_table=anchors, persisted_prefixes=persisted_prefixes
-    )
+    return compile_columns(design, model, _anchor_table=anchors)

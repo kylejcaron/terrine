@@ -32,7 +32,7 @@ from terrine.semantic.models import BoundDimension, BoundValidity, PropertyBindi
 from terrine.spec import EventSequence, TimeToEvent
 from terrine.temporal.attributes import attribute_asof, validate_history
 from terrine.windows import Window
-from tests._float_bound import native_window_bound, window_sum_bound
+from tests._float_bound import window_sum_bound
 
 _ENGINE_FIXTURES = {
     "duckdb": "duckdb_connection",
@@ -199,17 +199,13 @@ def test_extrema_ignore_null_arguments(engine):
 
 @_MODES
 def test_window_sums_preserve_small_values_after_large_history(engine, exact):
-    """Catch prefix cancellation and decimal sums rounded through binary64.
-
-    The exact path answers a small window after a large history within the
-    window's own bound; the native path answers within a bound proportional to
-    the history prefix, which is what its contract promises.
-    """
-    history, window = [1e17, -3e16], [0.1, 0.2, 0.0]
+    """Selected day/intraday inputs ignore large excluded history in either mode."""
+    history, window = [1e17, -3e16], [0.1, 0.2, 0.0, 0.3]
     events = _events(
         [datetime(2024, 12, day, tzinfo=UTC) for day in (20, 21)]
-        + [_ORIGIN + timedelta(hours=hour) for hour in (12, 13, 14)],
-        ["history-a", "history-b", "a", "b", "c"],
+        + [_ORIGIN + timedelta(hours=hour) for hour in (12, 13, 14)]
+        + [_ORIGIN - timedelta(hours=4)],
+        ["history-a", "history-b", "a", "b", "c", "intraday-only"],
     )
     events = events.append_column("weight", pa.array(history + window))
     events = events.append_column(
@@ -217,7 +213,14 @@ def test_window_sums_preserve_small_values_after_large_history(engine, exact):
         pa.array(
             [
                 Decimal(value)
-                for value in ("0.00", "0.00", "9007199254740993.01", "-9007199254740993.00", "0.02")
+                for value in (
+                    "0.00",
+                    "0.00",
+                    "9007199254740993.01",
+                    "-9007199254740993.00",
+                    "0.02",
+                    "0.00",
+                )
             ],
             type=pa.decimal128(20, 2),
         ),
@@ -228,15 +231,23 @@ def test_window_sums_preserve_small_values_after_large_history(engine, exact):
         tr.FixedDate("2025-01-02"),
         features={
             "weight": tr.agg("weight", window=("-1d", "0s")),
+            "intraday": tr.agg("weight", window=("-36h", "0s")),
             "amount": tr.agg("amount", window=("-1d", "0s")),
         },
     )
     (row,) = _rows(model, design)
-    # Independent window oracles: 0.1 + 0.2 and exact decimal coefficient addition.
-    bound = window_sum_bound(window) if exact else native_window_bound(history + window)
-    assert abs(Fraction(row["weight"]) - sum(map(Fraction, window))) <= bound
-    assert row["weight__reason"] is None
+    # Independent answers: day 0.1 + 0.2; intraday also includes 0.3.
+    for name, selected in (("weight", window[:3]), ("intraday", window)):
+        if exact:
+            assert abs(Fraction(row[name]) - sum(map(Fraction, selected))) <= window_sum_bound(
+                selected
+            )
+        else:
+            expected = 0.3 if name == "weight" else 0.6
+            assert row[name] == pytest.approx(expected, rel=1e-15, abs=0)
+        assert (row[f"{name}__complete"], row[f"{name}__reason"]) == (True, None), name
     assert row["amount"] == Decimal("0.03")
+    assert (row["amount__complete"], row["amount__reason"]) == (True, None)
 
 
 @_MODES
@@ -258,9 +269,7 @@ def test_bounded_accumulation_refuses_exact_overflow(engine, exact):
     )
     if not exact:
         (row,) = _rows(model, design)
-        assert abs(Fraction(row["weight"]) - sum(map(Fraction, values))) <= native_window_bound(
-            values
-        )
+        assert row["weight"] == pytest.approx(1.8e29, rel=1e-15, abs=0)
         return
     materialized = []
     with pytest.raises(TerrineError) as caught:
@@ -270,51 +279,9 @@ def test_bounded_accumulation_refuses_exact_overflow(engine, exact):
 
 
 @_MODES
-def test_small_window_after_a_million_events_meets_its_mode_bound(engine, exact):
-    """Three events after a million history events of 1e3, generated on the engine.
-
-    The native sum's error is bounded against the whole history prefix, the
-    exact sum's against the window alone; both windows (a day-aligned one and
-    an intraday one) are checked against the exact sum of the three inputs.
-    """
-    from terrine.backends.sequences import integer_sequence
-
-    window = [0.1, 0.2, 0.3]
-    count = 1_000_000
-    recent = _events([_ORIGIN + timedelta(hours=hour) for hour in (12, 13, 14)], ["a", "b", "c"])
-    recent = engine.create_table(
-        _name(engine, "recent_events"), recent.append_column("weight", pa.array(window))
-    )
-    sequence = integer_sequence(count, "ordinal", dialect=engine.name)
-    history_start = ibis.timestamp(datetime(2024, 12, 1, tzinfo=UTC))
-    history = sequence.select(
-        user_id=ibis.literal("u"),
-        ts=history_start + sequence.ordinal.as_interval("s"),
-        event_id=sequence.ordinal.cast("string").lpad(8, "h"),
-        weight=ibis.literal(1e3, type=dt.float64),
-    ).cast(recent.schema())
-    model = _model(engine, recent.union(history, distinct=False), exact=exact)
-    design = tr.Design(
-        "user",
-        tr.FixedDate("2025-01-02"),
-        features={
-            "day": tr.agg("weight", window=("-1d", "0s")),
-            "intraday": tr.agg("weight", window=("-36h", "0s")),
-        },
-    )
-    (row,) = _rows(model, design)
-    total = sum(map(Fraction, window), Fraction())
-    bound = window_sum_bound(window) if exact else native_window_bound([1e3] * count + window)
-    for name in ("day", "intraday"):
-        assert abs(Fraction(row[name]) - total) <= bound, name
-        assert (row[f"{name}__complete"], row[f"{name}__reason"]) == (True, None), name
-
-
-@_MODES
 def test_sub_resolution_values_sum_natively_and_the_exact_path_notes_their_loss(engine, exact):
-    """Values below half a nano-unit: the native sum keeps them within its bound and
-    has nothing to note; the exact path discards them and says so, without making
-    the window incomplete."""
+    """Native inputs retain sub-nano values; exact inputs note per-input loss
+    without withdrawing completeness."""
     values = [1e-10, 2e-10, 4e-10]
     events = _events(
         [_ORIGIN + timedelta(hours=hour) for hour in (12, 13, 14)], ["a", "b", "c"]
@@ -330,8 +297,7 @@ def test_sub_resolution_values_sum_natively_and_the_exact_path_notes_their_loss(
     if exact:
         assert (row["weight"], row["weight__reason"]) == (0.0, "below_resolution")
         return
-    assert abs(Fraction(row["weight"]) - sum(map(Fraction, values))) <= native_window_bound(values)
-    assert row["weight"] == pytest.approx(7e-10, rel=1e-15)
+    assert row["weight"] == pytest.approx(7e-10, rel=1e-15, abs=0)
     assert row["weight__reason"] is None
 
 
@@ -498,53 +464,4 @@ def test_null_safe_keys_preserve_nulls_and_duplicate_matches(engine):
         (3, 3),
         (4, 4),
         (5, 5),
-    ]
-
-
-def test_prefix_lookup_keeps_strict_cutoffs_and_duplicate_requests(engine):
-    from terrine.temporal.lookup import lookup_prefix
-
-    prefix = engine.create_table(
-        "prefix_states",
-        pa.table(
-            {
-                "_unit": ["u", "u"],
-                "_timestamp": [_ORIGIN, _ORIGIN + timedelta(hours=1)],
-                "n": pa.array([None, 7], pa.int64()),
-            }
-        ),
-    )
-    points = engine.create_table(
-        "prefix_requests",
-        pa.table(
-            {
-                "request": [1, 2, 2, 3, 4, 5, 6],
-                "unit": ["u"] * 6 + ["missing"],
-                "cutoff": [
-                    _ORIGIN,
-                    _ORIGIN + timedelta(microseconds=1),
-                    _ORIGIN + timedelta(microseconds=1),
-                    _ORIGIN + timedelta(hours=1),
-                    _ORIGIN + timedelta(hours=1, microseconds=1),
-                    None,
-                    _ORIGIN,
-                ],
-            }
-        ),
-    )
-    result = lookup_prefix(points, prefix, unit_column="unit", timestamp_column="cutoff")
-    table = result.table
-    rows = engine.to_pyarrow(
-        table.select(
-            "request", n=table[result.columns["n"]], found=table[result.matched_column]
-        ).order_by("request")
-    ).to_pylist()
-    assert [(row["request"], row["n"], row["found"]) for row in rows] == [
-        (1, 0, False),
-        (2, None, True),
-        (2, None, True),
-        (3, None, True),
-        (4, 7, True),
-        (5, 0, False),
-        (6, 0, False),
     ]

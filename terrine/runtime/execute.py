@@ -18,7 +18,7 @@ from terrine.runtime.arrow import _PREFIX, ArrowOutput
 from terrine.runtime.cost import _ATTEMPTS, ScanAuthorization, authorize_plan_scan
 from terrine.runtime.events import event_transaction, record_run_event
 from terrine.runtime.leases import Lease, LeaseStore
-from terrine.runtime.planner import RefreshPlan, TaskSpec
+from terrine.runtime.planner import RefreshPlan, TaskSpec, admit_execution
 from terrine.runtime.saved_plan import DestinationRef
 from terrine.runtime.state import RuntimeStore
 from terrine.runtime.status import _recover_interrupted_runs
@@ -67,6 +67,7 @@ def execute_plan(
     authorize_scan: Callable[[RefreshPlan], ScanAuthorization] | None = None,
 ) -> RunReceipt:
     """Execute a bounded DAG; callbacks must isolate connections when concurrency exceeds one."""
+    admit_execution(plan, namespace=namespace)
     if plan.namespace != namespace:
         raise ValueError("plan namespace does not match runtime namespace")
     if not run_id:
@@ -91,7 +92,6 @@ def execute_plan(
         not isinstance(destination, DestinationRef) or destination.dataset != plan.dataset
     ):
         raise ValueError("destination must identify the planned dataset")
-    authorize_plan_scan(plan, authorize_scan)
     destination_json = (
         json.dumps(destination.to_dict(), sort_keys=True, separators=(",", ":"))
         if destination is not None
@@ -105,7 +105,7 @@ def execute_plan(
     result_partitions = sorted(
         task.task_id for task in plan.tasks if task.task_id not in dependencies
     )
-    _recover_interrupted_runs(con, namespace=namespace)
+    _recover_interrupted_runs(con, namespace=namespace, plan=plan)
     lease = None
     existing_request = None
     with event_transaction(con, namespace=namespace):
@@ -123,6 +123,7 @@ def execute_plan(
                 raise _REQUEST_KEY_CONFLICT.error()
             if existing_request[0] != run_id:
                 receipt = RunReceipt(existing_request[0], existing_request[3], existing_request[4])
+                _verify_replay(plan, receipt, con=con, namespace=namespace)
                 if receipt.state in {"succeeded", "cancelled"}:
                     _release_run_snapshot_refs(runtime_store, plan.snapshot_id, receipt.run_id)
                 return receipt
@@ -199,6 +200,7 @@ def execute_plan(
                     [run_id, partition],
                 )
     if run is not None and run[2] in {"succeeded", "cancelled"}:
+        _verify_replay(plan, RunReceipt(run_id, run[2], run[3]), con=con, namespace=namespace)
         _release_run_snapshot_refs(runtime_store, plan.snapshot_id, run_id)
         return RunReceipt(run_id, run[2], run[3])
     assert lease is not None
@@ -207,6 +209,9 @@ def execute_plan(
         [run_id],
     ).fetchone()
     if current is not None and current[0] in {"succeeded", "cancelled"}:
+        _verify_replay(
+            plan, RunReceipt(run_id, current[0], current[1]), con=con, namespace=namespace
+        )
         leases.release(lease)
         _release_run_snapshot_refs(runtime_store, plan.snapshot_id, run_id)
         return RunReceipt(run_id, current[0], current[1])
@@ -239,7 +244,10 @@ def execute_plan(
             raise RuntimeError("run disappeared while recovering cancellation")
         return RunReceipt(run_id, current[0], current[1])
     try:
+        if plan.definition.reuse_base_generation is not None:
+            leases.assert_current(lease)
         _check_expected_base_manifest(plan, con=con, namespace=namespace)
+        authorize_plan_scan(plan, authorize_scan)
     except Exception as error:
         try:
             reconciled = _reconcile_committed_publication(
@@ -300,6 +308,21 @@ def execute_plan(
                 ],
             ).fetchone()
             if transition is not None:
+                # Owner invocation IDs are safe identifiers; this JSON key cannot collide.
+                identity = json.dumps(["execution", run_id], separators=(",", ":"))
+                serialized = plan.serialize().decode()
+                con.execute(
+                    f"INSERT INTO {schema}.runtime_plan_invocations VALUES (?,?,?,?) "
+                    "ON CONFLICT DO NOTHING",
+                    [identity, plan.definition.fingerprint, plan.snapshot_id, serialized],
+                )
+                recorded = con.execute(
+                    f"SELECT request_hash,snapshot_id,invocation_json FROM "
+                    f"{schema}.runtime_plan_invocations WHERE invocation_id=?",
+                    [identity],
+                ).fetchone()
+                if recorded != (plan.definition.fingerprint, plan.snapshot_id, serialized):
+                    raise ValueError("run execution identity differs from its saved plan")
                 record_run_event(
                     run_id,
                     "lifecycle",
@@ -319,6 +342,9 @@ def execute_plan(
         ).fetchone()
         if current is None:
             raise RuntimeError("run disappeared while claiming its lease")
+        _verify_replay(
+            plan, RunReceipt(run_id, current[0], current[1]), con=con, namespace=namespace
+        )
         return RunReceipt(run_id, current[0], current[1])
     active_reference = json.dumps((run_id, lease.fence), separators=(",", ":"))
     try:
@@ -518,10 +544,17 @@ def execute_plan(
                 leases=leases,
             )
     except Exception as error:
+        publication_failure = None
         publication = con.execute(
             f"SELECT generation FROM {schema}.runtime_run_publications WHERE run_id=?",
             [run_id],
         ).fetchone()
+        if publication is not None:
+            try:
+                _verify_generation(plan, publication[0], con=con, namespace=namespace)
+            except TerrineError as validation_error:
+                publication_failure = validation_error
+                publication = None
         if publication is not None:
             generation = publication[0]
             if plan.tasks:
@@ -565,7 +598,12 @@ def execute_plan(
                 "updated_at=?, error_code=? WHERE run_id=? "
                 "AND state IN ('running','cancel_requested') "
                 "AND published_generation IS NULL AND attempt_fence=? RETURNING state",
-                [datetime.now(UTC).replace(tzinfo=None), _error_code(error), run_id, lease.fence],
+                [
+                    datetime.now(UTC).replace(tzinfo=None),
+                    _error_code(publication_failure or error),
+                    run_id,
+                    lease.fence,
+                ],
             ).fetchone()
             if terminal is not None:
                 con.execute(
@@ -581,6 +619,8 @@ def execute_plan(
                     namespace=namespace,
                     _in_transaction=True,
                 )
+        if publication_failure is not None:
+            raise publication_failure from error
         raise
     finally:
         stop_heartbeat.set()
@@ -615,6 +655,7 @@ def _reconcile_committed_publication(
         f"SELECT generation FROM {schema}.runtime_manifests WHERE dataset=?", [plan.dataset]
     ).fetchone()
     generation = publication[0]
+    _verify_generation(plan, generation, con=con, namespace=namespace)
     if plan.tasks and manifest is not None and manifest[0] == generation:
         runtime_store.replace_published_snapshot(
             plan.dataset, generation, plan.snapshot_id, lease=lease
@@ -650,15 +691,45 @@ def _reconcile_committed_publication(
 
 
 def _check_expected_base_manifest(plan: RefreshPlan, *, con: Any, namespace: str) -> None:
-    if not plan.expected_base_manifest_bound:
+    if not plan.expected_base_manifest_bound and plan.definition.reuse_base_generation is None:
         return
     current = con.execute(
         f'SELECT generation FROM "{namespace}".runtime_manifests WHERE dataset=?',
         [plan.dataset],
     ).fetchone()
     actual = current[0] if current is not None else None
-    if actual != plan.expected_base_manifest:
+    if plan.expected_base_manifest_bound and actual != plan.expected_base_manifest:
         raise ValueError("expected base manifest does not match current publication")
+    if plan.definition.reuse_base_generation is not None:
+        if actual != plan.definition.reuse_base_generation:
+            raise ValueError("reuse base does not match current publication")
+        _verify_generation(plan, actual, con=con, namespace=namespace)
+
+
+def _verify_generation(plan: RefreshPlan, generation: str, *, con: Any, namespace: str) -> None:
+    from terrine.runtime.backends.duckdb import DuckDBBackend
+    from terrine.runtime.planner import _UNVERIFIABLE
+
+    if not plan.tasks and generation != plan.definition.reuse_base_generation:
+        raise _UNVERIFIABLE.error(
+            reason="reuse_publication_mismatch",
+            route="Rebuild the plan from its dataset definition and refresh.",
+        )
+    revision = DuckDBBackend(con, namespace=namespace).generation_execution_revision(
+        plan.dataset, generation
+    )
+    if revision != plan.definition.execution_revision:
+        raise _UNVERIFIABLE.error(
+            reason="publication_execution_revision_mismatch",
+            execution_revision=revision,
+            required_revision=plan.definition.execution_revision,
+            route="Rebuild the plan from its dataset definition and refresh.",
+        )
+
+
+def _verify_replay(plan: RefreshPlan, receipt: RunReceipt, *, con: Any, namespace: str) -> None:
+    if receipt.state == "succeeded" and receipt.published_generation is not None:
+        _verify_generation(plan, receipt.published_generation, con=con, namespace=namespace)
 
 
 def _copy_result_partitions(
@@ -715,17 +786,10 @@ def _decode(payload: bytes) -> pa.Table | ArrowOutput:
 def _release_run_snapshot_refs(store: RuntimeStore, snapshot_id: str, run_id: str) -> None:
     for attempt in range(5):
         try:
-            for kind, reference in store.snapshot_references(snapshot_id):
-                if kind != "active_run":
-                    continue
-                try:
-                    owner, _fence = json.loads(reference)
-                except (TypeError, ValueError):
-                    if reference == run_id:
-                        store.unpin_snapshot(snapshot_id, kind=kind, reference=reference)
-                    continue
-                if owner == run_id:
-                    store.unpin_snapshot(snapshot_id, kind=kind, reference=reference)
+            for pinned_snapshot, reference in store._releasable_run_snapshot_references(
+                run_id=run_id, snapshot_id=snapshot_id
+            ):
+                store.unpin_snapshot(pinned_snapshot, kind="active_run", reference=reference)
             return
         except Exception as exc:
             if type(exc).__name__ != "TransactionException":
@@ -805,6 +869,34 @@ def _finish_run(
     published = publish(plan, MappingProxyType(dict(outputs)), lease)
     generation = getattr(published, "generation", published)
     generation_text = str(generation) if generation is not None else None
+    if generation_text is None:
+        committed = con.execute(
+            f"SELECT generation FROM {schema}.runtime_run_publications WHERE run_id=?",
+            [run_id],
+        ).fetchone()
+        if committed is not None:
+            generation_text = committed[0]
+        elif plan.definition.reconstruction_hash is not None:
+            from terrine.runtime.planner import _UNVERIFIABLE
+
+            raise _UNVERIFIABLE.error(reason="missing_publication")
+    if not plan.tasks:
+        _check_expected_base_manifest(plan, con=con, namespace=runtime_store.namespace)
+        if (
+            plan.definition.reuse_base_generation is None
+            or generation_text != plan.definition.reuse_base_generation
+        ):
+            from terrine.runtime.planner import _UNVERIFIABLE
+
+            raise _UNVERIFIABLE.error(reason="unverified_no_change_publication")
+        publication = con.execute(
+            f"SELECT dataset,generation FROM {schema}.runtime_run_publications WHERE run_id=?",
+            [run_id],
+        ).fetchone()
+        if publication != (plan.dataset, generation_text):
+            raise ValueError("no-change publication requires a fenced reuse receipt")
+    if generation_text is not None:
+        _verify_generation(plan, generation_text, con=con, namespace=runtime_store.namespace)
     if generation_text is not None and plan.tasks:
         runtime_store.replace_published_snapshot(
             plan.dataset, generation_text, plan.snapshot_id, lease=lease

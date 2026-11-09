@@ -9,6 +9,7 @@ from terrine.runtime.graph import dependency_graph
 from terrine.runtime.leases import LeaseStore
 from terrine.runtime.planner import plan_refresh
 from terrine.runtime.state import RuntimeStore
+from tests.runtime.test_execute import _publish
 
 
 def test_snapshot_references_are_durable_idempotent_and_owner_scoped():
@@ -36,6 +37,84 @@ def test_snapshot_reference_identity_is_validated():
         store.pin_snapshot("", kind="run", reference="run")
     with pytest.raises(ValueError):
         store.pin_snapshot("snapshot", kind="", reference="run")
+
+
+@pytest.mark.parametrize(
+    ("references", "bare_state", "fenced_state", "released"),
+    [
+        pytest.param(
+            (
+                '{"s":1,"other":2}',
+                '"st"',
+                '["s",true]',
+                '["s",1.0]',
+                '["s",0]',
+                '["s",-1]',
+                '["s",1,2]',
+            ),
+            None,
+            "obsolete",
+            False,
+            id="malformed-fenced-references",
+        ),
+        ("s", "obsolete", None, True),
+        ('["s",1]', None, "obsolete", True),
+        ('["s",1]', "running", "obsolete", False),
+        ('["s",1]', "retryable", "obsolete", False),
+        ('["s",1]', "obsolete", "running", False),
+        ('["s",1]', "obsolete", "retryable", False),
+        ('["s",1]', "obsolete", "obsolete", True),
+        ('["s",1]', "obsolete", None, True),
+        ('{"s":1,"other":2}', "obsolete", None, True),
+        ('"st"', "obsolete", None, True),
+    ],
+)
+def test_snapshot_cleanup_requires_every_recognized_owner_to_be_terminal(
+    references, bare_state, fenced_state, released
+):
+    from pathlib import Path
+
+    from terrine.runtime.saved_plan import SavedPlan, _bind_saved_plan
+
+    references = (references,) if isinstance(references, str) else references
+
+    con = duckdb.connect()
+    store = RuntimeStore(con, namespace="owner")
+    store.initialize()
+    saved = SavedPlan.from_json(
+        (Path(__file__).parents[1] / "fixtures/retained_plan_v1.json").read_text()
+    )
+    obsolete = _bind_saved_plan(saved, namespace="owner")
+    con.execute("INSERT INTO owner.runtime_dataset_requests VALUES (?,?)", ["old", saved.to_json()])
+    current = plan_refresh(
+        namespace="owner",
+        dataset="orders",
+        definition_hash="def",
+        snapshot_id="snapshot",
+        graph=dependency_graph(sources=("events",)),
+    )
+    con.execute(
+        "INSERT INTO owner.runtime_plan_invocations VALUES (?,?,?,?)",
+        ["current", current.definition.fingerprint, "snapshot", current.serialize().decode()],
+    )
+    for run_id, owner_state in ((references[0], bare_state), ("s", fenced_state)):
+        if owner_state is not None:
+            con.execute(
+                "INSERT INTO owner.runtime_runs "
+                "(run_id,dataset,fingerprint,state,attempt_fence) VALUES (?,'orders',?,?,1)",
+                [
+                    run_id,
+                    (obsolete if owner_state == "obsolete" else current).definition.fingerprint,
+                    "running" if owner_state == "running" else "failed",
+                ],
+            )
+    for reference in references:
+        store.pin_snapshot("snapshot", kind="active_run", reference=reference)
+    store.release_terminal_run_snapshot_references()
+    assert store.snapshot_references("snapshot") == (
+        () if released else tuple(sorted(("active_run", reference) for reference in references))
+    )
+    assert store.mark_snapshot_for_gc("snapshot") is released
 
 
 def test_publication_reference_replacement_requires_current_lease():
@@ -66,7 +145,7 @@ def test_execution_pins_snapshot_for_active_run_and_published_manifest():
 
     def publish(plan, outputs, lease):
         assert store.snapshot_references("snapshot") == (("active_run", '["run-1",1]'),)
-        return "g1"
+        return _publish(con, plan, outputs, lease)
 
     result = execute_plan(
         plan,
@@ -89,6 +168,28 @@ def test_execution_pins_snapshot_for_active_run_and_published_manifest():
         publish=publish,
     )
     assert store.snapshot_references("snapshot") == (("published_manifest", '["orders","g1"]'),)
+    ambiguous = '["run-1",1]'
+    opaque = '{"run-1":1,"other":2}'
+    con.execute(
+        "INSERT INTO owner.runtime_runs (run_id,dataset,fingerprint,state,attempt_fence) "
+        "VALUES (?,'orders',?,'failed',1)",
+        [ambiguous, plan.definition.fingerprint],
+    )
+    for reference in (ambiguous, opaque):
+        store.pin_snapshot("snapshot", kind="active_run", reference=reference)
+    execute_plan(
+        plan,
+        con=con,
+        namespace="owner",
+        run_id="run-1",
+        run_task=lambda task, dependencies: pa.table({"task": [task.task_id]}),
+        publish=publish,
+    )
+    assert store.snapshot_references("snapshot") == (
+        ("active_run", ambiguous),
+        ("active_run", opaque),
+        ("published_manifest", '["orders","g1"]'),
+    )
 
 
 def test_terminal_snapshot_cleanup_retries_transaction_conflict(monkeypatch):
@@ -119,7 +220,7 @@ def test_terminal_snapshot_cleanup_retries_transaction_conflict(monkeypatch):
         namespace="owner",
         run_id="run-1",
         run_task=lambda task, dependencies: pa.table({"task": [task.task_id]}),
-        publish=lambda plan, outputs, lease: "g1",
+        publish=lambda plan, outputs, lease: _publish(con, plan, outputs, lease),
     )
     assert result.state == "succeeded"
     assert attempts == 2
@@ -149,7 +250,7 @@ def test_gc_reconciles_terminal_run_snapshot_references_after_cleanup_exhaustion
             namespace="owner",
             run_id="run-1",
             run_task=lambda task, dependencies: pa.table({"task": [task.task_id]}),
-            publish=lambda plan, outputs, lease: "g1",
+            publish=lambda plan, outputs, lease: _publish(con, plan, outputs, lease),
         )
         assert result.state == "succeeded"
         assert store.snapshot_references("snapshot") == (
@@ -179,8 +280,9 @@ def test_retryable_failed_run_keeps_snapshot_until_successful_retry():
             namespace="owner",
             run_id="retry",
             run_task=lambda task, dependencies: (_ for _ in ()).throw(RuntimeError("task failed")),
-            publish=lambda plan, outputs, lease: "g1",
+            publish=lambda plan, outputs, lease: _publish(con, plan, outputs, lease),
         )
+    store.release_terminal_run_snapshot_references()
     assert store.snapshot_references("snapshot") == (("active_run", '["retry",1]'),)
     execute_plan(
         plan,
@@ -188,7 +290,7 @@ def test_retryable_failed_run_keeps_snapshot_until_successful_retry():
         namespace="owner",
         run_id="retry",
         run_task=lambda task, dependencies: pa.table({"id": [1]}),
-        publish=lambda plan, outputs, lease: "g1",
+        publish=lambda plan, outputs, lease: _publish(con, plan, outputs, lease),
     )
     assert store.snapshot_references("snapshot") == (("published_manifest", '["orders","g1"]'),)
 
@@ -211,7 +313,9 @@ def test_string_publisher_moves_manifest_pin_between_snapshots():
             namespace="owner",
             run_id=f"run-{index}",
             run_task=lambda task, dependencies, index=index: pa.table({"id": [index]}),
-            publish=lambda plan, outputs, lease, index=index: f"g{index}",
+            publish=lambda plan, outputs, lease, index=index: (
+                _publish(con, plan, outputs, lease, generation=f"g{index}").generation
+            ),
         )
     assert store.snapshot_references("snapshot-1") == ()
     assert store.snapshot_references("snapshot-2") == (("published_manifest", '["orders","g2"]'),)
@@ -237,7 +341,7 @@ def test_collected_snapshot_pin_failure_records_run_and_releases_lease():
             namespace="owner",
             run_id="collected-run",
             run_task=lambda task, dependencies: pa.table({"id": [1]}),
-            publish=lambda plan, outputs, lease: "g1",
+            publish=lambda plan, outputs, lease: _publish(con, plan, outputs, lease),
         )
     run = con.execute(
         'SELECT state FROM "owner".runtime_runs WHERE run_id=?', ["collected-run"]
@@ -283,7 +387,7 @@ def test_cancel_during_snapshot_pin_failure_does_not_emit_false_failure(monkeypa
             namespace="owner",
             run_id="cancel-at-pin",
             run_task=lambda task, dependencies: pa.table({"id": [1]}),
-            publish=lambda plan, outputs, lease: "g1",
+            publish=lambda plan, outputs, lease: _publish(con, plan, outputs, lease),
         )
 
     status = get_run("cancel-at-pin", con=con, namespace="owner")

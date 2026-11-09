@@ -1,0 +1,15 @@
+{
+  "case": "postgres-integer-anchors1",
+  "variant": "current",
+  "units": 10000,
+  "events": 300000,
+  "outputs": 50,
+  "explicit_analyze": ["events", "events_native", "users", "spike_times_1"],
+  "statement_timeout_seconds": 180,
+  "stage": "first CREATE TEMPORARY TABLE AS server evaluation",
+  "outcome": "psycopg.errors.QueryCanceled: canceling statement due to statement timeout",
+  "duration_is_censored": true,
+  "execution_seconds": null,
+  "command_wall_seconds": 213.95,
+  "candidate_executed_in_this_invocation": false
+}

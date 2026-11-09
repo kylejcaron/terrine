@@ -1,0 +1,203 @@
+{
+  "design.json": [
+    {
+      "name": "unit",
+      "type": "string",
+      "role": "unit"
+    },
+    {
+      "name": "anchor_id",
+      "type": "string",
+      "role": "anchor"
+    },
+    {
+      "name": "t0",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "t0"
+    },
+    {
+      "name": "is_event",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "sequence_position",
+      "type": "int64",
+      "role": "output"
+    },
+    {
+      "name": "event_id",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "output"
+    },
+    {
+      "name": "event_time",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "output"
+    },
+    {
+      "name": "event_count",
+      "type": "int64",
+      "role": "event_property"
+    },
+    {
+      "name": "event_count__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "event_count__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
+      "name": "orders_30d",
+      "type": "int64",
+      "role": "feature"
+    },
+    {
+      "name": "orders_30d__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "orders_30d__reason",
+      "type": "string",
+      "role": "output"
+    }
+  ],
+  "design.yaml": [
+    {
+      "name": "unit",
+      "type": "string",
+      "role": "unit"
+    },
+    {
+      "name": "anchor_id",
+      "type": "string",
+      "role": "anchor"
+    },
+    {
+      "name": "t0",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "t0"
+    },
+    {
+      "name": "is_event",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "sequence_position",
+      "type": "int64",
+      "role": "output"
+    },
+    {
+      "name": "event_id",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "output"
+    },
+    {
+      "name": "event_time",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "output"
+    },
+    {
+      "name": "event_count",
+      "type": "int64",
+      "role": "event_property"
+    },
+    {
+      "name": "event_count__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "event_count__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
+      "name": "orders_30d",
+      "type": "int64",
+      "role": "feature"
+    },
+    {
+      "name": "orders_30d__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "orders_30d__reason",
+      "type": "string",
+      "role": "output"
+    }
+  ],
+  "definition.json": [
+    {
+      "name": "unit",
+      "type": "string",
+      "role": "unit"
+    },
+    {
+      "name": "anchor_id",
+      "type": "string",
+      "role": "anchor"
+    },
+    {
+      "name": "t0",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "t0"
+    },
+    {
+      "name": "is_event",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "sequence_position",
+      "type": "int64",
+      "role": "output"
+    },
+    {
+      "name": "event_id",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "output"
+    },
+    {
+      "name": "event_time",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "output"
+    },
+    {
+      "name": "event_count",
+      "type": "int64",
+      "role": "event_property"
+    },
+    {
+      "name": "event_count__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "event_count__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
+      "name": "orders_30d",
+      "type": "int64",
+      "role": "feature"
+    },
+    {
+      "name": "orders_30d__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "orders_30d__reason",
+      "type": "string",
+      "role": "output"
+    }
+  ]
+}

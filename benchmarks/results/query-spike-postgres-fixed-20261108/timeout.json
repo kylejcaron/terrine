@@ -1,0 +1,14 @@
+{
+  "case": "postgres-integer-anchors1",
+  "units": 10000,
+  "events": 300000,
+  "outputs": 50,
+  "variant": "current",
+  "phase": "first server-side CREATE TEMPORARY TABLE AS evaluation",
+  "status": "statement_timeout",
+  "lower_bound_seconds": 180,
+  "observed_exception": "psycopg.errors.QueryCanceled: canceling statement due to statement timeout",
+  "direct_was_executed": false,
+  "native_was_executed": false,
+  "notes": "Not an exact runtime and not a speedup ratio. Unique scratch schema was dropped in finally. Continue with direct candidate and independent Python value oracle rather than rerunning the timed-out baseline."
+}

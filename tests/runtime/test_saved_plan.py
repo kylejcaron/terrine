@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from pathlib import Path
 
 import ibis
 import pyarrow as pa
@@ -23,6 +24,7 @@ from terrine.runtime.state import RuntimeStore
 from terrine.semantic.models import Catalog
 from terrine.spec import Design, FixedDate
 from terrine.spec.dataset import DatasetDefinition
+from tests.runtime.test_execute import _publish
 
 
 def _model(con):
@@ -119,7 +121,7 @@ def test_saved_plan_reconstructs_design_and_verifies_owner_model_in_fresh_resolv
         assert resolved_plan.expected_base_manifest == "manifest-1"
         assert resolved_plan.expected_base_manifest_bound
         assert resolved_plan.definition.reconstruction_hash == restored.plan_hash
-        assert resolved_plan.definition.schema_version == 2
+        assert resolved_plan.definition.schema_version == 3
         assert resolved_plan.tasks == plan.tasks
         assert resolved_plan.scan_bytes == plan.scan_bytes
         restored_plan = type(resolved_plan).deserialize(resolved_plan.serialize())
@@ -137,7 +139,9 @@ def test_saved_plan_reconstructs_design_and_verifies_owner_model_in_fresh_resolv
             namespace="runtime",
             run_id="saved_plan-run",
             run_task=lambda task, dependencies: pa.table({"layer": [task.layer]}),
-            publish=lambda plan, outputs, lease: "generation-1",
+            publish=lambda plan, outputs, lease: _publish(
+                con.con, plan, outputs, lease, generation="generation-1"
+            ),
         )
         assert store.snapshot_references("snapshot-1") == (
             ("published_manifest", '["study","generation-1"]'),
@@ -219,6 +223,9 @@ def test_saved_plan_preserves_strict_unknown_scan_refusal():
                 "budget",
                 "expected_base_manifest",
                 "expected_base_manifest_bound",
+                "execution_revision",
+                "reuse_base_generation",
+                "reuse_base_revision",
             )
         }
         payload["fingerprint"] = hashlib.sha256(
@@ -421,3 +428,77 @@ def test_saved_plan_refuses_unknown_fields_in_current_envelope(field):
     with pytest.raises(TerrineError) as error:
         SavedPlan.from_json(json.dumps(payload))
     assert error.value.code == "terrine.runtime.saved_plan_mismatch"
+
+
+@pytest.mark.parametrize("omitted_base_fields", [False, True])
+def test_legacy_checksums_allow_inspection_and_release_but_refuse_execution(omitted_base_fields):
+    from terrine.runtime.api import run_plan, run_serialized_plan
+    from terrine.runtime.saved_plan import _bind_saved_plan
+
+    def forbidden(*_):
+        raise AssertionError("legacy execution callback")
+
+    serialized = (Path(__file__).parents[1] / "fixtures/retained_plan_v1.json").read_text()
+    if omitted_base_fields:
+        envelope = json.loads(serialized)
+        historical = json.loads(envelope["plan_json"])
+        for field in ("expected_base_manifest", "expected_base_manifest_bound", "fingerprint"):
+            del historical[field]
+        historical["fingerprint"] = hashlib.sha256(
+            json.dumps(historical, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        envelope["plan_json"] = json.dumps(historical, sort_keys=True, separators=(",", ":"))
+        del envelope["plan_hash"]
+        envelope["plan_hash"] = hashlib.sha256(
+            json.dumps(envelope, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        serialized = json.dumps(envelope)
+    saved = SavedPlan.from_json(serialized)
+    plan = _bind_saved_plan(saved, namespace="owner")
+    con = ibis.duckdb.connect()
+    try:
+        store = RuntimeStore(con.con, namespace="owner")
+        store.initialize()
+        assert saved.pin_snapshot(store) == "snapshot"
+        assert saved.release_snapshot(store) == "snapshot"
+        for execute in (
+            lambda: run_serialized_plan(serialized, con=con.con, namespace="owner"),
+            lambda: run_serialized_plan(plan.serialize(), con=con.con, namespace="owner"),
+            lambda: run_plan(plan, con=con.con, namespace="owner"),
+            lambda: execute_plan(
+                plan,
+                con=con.con,
+                namespace="owner",
+                run_id="legacy",
+                run_task=forbidden,
+                publish=forbidden,
+            ),
+        ):
+            with pytest.raises(TerrineError) as error:
+                execute()
+            assert error.value.code == "terrine.runtime.saved_plan_mismatch"
+            assert error.value.context["execution_revision"] == 0
+            assert "route" in error.value.context
+        assert store.snapshot_references("snapshot") == ()
+    finally:
+        con.disconnect()
+
+
+def _legacy_saved_plan(saved):
+    """Encode historical version-one envelopes with their original checksums."""
+    plan = json.loads(saved.plan_json)
+    plan["schema_version"] = 2
+    for field in ("execution_revision", "reuse_base_generation", "reuse_base_revision"):
+        plan.pop(field, None)
+    del plan["fingerprint"]
+
+    def canonical(value):
+        return json.dumps(value, sort_keys=True, separators=(",", ":"))
+
+    plan["fingerprint"] = hashlib.sha256(canonical(plan).encode()).hexdigest()
+    envelope = json.loads(saved.to_json())
+    envelope["schema_version"] = 1
+    envelope["plan_json"] = canonical(plan)
+    del envelope["plan_hash"]
+    envelope["plan_hash"] = hashlib.sha256(canonical(envelope).encode()).hexdigest()
+    return SavedPlan.from_json(canonical(envelope))

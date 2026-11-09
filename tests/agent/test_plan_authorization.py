@@ -223,3 +223,61 @@ def test_preparation_replays_before_source_or_roster_reopening(owner_tools):
         definition, destination=destination, invocation_id="lost-preparation"
     )
     assert replay.status == "ok" and replay.output == first.output
+
+
+def test_historical_invocations_authorize_administration_without_blocking_current_runs(owner_tools):
+    from terrine.runtime.graph import dependency_graph
+    from terrine.runtime.planner import plan_refresh
+    from terrine.runtime.planning import PlanInvocation
+    from terrine.runtime.saved_plan import _bind_saved_plan
+    from terrine.spec import Design, FixedDate, agg
+    from tests.runtime.test_saved_plan import _legacy_saved_plan
+
+    tools = owner_tools
+    tools.policy = replace(tools.policy, cancel=True)
+    design = Design(
+        "user", FixedDate("2025-01-02"), features={"history": agg("total", window=("-1d", "0s"))}
+    )
+    plan = plan_refresh(
+        namespace="agent",
+        dataset="study",
+        definition_hash=design.spec_hash,
+        snapshot_id="snapshot",
+        graph=dependency_graph(sources=("events",)),
+    )
+    current = SavedPlan.create(
+        plan_json=plan.serialize(),
+        design=design,
+        model=tools.policy.model_reference,
+        destination=next(iter(tools.policy.allowed_destinations)),
+        namespace="agent",
+        expected_base_manifest=None,
+    )
+    old = _legacy_saved_plan(current)
+    raw = tools.model.con.con
+    ensure_runtime_schema(raw, "agent")
+    for name, saved in (("historical", old), ("current", current)):
+        invocation = PlanInvocation(
+            name, saved.plan_json, name, saved.destination, "snapshot", None, saved.to_json()
+        )
+        raw.execute(
+            "INSERT INTO agent.runtime_plan_invocations VALUES (?,?,?,?)",
+            [name, name, "snapshot", json.dumps(invocation.to_dict())],
+        )
+    for run_id, saved in (("old-run", old), ("current-run", current)):
+        plan = _bind_saved_plan(saved, namespace="agent")
+        raw.execute(
+            "INSERT INTO agent.runtime_runs "
+            "(run_id,dataset,fingerprint,state,destination_json) VALUES (?,?,?,'queued',?)",
+            [
+                run_id,
+                saved.destination.dataset,
+                plan.definition.fingerprint,
+                json.dumps(saved.destination.to_dict()),
+            ],
+        )
+        assert tools.get_run_status(run_id).status == "ok"
+        assert tools.get_run_events(run_id).status == "ok"
+        assert tools.request_cancel(run_id).output.disposition == "requested"
+    tools.policy = replace(tools.policy, allowed_sources=frozenset())
+    assert tools.get_run_status("old-run").code == "terrine.agent.scope_denied"

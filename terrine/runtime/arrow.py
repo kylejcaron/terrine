@@ -69,12 +69,7 @@ class ArrowOutput:
     def open(self) -> pa.RecordBatchReader:
         if _checksum(self.path) != self.checksum:
             raise ValueError("retained Arrow output checksum differs")
-        stream = self.path.open("rb")
-        try:
-            return pa.ipc.open_stream(stream)
-        except Exception:
-            stream.close()
-            raise
+        return pa.ipc.open_stream(str(self.path))
 
     @property
     def schema(self) -> pa.Schema:

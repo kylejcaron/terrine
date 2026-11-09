@@ -199,7 +199,23 @@ for batch in refreshed.to_arrow_batches():
     consume(batch)
 ```
 
-The local DuckDB path does not discover authoritative upstream revisions. Omitting `changes` conservatively rebuilds the definition; upstream revision fields remain explicitly unknown even though the retained input receipt is exact. An authoritative empty `ChangeSet` may reuse the pinned generation only while the model definition is unchanged. Refreshing from a superseded generation refuses rather than overwriting a newer publication. A scoring refresh preserves its resolved `as_of`; changing the prediction date requires a new explicit snapshot.
+The local DuckDB path does not discover authoritative upstream revisions.
+Omitting `changes` conservatively rebuilds the definition; upstream revision
+fields remain unknown even though the retained input receipt is exact.
+An authoritative empty `ChangeSet` may reuse the identical pinned manifest
+and generation only while the model definition is unchanged and the exact
+base has complete, current execution-revision evidence. This is checked under
+the dataset lease and again when recording reuse. Older or unknown execution
+evidence forces full recomputation, including for a nonempty partial ChangeSet.
+Refreshing from a superseded generation refuses rather than overwriting a
+newer publication. A scoring refresh preserves its resolved `as_of`; changing
+the prediction date requires a new explicit snapshot.
+
+Old final generations remain readable with their original data, metadata and
+digests. Reopening does not recompute or add an execution revision to historical
+provenance. Saved executable plans have a separate compatibility boundary:
+old checksummed envelopes remain inspectable and their pins releasable, but
+execution and replay require a newly prepared current-revision plan.
 
 Staging requires a file-backed DuckDB Model connection. The runtime namespace defaults to `terrine_runtime` (`TERRINE_RUNTIME_NAMESPACE`); retained inputs and bounded Arrow task outputs default to `<database-parent>/.terrine/snapshots` (`TERRINE_RUNTIME_SNAPSHOT_ROOT`). The built-in executor accepts cross-sectional, sequential trial-panel, event-panel and StatePanel Designs; see the [runtime shape matrix](materialization-runtime.md#runtime-shape-support). Unsupported shapes refuse before source capture; specialized local Frame materialization remains available separately.
 

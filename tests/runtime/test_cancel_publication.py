@@ -61,7 +61,9 @@ def test_cancel_waits_on_publication_boundary(monkeypatch):
     def publish(*args):
         publishing.set()
         assert finish.wait(timeout=HANG_GUARD_SECONDS)
-        return "g1"
+        from tests.runtime.test_execute import _publish
+
+        return _publish(con, *args)
 
     real_lock = status_module.run_publication_lock
 

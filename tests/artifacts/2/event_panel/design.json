@@ -1,0 +1,1 @@
+{"design":{"anchor":{"event":"orders","type":"EventAnchor"},"features":{"orders_30d":{"metric":"orders","type":"MetricAgg","window":{"end":"0s","start":"-30d","type":"Window"}}},"shape":{"period":"1w","periods":[-1,0,1],"reference_period":-1,"type":"EventPanelSpec"},"unit":null},"schema_version":4}

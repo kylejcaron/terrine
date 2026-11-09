@@ -1,0 +1,34 @@
+[
+  {
+    "mode": "integer",
+    "variant": "current",
+    "compact_sql_chars": 525500,
+    "formatted_sql_chars": 1063112,
+    "compile_seconds": 4.869505082955584,
+    "executed_on_bigquery": false
+  },
+  {
+    "mode": "integer",
+    "variant": "direct",
+    "compact_sql_chars": 87078,
+    "formatted_sql_chars": 126982,
+    "compile_seconds": 0.6091799170244485,
+    "executed_on_bigquery": false
+  },
+  {
+    "mode": "native",
+    "variant": "current",
+    "compact_sql_chars": 912025,
+    "formatted_sql_chars": 2273557,
+    "compile_seconds": 7.602176957996562,
+    "executed_on_bigquery": false
+  },
+  {
+    "mode": "native",
+    "variant": "direct",
+    "compact_sql_chars": 93767,
+    "formatted_sql_chars": 137431,
+    "compile_seconds": 1.0707865830045193,
+    "executed_on_bigquery": false
+  }
+]

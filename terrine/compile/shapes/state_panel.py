@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping
 from dataclasses import replace
 from decimal import Decimal
 from typing import TYPE_CHECKING
@@ -134,8 +133,6 @@ def _union_state_periods(
     design: Design,
     model: Model,
     metric: str,
-    *,
-    persisted_prefixes: Mapping[tuple[str, str, str, str], ibis.Table] | None,
 ):
     schedule = design.anchor
     assert isinstance(schedule, Schedule) and isinstance(schedule.every, Duration)
@@ -144,18 +141,14 @@ def _union_state_periods(
     state_design = _state_panel_design(
         design, anchor=schedule, features={"_state_period": node}, gap=Duration(0)
     )
-    compiled = compile_columns(
-        state_design, model, include_membership=False, persisted_prefixes=persisted_prefixes
-    )
+    compiled = compile_columns(state_design, model, include_membership=False)
     endpoint = _state_panel_design(
         design,
         anchor=FixedDate(schedule.end_exclusive),
         features={"_state_period": node},
         gap=Duration(0),
     )
-    final = compile_columns(
-        endpoint, model, include_membership=False, persisted_prefixes=persisted_prefixes
-    )
+    final = compile_columns(endpoint, model, include_membership=False)
     return compiled.table.union(final.table), compiled, final
 
 
@@ -164,7 +157,6 @@ def _binned(
     model: Model,
     panel: StatePanel,
     *,
-    persisted_prefixes: Mapping[tuple[str, str, str, str], ibis.Table] | None,
     persisted_anchors: ibis.Table | None,
 ) -> CompiledStudy:
     spec = panel.state
@@ -173,7 +165,7 @@ def _binned(
     assert isinstance(schedule, Schedule) and isinstance(schedule.every, Duration)
     every = schedule.every.seconds
     period_relation, period_compiled, endpoint_compiled = _union_state_periods(
-        design, model, spec.metric, persisted_prefixes=persisted_prefixes
+        design, model, spec.metric
     )
     state_meta = period_compiled.columns["_state_period"]
     period_relation = period_relation.mutate(
@@ -189,7 +181,6 @@ def _binned(
     compiled = compile_columns(
         output_design,
         model,
-        persisted_prefixes=persisted_prefixes,
         persisted_anchors=persisted_anchors,
     )
 
@@ -246,7 +237,6 @@ def _binned(
             baseline_design,
             model,
             include_membership=False,
-            persisted_prefixes=persisted_prefixes,
         )
         raw_baseline = baseline_compiled.table
         baseline_projection = {"unit": raw_baseline.unit}
@@ -429,7 +419,6 @@ def compile_state_panel(
     design: Design,
     model: Model,
     *,
-    persisted_prefixes: Mapping[tuple[str, str, str, str], ibis.Table] | None = None,
     persisted_anchors: ibis.Table | None = None,
 ) -> CompiledStudy:
     """Compile a bounded schedule into paired unit-period state rows."""
@@ -446,13 +435,11 @@ def compile_state_panel(
             design,
             model,
             panel,
-            persisted_prefixes=persisted_prefixes,
             persisted_anchors=persisted_anchors,
         )
     return _binned(
         design,
         model,
         panel,
-        persisted_prefixes=persisted_prefixes,
         persisted_anchors=persisted_anchors,
     )

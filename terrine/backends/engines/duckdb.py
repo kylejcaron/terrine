@@ -100,6 +100,12 @@ def _utc_aware(zone, timestamp):
     """Attach UTC explicitly to a naive UTC wall-clock value."""
 
 
+@ibis.udf.scalar.builtin(name="epoch_us")
+def _epoch_microseconds(value) -> int:
+    """Read exact native microseconds without calendar or zone conversion."""
+    raise NotImplementedError
+
+
 @ibis.udf.scalar.builtin(name="isfinite")
 def _timestamp_isfinite(value) -> bool:
     """Native timestamp finiteness predicate."""
@@ -259,7 +265,11 @@ class DuckDBDialect(Dialect):
         finite = self.timestamp_is_finite(value)
         epoch = _epoch(dtype)
         instant = cast(ir.TimestampValue, finite.ifelse(value, epoch))
-        coefficient = instant.delta(epoch, unit=unit)
+        coefficient = (
+            cast(ir.IntegerValue, _epoch_microseconds(instant))
+            if scale == 6
+            else instant.delta(epoch, unit=unit)
+        )
         seconds = self.truncating_quotient(coefficient, divisor)
         # Ibis renders a nanosecond delta as a bare subtraction, so `delta % n` would
         # bind as `a - (b % n)`; the remainder is taken by subtraction instead.
@@ -304,12 +314,18 @@ class DuckDBDialect(Dialect):
     def comparison_keys(
         self, left: ir.TimestampValue, right: ir.TimestampValue
     ) -> tuple[ir.Value, ir.Value] | None:
-        """Microsecond instants, infinities included, compare natively as lookups do."""
-        if all(
-            isinstance(dtype, dt.Timestamp) and dtype.scale in (None, 6)
-            for dtype in (left.type(), right.type())
+        """Equal-zone microsecond instants compare without changing their domain."""
+        left_type, right_type = left.type(), right.type()
+        if (
+            isinstance(left_type, dt.Timestamp)
+            and isinstance(right_type, dt.Timestamp)
+            and left_type.scale in (None, 6)
+            and right_type.scale in (None, 6)
+            and left_type.timezone == right_type.timezone
         ):
             return self.lookup_keys(left, right)
+        # Attaching UTC to a naive endpoint can exceed ICU's conversion range.
+        # Mixed declarations use exact timestamp parts, as nanosecond pairs do.
         return None
 
     def reverse_time_key(self, value: ir.TimestampValue) -> ir.Value:

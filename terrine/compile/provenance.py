@@ -13,6 +13,8 @@ from terrine.data import (
 from terrine.spec.state_panel import BinnedMetricState, StatePanel, encode_cutpoint
 from terrine.windows import Duration
 
+EXECUTION_REVISION = 2
+
 if TYPE_CHECKING:
     from terrine.model import Model
     from terrine.spec.design import Design

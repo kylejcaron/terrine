@@ -12,11 +12,10 @@ import pyarrow as pa
 import pytest
 
 from terrine.compile.columns import compile_columns
-from terrine.compile.layers import measure_identity, plan_layers
+from terrine.compile.layers import build_layer, plan_layers
 from terrine.compile.materialize import compose_materialized_frame
 from terrine.data import Coverage, UnitSource
 from terrine.model import Model
-from terrine.semantic.bind import normalize_events
 from terrine.semantic.models import Catalog
 from terrine.spec import (
     BinnedMetricState,
@@ -31,8 +30,6 @@ from terrine.spec import (
     event_time,
     gt,
 )
-from terrine.temporal.daily import _sparse_group, resolve_measure
-from terrine.temporal.prefix import sparse_prefix
 from tests.compile.test_columns import column_model  # noqa: F401
 
 SCENARIOS = (
@@ -98,6 +95,7 @@ BASE_TABLES = MappingProxyType(
         ),
     }
 )
+
 
 def _catalog():
 
@@ -222,8 +220,6 @@ SCENARIO_TOTALS = {
 assert set(SCENARIO_TOTALS) == set(SCENARIOS)
 
 
-
-
 class _Resolver:
     def __init__(self, model):
         self.model = model
@@ -247,6 +243,7 @@ def test_saved_runtime_correction_matches_clean_rebuild_of_new_generation(
         open_published_generation,
         run_serialized_plan,
     )
+    from terrine.runtime.backends.duckdb import DuckDBBackend
     from terrine.runtime.changes import Change, ChangeSet
     from terrine.runtime.graph import dependency_graph
     from terrine.runtime.owner import RuntimeOwner
@@ -302,7 +299,6 @@ def test_saved_runtime_correction_matches_clean_rebuild_of_new_generation(
         budget = Budget(max_rows=10, max_output_bytes=100_000)
         frames = {}
         snapshots = {}
-        prefixes = {}
 
         def ordered_rows(frame):
             return sorted(frame.table.to_pylist(), key=lambda row: (row["unit"], row["t0"]))
@@ -328,6 +324,14 @@ def test_saved_runtime_correction_matches_clean_rebuild_of_new_generation(
                 graph=graph,
                 changes=changes,
                 budget=budget,
+                reuse_base_generation=expected_manifest,
+                reuse_base_revision=(
+                    DuckDBBackend(con.con, namespace=namespace).generation_execution_revision(
+                        destination.dataset, expected_manifest
+                    )
+                    if expected_manifest is not None
+                    else None
+                ),
             )
             saved_plan = SavedPlan.create(
                 plan_json=plan.serialize(),
@@ -374,17 +378,6 @@ def test_saved_runtime_correction_matches_clean_rebuild_of_new_generation(
                 == bound_snapshot.snapshot_id
             )
             assert published.provenance.execution_snapshot.replay_equivalence == "verified"
-            prefixes[name] = tuple(
-                hashlib.sha256(
-                    con.con.execute(
-                        f"SELECT output_blob FROM {store._schema}.runtime_tasks "
-                        "WHERE run_id=? AND task_id=? AND status='complete'",
-                        [receipt.run_id, task.task_id],
-                    ).fetchone()[0]
-                ).hexdigest()
-                for task in plan.tasks
-                if task.layer == "prefix"
-            )
             if check_replay:
                 task_count = con.con.execute(
                     f"SELECT count(*) FROM {store._schema}.runtime_tasks WHERE run_id=?",
@@ -397,9 +390,9 @@ def test_saved_runtime_correction_matches_clean_rebuild_of_new_generation(
                     request_key=f"runtime:{scenario}:{name}",
                 )
                 assert replay == receipt
-                assert open_published_frame(
-                    replay, con=con.con, namespace=namespace
-                ).table.equals(published.table)
+                assert open_published_frame(replay, con=con.con, namespace=namespace).table.equals(
+                    published.table
+                )
                 assert (
                     con.con.execute(
                         f"SELECT count(*) FROM {store._schema}.runtime_tasks WHERE run_id=?",
@@ -546,8 +539,6 @@ def test_saved_runtime_correction_matches_clean_rebuild_of_new_generation(
             assert str(con.table("events").schema()["amount"]) == "int64"
         elif scenario == "late_arrival":
             assert [row["history"] for row in corrected_rows] == [12]
-            assert len(prefixes["initial"]) == len(prefixes["correction"]) == 1
-            assert prefixes["initial"] != prefixes["correction"]
         elif scenario == "roster_exit_and_reentry":
             con.raw_sql("UPDATE users SET exited=NULL")
             reentry_receipt, reentry_rows = run_generation(
@@ -568,30 +559,11 @@ def test_saved_runtime_correction_matches_clean_rebuild_of_new_generation(
         con.disconnect()
 
 
-def _same_snapshot_prefixes(design, model):
-    measures = {
-        measure_identity(measure): measure
-        for metric in model.metrics.values()
-        for measure in metric.measures
+def _same_snapshot_anchors(design, model):
+    return {
+        replace(key, snapshot_id="pinned-snapshot"): build_layer(design, model, key)
+        for key in plan_layers(design, model).keys
     }
-    persisted = {}
-    for key in plan_layers(design, model).keys:
-        if key.layer != "prefix":
-            continue
-        source = model.sources[key.source]
-        events = normalize_events(
-            model._relation(source.relation), source, source.units[design.unit]
-        )
-        if key.measure is None:
-            raise AssertionError("planned temporal layer has no measure identity")
-        measure = resolve_measure(events, measures[key.measure], source=source)
-        grouped = _sparse_group(
-            events, measure, {"_timestamp": events._timestamp}, "_unit", source=source
-        )
-        persisted[replace(key, snapshot_id="pinned-snapshot")] = sparse_prefix(
-            grouped, measure, resolution="event"
-        )
-    return persisted
 
 
 def _float_model(column_model):
@@ -615,7 +587,7 @@ def test_same_snapshot_incremental_compilation_matches_clean_values_and_eligibil
     )
     clean = compile_columns(design, model)
     incremental = compose_materialized_frame(
-        design, model, persisted=_same_snapshot_prefixes(design, model)
+        design, model, persisted=_same_snapshot_anchors(design, model)
     )
     clean.validate(execute=model.con.to_pyarrow)
     incremental.validate(execute=model.con.to_pyarrow)
@@ -656,7 +628,7 @@ def test_historical_1e16_insert_has_identical_exact_total(column_model):
     )
     clean = compile_columns(design, model)
     incremental = compose_materialized_frame(
-        design, model, persisted=_same_snapshot_prefixes(design, model)
+        design, model, persisted=_same_snapshot_anchors(design, model)
     )
     audits = []
     for compiled in (clean, incremental):
@@ -766,7 +738,7 @@ def test_same_snapshot_incremental_matches_clean_after_correction(column_model, 
     )
     clean = compile_columns(design, model)
     incremental = compose_materialized_frame(
-        design, model, persisted=_same_snapshot_prefixes(design, model)
+        design, model, persisted=_same_snapshot_anchors(design, model)
     )
     clean.validate(execute=model.con.to_pyarrow)
     incremental.validate(execute=model.con.to_pyarrow)
@@ -879,7 +851,7 @@ def test_ratio_sources_change_independently_match_clean_compilation(column_model
     )
     clean = compile_columns(design, model)
     incremental = compose_materialized_frame(
-        design, model, persisted=_same_snapshot_prefixes(design, model)
+        design, model, persisted=_same_snapshot_anchors(design, model)
     )
     clean.validate(execute=con.to_pyarrow)
     incremental.validate(execute=con.to_pyarrow)
@@ -931,7 +903,7 @@ def test_event_anchor_identity_corrections_match_clean_compilation(
     design = Design("user", anchor, features={"total": agg("total", window=("-1d", "0s"))})
     clean = compile_columns(design, model)
     incremental = compose_materialized_frame(
-        design, model, persisted=_same_snapshot_prefixes(design, model)
+        design, model, persisted=_same_snapshot_anchors(design, model)
     )
     clean.validate(execute=model.con.to_pyarrow)
     incremental.validate(execute=model.con.to_pyarrow)
@@ -1015,7 +987,7 @@ def test_nested_selector_correction_outside_t0_window_matches_clean_frame(column
     assert any(task.layer == "frame" for task in plan.tasks)
     clean = compile_columns(design, model)
     incremental = compose_materialized_frame(
-        design, model, persisted=_same_snapshot_prefixes(design, model)
+        design, model, persisted=_same_snapshot_anchors(design, model)
     )
     clean.validate(execute=con.to_pyarrow)
     incremental.validate(execute=con.to_pyarrow)

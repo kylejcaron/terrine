@@ -17,6 +17,7 @@ from terrine.runtime.planner import plan_refresh
 from terrine.runtime.saved_plan import DestinationRef
 from terrine.runtime.state import RuntimeStore
 from tests._timing import HANG_GUARD_SECONDS
+from tests.runtime.test_execute import _publish
 
 
 def test_response_loss_then_fresh_process_lookup_returns_same_run(tmp_path):
@@ -29,6 +30,7 @@ from terrine.runtime.execute import execute_plan
 from terrine.runtime.graph import dependency_graph
 from terrine.runtime.planner import plan_refresh
 from terrine.runtime.saved_plan import DestinationRef
+from tests.runtime.test_execute import _publish
 con=duckdb.connect(os.environ['TERRINE_DB'])
 plan=plan_refresh(
     namespace='owner',
@@ -47,7 +49,7 @@ execute_plan(
     request_key='lost-key',
     destination=DestinationRef('out.duckdb','analytics','orders'),
     run_task=lambda task,deps: pa.table({'id':[1]}),
-    publish=lambda plan,outputs,lease:'g1',
+    publish=lambda plan,outputs,lease:_publish(con,plan,outputs,lease),
 )
 os._exit(73)
 """
@@ -102,7 +104,7 @@ def test_lost_response_lookup_routes_through_owner_holding_duckdb(tmp_path):
             return pa.table({"id": [1]})
 
         def publish(self, plan, outputs, lease, run_id):
-            return "generation-1"
+            return _publish(con, plan, outputs, lease, run_id, generation="generation-1")
 
     server = ControlServer(store, namespace="owner", endpoint=endpoint, executor=Executor())
     server.start()

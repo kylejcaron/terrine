@@ -10,7 +10,7 @@ from typing import Any, Protocol
 from terrine.errors import RefusalSpec, TerrineError
 from terrine.model import Model
 from terrine.runtime.materialize import ensure_runtime_expressions_supported
-from terrine.runtime.planner import RefreshPlan
+from terrine.runtime.planner import RefreshPlan, admit_execution
 from terrine.runtime.state import RuntimeStore
 from terrine.semantic.io import catalog_payload
 from terrine.spec.dataset import DatasetDefinition
@@ -165,7 +165,7 @@ class SavedPlan:
             dataset_definition.canonical_json().decode() if dataset_definition is not None else None
         )
         provisional = cls(
-            1,
+            2,
             canonical_plan,
             design_json,
             design_hash,
@@ -288,7 +288,7 @@ class SavedPlan:
             raise
         except (ValueError, TypeError, KeyError) as exc:
             raise _INVALID.error(reason="saved plan is malformed") from exc
-        if saved_plan.schema_version != 1:
+        if type(saved_plan.schema_version) is not int or saved_plan.schema_version not in {1, 2}:
             raise _INVALID.error(reason="unsupported schema version")
         expected = hashlib.sha256(_canonical(saved_plan._data(include_hash=False))).hexdigest()
         if not isinstance(saved_plan.plan_hash, str) or not hmac.compare_digest(
@@ -336,18 +336,53 @@ def _bind_saved_plan(saved_plan: SavedPlan, *, namespace: str) -> RefreshPlan:
     )
 
 
+def _stored_plan_identities(
+    con: Any, *, schema: str, namespace: str, fingerprints: set[str]
+) -> dict[str, tuple[RefreshPlan, int | None]]:
+    """Restore requested checksummed identities in one metadata pass."""
+    identities = {}
+    if not fingerprints:
+        return identities
+    for payload, invocation in con.execute(
+        f"SELECT invocation_json,TRUE FROM {schema}.runtime_plan_invocations "
+        f"UNION ALL SELECT recipe_json,FALSE FROM {schema}.runtime_dataset_requests"
+    ).fetchall():
+        try:
+            document = json.loads(payload)
+            if not isinstance(document, dict):
+                continue
+            saved_version = None
+            if invocation and document.get("schema_version") == 3:
+                bound = RefreshPlan.deserialize(payload)
+                if bound.definition.namespace != namespace:
+                    continue
+            else:
+                saved = SavedPlan.from_json(document["saved_plan_json"] if invocation else payload)
+                bound = _bind_saved_plan(saved, namespace=namespace)
+                saved_version = saved.schema_version
+        except (KeyError, TypeError, ValueError, TerrineError):
+            continue
+        fingerprint = bound.definition.fingerprint
+        if fingerprint in fingerprints and fingerprint not in identities:
+            identities[fingerprint] = bound, saved_version
+            if len(identities) == len(fingerprints):
+                break
+    return identities
+
+
 def resolve_plan(
     saved_plan: SavedPlan, *, resolver: ModelResolver, namespace: str
 ) -> tuple[RefreshPlan, Model, Design | DatasetDefinition, DestinationRef]:
     restored = SavedPlan.from_json(saved_plan.to_json())
     if namespace != restored.namespace:
         raise _INVALID.error(reason="owner namespace mismatch")
+    plan = _bind_saved_plan(restored, namespace=namespace)
+    admit_execution(plan, namespace=namespace, saved_plan_version=restored.schema_version)
     model = resolver.resolve(restored.model)
     if (
         not isinstance(model, Model)
         or ModelReference.from_model(model, owner_key=restored.model.owner_key) != restored.model
     ):
         raise _INVALID.error(reason="owner Model declaration does not match reference")
-    plan = _bind_saved_plan(restored, namespace=namespace)
     design = from_json(restored.design_json)
     return plan, model, restored.restore_dataset_definition() or design, restored.destination

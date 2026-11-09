@@ -1,0 +1,8 @@
+{
+  "quantized_total": "2E-9",
+  "discarded_nonzero_terms": 1,
+  "current_exact_float_matches": true,
+  "wide_integer_total": "9007199254740995.00",
+  "declared_decimal_total": "100000000000000000000.000000003",
+  "limits": "DuckDB known answers only; not a general exact reducer or overflow certification. Quantization is per input, before grouping."
+}

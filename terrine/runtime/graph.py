@@ -70,13 +70,10 @@ def dependency_graph(
     state_panel = isinstance(getattr(design, "shape", None), StatePanel)
     for source in sorted(set(source_names)):
         for partition in partition_names:
-            daily = LayerNode("daily", source, partition, fingerprint, "pending")
-            prefix = LayerNode("prefix", source, partition, fingerprint, "pending")
             anchor = LayerNode("anchor", source, partition, fingerprint, "pending")
             frame_source = source_names[0] if design is not None else source
             frame = LayerNode("frame", frame_source, partition, fingerprint, "pending")
-            nodes.extend((daily, prefix, anchor))
-            edges.extend(((daily, prefix), (prefix, anchor)))
+            nodes.append(anchor)
             if state_panel:
                 state_point = LayerNode("state_point", source, partition, fingerprint, "pending")
                 state_period = LayerNode("state_period", source, partition, fingerprint, "pending")

@@ -247,9 +247,9 @@ def test_large_zero_float_cohort_mean_remains_available(con):
         # A unit value below 2**-1020 of the cohort's largest: the normalizing
         # quotient would round to zero.
         ([5e-324, 4.0], 2.0),
-        # A mean of normalized values whose product with a tiny scale would round
-        # to zero.
-        ([1e-300, -1e-300, 5e-324], 0.0),
+        # Normalized mean 0.5 rescaled by the smallest subnormal rounds to zero,
+        # without depending on the reduction order of cancelling values.
+        ([5e-324, 0.0], 0.0),
     ],
 )
 def test_portable_float_cohort_mean_refuses_where_the_engine_would_underflow(con, values, ieee):

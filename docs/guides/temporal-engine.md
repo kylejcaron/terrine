@@ -406,7 +406,7 @@ approximate quantiles; ordinary `Frame.materialize()` is the supported route.
 
 ### Bounded repeated windows
 
-Additive panel metrics retain sparse prefix lookups, including long and sparse
+Additive panel metrics use local batched reductions, including long and sparse
 windows. Exact min/max/distinct/quantile and approximate distinct use sparse
 time-bucket equality joins followed by the exact half-open timestamp predicates.
 Only occupied event buckets and at most two requests per anchor exist; there
@@ -428,7 +428,7 @@ The supported candidate multiplier is at most 128. Unknown per-unit event-anchor
 multiplicity (`EventAnchor(..., occurrence="each")`) and larger declared overlaps
 refuse before execution with `terrine.temporal.range_bound_unavailable`.
 Use first/nth event anchors, fewer event periods/anchors, a coarser schedule or
-narrower window, or an additive metric with sparse prefix lookups. Additive
+narrower window, or an additive metric with local reduction. Additive
 requests do not inherit this nonadditive overlap limit. This also applies to
 the raw values streamed by cross-section t-digest sidecars.
 
@@ -504,67 +504,180 @@ Use a supported read-only built-in or an owner-reviewed named source relation.
 This static gate does not replace least-privilege credentials or a trusted backend
 catalog; it is not a sandbox for hostile database functions.
 
-## Sparse sufficient state
+## Local batched window reduction
 
-The internal temporal builders consume normalized events and the existing
-`BoundSource`; the source mapping is required explicitly:
+The internal `terrine.temporal.aggregate.aggregate_windows` builder accepts
+resolved `AggregateRequest` records over normalized event sources. Its `event`
+and `day` forms share contribution selection and publication; neither reads
+lifetime cumulative state. This boundary is internal, not a new user-authored
+execution mode. Ordinary and retained study compilation collect additive leaves
+from features, outcomes and eligibility before lowering a compatible group.
 
-```python
-from terrine.temporal.daily import resolve_measure, sparse_daily
-from terrine.temporal.prefix import sparse_prefix
+Each primitive selects its own half-open interval and available candidate
+anchors before arithmetic. Compatible requests share source access without
+sharing incompatible predicates, denominators or availability. Each source is
+reduced at `(unit, anchor_id)` before independent sources are joined, so a ratio
+cannot multiply raw event rows. Duplicate anchor instances with distinct
+anchor IDs remain separate.
 
-typed_measure = resolve_measure(events, measure, source=source)
-daily = sparse_daily(
-    events, typed_measure, source.day_boundary, "user_id", source=source
-)
-prefix = sparse_prefix(daily, typed_measure, resolution="day")
-```
+The collector resolves each logical event selector once against the invocation's
+common candidates, including nested selected origins. Requests share a group only
+at the same actual origin and anchor grain. Each group's relation and checks join
+back once by null-safe `(unit, anchor_id)`; public names, roles, timing support and
+per-output availability remain independent. Candidate validation precedes
+eligibility filtering, even when the published relation is empty. Selector and
+source memoization are local to one compiler invocation.
 
-`resolve_measure` replaces the immutable bound descriptor's `value_type` using
-the actual relation schema. A compiler retains that replacement for downstream
-arithmetic; this is not another user-authored catalog setting. No builder
-executes a data query. Dimension filters consume the deterministic value/found
-aliases produced by `enrich_events`, not guessed physical names. Measure
-filters use event-time values; a property's `pre_exposure` annotation does not
-create an exposure, assignment, or anchor-specific filter.
+Bounded exact reduction keeps numerical guard intermediates private to each
+source; joining three or more independent exact sources preserves the same
+public values, domains and anchor grain.
 
-Only observed `(selected unit, local day)` groups exist. A roster member with
-no source events has no sparse row. Duplicate timestamps keep full
-multiplicity. Another declared entity key is not an additional grouping key.
-State always names the selected key `_unit`, matching event normalization.
-Physical keys such as `value_type` or `event_count` cannot overwrite state
-metadata or merge distinct entities during accumulation.
-`local_day` is a date under the fixed catalog offset; `_timestamp` is that
-bucket's start as an aware UTC instant, independent of the database session
-timezone. Naive source timestamps denote UTC. For day bucketing only, a
-nanosecond instant is floored exactly to microseconds, correcting native
-negative-residue truncation. Every fixed-offset midnight is microsecond-aligned,
-so this preserves its day without out-of-range nanosecond threshold casts.
-The original timestamp remains unchanged for event-resolution lookups.
+Independent contexts, contribution primitives and output finalizers share
+projection layers at the same named-column dependency depth. Arithmetic stays
+behind its explicit column boundaries: selected-input masks still precede float
+conversion, quantization and invalid-input checks. This avoids serially nesting
+every output's intermediates without introducing per-output source joins or
+inlining repeated numerical expressions. The five-metric, ten-window raw/day
+DuckDB smoke compiles, validates and exports in both integer and native modes;
+this is exercised evidence, not a performance guarantee or a new public mode.
 
-A day prefix is valid only for aligned local-midnight endpoints. An
-equal-timestamp event state uses the same internal `_sparse_group` filter and
-arithmetic machinery, then `sparse_prefix(..., resolution="event", ...)`.
-Prefix rows include their own group; a strict point lookup selects the last
-group with `_timestamp < cutoff`. Arbitrary intraday cutoffs require event
-states, not a daily approximation or a dense calendar.
+Event counts include selected null values; event means divide by the selected
+nonnull count. For values `2, NULL, 3`, the count is `3`, sum is `5`, and event
+mean is `2.5`. Complete empty sums/counts are zero, complete empty conversions
+are false, and empty event means carry `no_observations`. Nonempty all-null
+sums/means remain unavailable with `all_values_null`. Coverage and unit
+observation bounds are output-specific; a ratio intersects both operands'
+source availability. An available zero divisor retains `zero_denominator`.
+Unknown filter candidates retain their provenance and refuse an available
+output instead of disappearing through a filter.
+
+The builder returns one multi-output `TemporalResult`. Its deferred validation
+must execute before export under the same snapshot. Integer and declared-decimal
+domains, per-input exact-float quantization and `below_resolution` notes remain
+intact. Native selected sums and divisions follow the backend's ordinary binary64
+arithmetic, without a lifetime-history error certificate.
+
+The daily form first derives a per-unit start/end envelope from available,
+aligned requests and joins one envelope row to each event. Timestamps outside
+that envelope become typed NULL inputs to local-day conversion, so an unused
+endpoint cannot overflow calendar normalization even if an optimizer moves
+filters. The original timestamps and numerical/filter inputs remain unchanged.
+It then derives exact required `(unit, bucket)` identities: the envelope alone
+does not activate payloads in gaps or for unavailable requests. Each equivalent
+primitive has its own consumption flag within
+that shared scope: a bucket needed only by a count cannot enter a sum's float
+conversion, finite checks, exact quantization or arithmetic. Duplicate anchors
+and overlapping requests cannot multiply events within a primitive/bucket.
+Only wholly contained fixed-offset local days are usable, including offsets
+such as `UTC+05:30`; partial edge buckets are never reconstructed.
+Source buckets use the precision-preserving local-day conversion, so an event one
+nanosecond before a pre-epoch local midnight remains in the preceding day. For
+aligned windows, bucket-start membership `start <= bucket < end` is equivalent
+to full-bucket containment. Scope selection never adds a day to an unused source
+bucket: an event on the backend's final supported day cannot overflow merely
+while deciding whether a distant requested window consumes it.
+DuckDB compares mixed naive/aware timestamps through exact timestamp parts,
+without attaching a zone to wide naive source instants. This preserves raw
+selection over valid finite endpoints even when the session is not UTC.
+Microsecond parts use native epoch ticks rather than a calendar difference,
+preserving equality and adjacent representable ticks near the finite endpoints.
+
+The internal `compile.numeric.lower_aggregates` chooses raw input for a single
+distinct fixed origin, relative windows, partial days or unproven alignment.
+Repeated, statically aligned fixed/scheduled origins may share daily summaries.
+Mixed representations preserve requested output order and metadata. Strategy
+labels are `local_event/native_float`, `local_day/native_float` and
+`local_event/exact` or `local_day/exact`; the exact label includes counts,
+integer and declared-decimal domains. Selection reads declarations, not source
+row counts, and uses no density threshold or persisted summary cache.
+
+Supplied/generated anchor relations do not inherit an outer schedule's alignment
+proof. Without declaration evidence about their actual clocks, they use raw
+input, as do event-relative origins.
+
+Exact floats quantize each input before grouping, not the daily sum: two
+`4e-10` values retain zero with `below_resolution`, while native arithmetic
+retains approximately `8e-10`. Daily grouping changes the order of native sums;
+raw/day bit identity is not promised for ill-conditioned values. Exact bounded
+accumulation guards both bucket formation and merging, carrying withheld flags
+only to consuming outputs. Only existing lossless integer/declared-decimal
+coefficient conversion precedes nullable selection; all guards and sums follow
+the primitive's mask.
+
+Daily scope has relational cost: deriving observed identities, reducing unique
+consumption flags, joining back to events, grouping buckets and merging them.
+An engine may share source scans with CTEs, but larger SQL/plans and compilation
+overhead remain possible even on tiny inputs. This is a declaration-based
+choice, not a guarantee that daily summaries are faster for every workload.
+
+An ordinary public five-metric, ten-window native smoke materializes all 50
+nonempty outputs and retains roster units without events at the default Python
+recursion limit. Its inspected DuckDB plan scans the event source once; generated
+SQL is still large, so this demonstrates shared lowering and correct execution,
+not an end-to-end speedup. Retained staging and correction use the same compiler;
+no-change refresh reuses only a verified current-revision generation.
+
+Execution revision 2 identifies this compiler. A checksummed revision-1 plan
+cannot execute or replay, and a no-change refresh from revision 1 recomputes.
+Explicit historical reads preserve the old generation's values and metadata.
+Exact declarations and specialized cumulative/cohort arithmetic safeguards are
+unchanged.
+
+
+## Shared contribution payload
+
+The compiler normalizes each source with its explicit `BoundSource` unit and
+event mapping, then calls `resolve_measure(events, measure, source=source)` to
+retain the descriptor's actual schema type. The internal
+`terrine.temporal.daily.contributions` builds selected per-event primitives;
+`reduce_payload` reduces them by the requested keys. Raw windows reduce at full
+`(unit, anchor_id)` identity. The daily form first reduces unique consumed
+unit/day payloads, then combines only the buckets each window consumes.
+Both forms feed the same `aggregate_windows` finalization.
+
+These are internal builders, not required user inputs. Use the
+[scheduled time-series workflow](#scheduled-time-series) to declare several
+outputs together, or run
+[`examples/table_first_dataset.py`](../../examples/table_first_dataset.py)
+for a complete Model → Design → Frame example with tiny local tables.
+No builder executes a data query. Dimension filters consume the deterministic
+value/found aliases produced by `enrich_events`, not guessed physical names.
+Measure filters use event-time values; a property's `pre_exposure` annotation
+does not create an exposure, assignment, or anchor-specific filter.
+
+The payload contains only needed primitives: event and nonnull counts, a native
+sum or exact coefficient sum, applicable invalid-input/discarded-term counts,
+and unknown-filter provenance. Bounded exact reduction also carries withheld
+sum flags. Native sums carry no magnitude certificate. Arithmetic mode, type
+and scale come from the resolved descriptors, not user-authored state rows.
+
+Only consumed, observed unit/day pairs are summarized; there is no dense
+unit-by-day spine. A roster member without source events still gets its original
+anchor rows through finalization. Duplicate events and timestamps keep full
+multiplicity. Another declared entity key is not an additional grouping key:
+normalized `_unit` is the selected source key. Collision-safe payload names
+preserve physical keys such as `event_count` without merging distinct units.
+Grouping keys are projected after contributions are formed, so a physical
+numeric event or filter column named `local_day` retains its original values.
+The derived local day and its aware UTC start use the fixed catalog offset,
+independently of the database session timezone; naive timestamps denote UTC.
+Day bucketing preserves pre-epoch nanosecond membership without changing the
+original timestamp used for exact event-window comparisons.
 
 ### Counts, nulls, and unknown predicates
 
-`event_count` counts selected events, including events whose fact value is
-null; `nonnull_count` counts their nonnull fact values. For an occurrence fact
-with no value column both counts are event counts. `count` sums events rather
-than nonnull values. `observed_null_count` is a projection of
-`event_count - nonnull_count`, not another independently accumulated count.
-Daily all-null groups have null `sum_value`; prefix arithmetic normalizes this
-to the zero identity without losing the two counts. Window aggregation
-distinguishes complete empty intervals, nonempty all-null intervals,
-and incomplete coverage using counts and explicit readiness.
+`event_count` counts selected events, including events whose value is null;
+`nonnull_count` counts their nonnull values when the operation needs them.
+Counts and conversions consume event multiplicity without converting the value
+column or constructing a sum. Null multiplicity can be derived from
+`event_count - nonnull_count`; it is not another independently accumulated
+field. All-null groups may have a null `sum_value`; finalization uses the counts
+to distinguish complete empty intervals, nonempty all-null intervals and
+incomplete coverage.
 
 Predicates use SQL three-valued conjunction: known false overrides unknown.
-Known-false-only events need not create a group. An unknown event is **not**
-silently excluded or turned into zero. These exact, subtractable counters
-accompany each state:
+Known-false events contribute no selected count or value. An unknown event is
+**not** silently excluded or turned into zero. Filtered payloads retain:
 
 - `unknown_filter_count`: events with an unknown full predicate;
 - `unknown_filter_null_count`: such events with an observed-null filter property;
@@ -574,18 +687,16 @@ accompany each state:
 - `unknown_filter_nonfinite_count`: such events with an observed nonfinite
   numeric filter property.
 
-The provenance counters are nonexclusive. They do not partition the total.
-Only a filtered measure's state carries them: without filters the predicate
-is the literal `TRUE`, so every counter would be zero, and the state omits
-them. A window consumer carries only the fields its measure reads (a count
-or conversion reads `event_count` alone) and refuses unresolved membership with
-`terrine.filter.unknown` before output. NaN and both infinities in a referenced
-numeric property make its comparison unknown, not false and not an observed
-SQL NULL. Known false still overrides unknown. Only an otherwise available
-requested window is affected: incomplete coverage/observation keeps precedence,
-and an invalid value outside the window or in an unreferenced property does
-not block a result. These are predicate-domain checks, not Float64 precision
-failures.
+The provenance counters are nonexclusive; they do not partition the total.
+Unfiltered measures omit them because the predicate is literal `TRUE`.
+Even a count or conversion retains applicable filter provenance and refuses
+unresolved membership with `terrine.filter.unknown` before output. NaN and both
+infinities in a referenced numeric property make its comparison unknown, not
+false and not an observed SQL NULL. Known false still overrides unknown.
+Only an otherwise available requested window is affected: incomplete
+coverage/observation keeps precedence, and an invalid value outside the window
+or in an unreferenced property does not block a result. These are
+predicate-domain checks, not Float64 precision failures.
 
 A null comparison literal is a **typed SQL NULL**, not `IS NULL`: `equals:
 null` and `not_equals: null` evaluate unknown, including on observed null
@@ -648,95 +759,90 @@ or null value is unknown (null) with that value's reason; a null literal gives
 `all_of`, a known true term settles `any_of`, and `not_` of an unknown rule
 stays unknown.
 
-### Exact numeric state
+### Exact and native numeric reduction
 
-On the supported native DuckDB 1.5.6 route, integer and decimal sums use
-internal `BIGNUM` coefficients. For decimal scale `s`, the coefficient is
-the exact integer `z` in `value = z * 10**(-s)`. `value_type` and `value_scale`
-retain the schema type and original scale; `numeric_policy` is `exact`.
-Grouping, cumulative addition, and `exact_subtract` never multiply or divide
-BIGNUM values and do not narrow prefixes to HUGEINT or decimal precision 38.
-A large historical prefix is not a reason to reject a representable later
-window.
+On the supported native DuckDB 1.5.6 route, integer and decimal sums use internal
+`BIGNUM` coefficients. For decimal scale `s`, the coefficient is the exact
+integer `z` in `value = z * 10**(-s)`; the resolved measure retains the type and
+scale. Selected coefficient reduction does not narrow intermediates to HUGEINT
+or decimal precision 38. Excluded history is not part of the sum or its guards.
+Other policies retain their existing exact coefficient domains and bounded
+accumulation checks at bucket formation and window combination.
 
-Counts take a cheaper route there, because their bound is trivial. Every
-count term (`event_count`, `nonnull_count`, the unknown-filter counters and
-the float provenance counters) is a native `BIGINT` 0 or 1; a group's count
-is the sum of its terms and a prefix the sum of its groups' counts, so every
-count `P` satisfies `0 <= P <= rows < 2**63`, and a window difference
-`|P(e) - P(s)| < 2**63`. DuckDB accumulates those sums in `HUGEINT`
-(`±2**127`), far outside both bounds, and raises on overflow rather than
-wrapping, so no genuine count or difference leaves the type. The published
-`int64` is reached by `TRY_CAST`, which is NULL beyond `int64`, so a state
-written outside the bound (an external relation, a damaged persisted layer)
-refuses `terrine.temporal.exact_overflow`, never a wrapped integer. A stored
-`HUGEINT` reads back as `DECIMAL(38, 0)`, which holds every count exactly;
-persisted prefix layers carry counts as Arrow `decimal128(38, 0)` and restore
-them as `HUGEINT` by name, so a frame composed from layers runs the
-exact-arithmetic known answers only where direct compilation does. Layers
-written in the earlier text form restore and compose identically.
-The other engines count in their coefficient type.
+DuckDB counts take a cheaper route. Event, nonnull, unknown-filter and float
+provenance terms are native `BIGINT` zeros or ones, accumulated in `HUGEINT`.
+They are added over selected contributions, never recovered by subtracting
+running totals. A published count narrows through checked conversion to
+`int64`; an unrepresentable required count refuses
+`terrine.temporal.exact_overflow`, never wraps. Other engines count in their
+exact coefficient type. Retained execution stores anchors and final outputs;
+these inline payloads are not an Arrow intermediate ABI.
 
-Raw BIGNUM is **not** an Arrow numeric export. Diagnostic projections must
-cast it to canonical strings. A final-output consumer must construct the
-scale-preserving text, check conversion to its declared numeric representation,
-and refuse a nonrepresentable required result before export. Checked-cast
-nulls cannot masquerade as missing data. Native decimal precision above 38 is
-not available on this route.
+Raw BIGNUM is **not** an Arrow numeric export. Diagnostic projections must cast
+it to canonical strings. Finalization constructs scale-preserving text and
+checks conversion to the declared numeric representation before export.
+Checked-cast nulls cannot masquerade as missing data. Exact integer/decimal
+sums publish lossless decimals with precision up to 38 and their original
+scale; a required result outside that domain refuses
+`terrine.temporal.exact_overflow`.
 
-Float32 widens to Float64. A float measure declared `exact: false` (the
-`Model.from_tables` default) keeps no exact state: its group sum is the
-engine's binary64 `SUM` of the finite values, the prefix the running `SUM`
-of those group sums (`numeric_policy` is `native`), and non-finite inputs are
-counted in `float64_nonfinite_count` instead of added. Where the policy
-bounds float arithmetic, the state also carries the group's scaled magnitude
-bound (`sum_bound`) and withheld-row count (`sum_withheld`), and the prefix
-withholds states whose accumulated magnitudes may leave half the range, as
-the fixed-precision prefix does. The window publishes the binary64 prefix
-difference within $2\,n_P\,2^{-53}\sum_{i\in P}|x_i|$ of the exact sum, $P$
-the unit's history through the window end.
+Float32 widens to Float64. A native float measure (`exact: false`, the
+`Model.from_tables` default) sums selected finite contributions in backend
+binary64. Selected nonfinite inputs are counted instead of added and refuse
+`nonfinite_input`; returned nonfinite sums or quotients refuse `bound_overflow`.
+If backend arithmetic raises, its execution cause is preserved rather than
+misclassified as exact overflow. Ordinary rounding, order dependence and
+underflow follow the backend. There is no lifetime-history or magnitude
+certificate and no universal relative-error bound for ill-conditioned sums or
+ratios. Nonzero contributions below `5e-10` are retained subject to normal
+binary64 behavior, not intentionally quantized away.
 
-Every finite float of an exact measure is quantized once to
-`DECIMAL(38, 9)`-scale values by the engine's float-to-decimal conversion
+For an exact float measure, each selected finite input is quantized once to a
+`DECIMAL(38, 9)`-scale value by the engine's float-to-decimal conversion
 (nearest, ties away from zero, with about $10^{-16}$ relative binary64
-conversion error), so values within that error of a halfway point may round
-either way; only the stated window-sum bound is promised. The result takes
-the declared-decimal coefficient path at scale 9. Thus `6e-10` becomes
-`1e-9`, and the exact tie `1/1024` becomes `0.000976563`. Float state
-carries `value_scale=9` and counts of non-finite, out-of-range and
-below-resolution inputs (`float64_below_resolution_count`: nonzero values
-that quantized to zero), without data-derived scales. DuckDB accumulates in
-unbounded `BIGNUM`, PostgreSQL in `NUMERIC`, BigQuery in `BIGNUMERIC`, and
-Snowflake in `NUMBER(38, 0)`. Bounded engines use the declared-decimal
-accumulation guards and refuse `terrine.temporal.exact_overflow` rather than
-publish incomplete state. Subtracting prefixes is exact, so older history
-cannot cancel a small window.
+conversion error). Values within that error of a halfway point may round
+either way. Thus `6e-10` becomes `1e-9`, and the exact tie `1/1024` becomes
+`0.000976563`. Quantization precedes any daily grouping, so two `4e-10` inputs
+both disappear rather than first summing to `8e-10` and rounding to `1e-9`.
+The payload carries counts of nonfinite, out-of-range and discarded nonzero
+inputs, including `float64_below_resolution_count`, without data-derived
+scales. Coefficients accumulate in DuckDB `BIGNUM`, PostgreSQL `NUMERIC`,
+BigQuery `BIGNUMERIC`, Snowflake `NUMBER(38, 0)` or the portable exact domain.
+Bounded policies withhold unsafe selected coefficients before addition and
+refuse `terrine.temporal.exact_overflow`; DuckDB's BIGNUM accumulation is
+unbounded.
 
-For original float inputs in window $W$, the published exact sum satisfies
+For original float inputs in window $W$, the exact sum satisfies
 $|\hat S-S| \le e_S = 10^{-9}n_W+10^{-12}\sum_{i\in W}|x_i|$.
-Means divide that bound by their actual denominator, including per-day means.
-Means and ratios convert each exact operand once at its own scale, then
-divide once in float64; an already floating quotient passes through.
-A quantized denominator of exactly zero gives NULL with `zero_denominator`.
-When $|\hat D|>e_D$, the ratio bound is
+Event means divide by the actual nonnull count; calendar-day means divide by
+the declared aligned day count. Means and ratios convert each exact operand
+once at its own scale, then divide once in float64. A native operand selects
+ordinary binary64 division; exact-only operands retain policy-aware conversion
+and division. An already floating quotient is not an unrounded exact
+intermediate. A zero denominator gives NULL with `zero_denominator`.
+See the [means and ratios contract](backend-compatibility.md#means-and-ratios)
+for propagated exact bounds and the case of a nonzero denominator within its
+bound of zero, where no accuracy is stated.
 
-$$
-|\hat r-N/D| \le
-\frac{|\hat N|e_D+|\hat D|e_N}{|\hat D|(|\hat D|-e_D)}
-+2^{-51}|\hat r|.
-$$
+Nonzero exact float inputs below $5\cdot10^{-10}$ disappear from the sum.
+The selected window's discarded-term count sets `__reason` to
+`below_resolution` beside the retained sum, with `__complete` unchanged.
+Means, ratios, cumulative values and complete cohort summaries carry the note;
+all-zero and all-null windows keep their usual reasons. Declare decimals (for
+example `DECIMAL(18, 12)` for a `1e-12` measure), or rescale into micro-units
+before binding when that resolution matters. Row predicates compare original
+values; output thresholds compare the published result. Neither arithmetic
+mode promises bitwise or order-independent floating results.
 
-When $0<|\hat D|\le e_D$, the ratio is still returned without a stated
-accuracy bound. Floats have no bitwise or order-independence promise.
-Nonzero float measures below $5\cdot10^{-10}$ disappear from exact sums; the
-window's discarded-term count (a prefix difference of
-`float64_below_resolution_count`) then sets `__reason` to `below_resolution`
-beside the published sum of the retained terms, with `__complete` unchanged,
-and means and ratios of that sum carry the note. Declare such measures as
-decimals (for example `DECIMAL(18, 12)` for a `1e-12` measure), or record
-micro-units so `1e-12` becomes `1e-6` before binding the measure. Row
-predicates compare original values; output thresholds compare the published
-result.
+The distinct magnitude, quotient, product and underflow safeguards for
+cumulative trajectories and cohort reductions are unchanged. On PostgreSQL and
+portable policies they can withhold finite results with `bound_overflow`;
+DuckDB may publish those results. This is not a guard on ordinary native
+source-window sums or ratios. See the
+[shared numerical contract](backend-compatibility.md#shared-numerical-contract)
+for those specialized limits and backend details.
+
+### Validation and publication
 
 Window aggregation keeps its data-dependent checks as boolean flag columns
 of its own relation (`TemporalResult.row_checks`: endpoint alignment,
@@ -764,90 +870,62 @@ its own aggregate (the preview caps only its eligibility read), and a staged
 output statement carries the summary alone. The first flagged check in
 schedule order refuses with `failed_count` and its context before the
 summary is read. Checks and export must use the **same snapshot**. Neither
-builder opens a transaction nor executes a hidden probe. Refusals contain
-aggregate failed counts and identifiers only, never customer rows, keys, or
-values. `terrine.temporal.float64_precision` identifies, in `context["reason"]`,
-`nonfinite_input` (a non-finite value at or before the end of a non-empty
-window), `out_of_range` (an exact binary64 magnitude at least $10^{29}$), or
-`bound_overflow` (a result beyond binary64's range; on a policy that bounds
-float arithmetic also a finite result withheld before the engine could raise:
-a history whose magnitude sum reaches half the range, or a quotient or
-product outside the guarded range). The literal `1e29` is admitted because
-its exact value is just below $10^{29}$; the next float up is refused.
+builder opens a transaction nor executes a hidden probe. Normal Frame readers,
+preview and materialization execute validation; directly executing raw
+`Frame.expr` bypasses that boundary and does not establish validated output.
+Refusals contain aggregate failed counts and identifiers only, never customer
+rows, keys, or values. `terrine.temporal.float64_precision` identifies, in
+`context["reason"]`, `nonfinite_input` for selected nonfinite values,
+`out_of_range` for selected exact binary64 magnitudes at least $10^{29}$, or
+`bound_overflow` for nonfinite returned sums/conversions/quotients. The literal
+`1e29` is admitted because its exact value is just below $10^{29}$; the next
+float up is refused. The separate cumulative/cohort guards can also refuse
+finite values, as described above. Native or ambiguous backend arithmetic
+failures are not `terrine.temporal.exact_overflow`.
 
 ## Exact timestamp windows
 
-The internal `lookup_prefix` compiler supports strict native ASOF and
-`union_window` strategies. Both preserve duplicate requests, return the complete
-state strictly before the cutoff, and distinguish an unmatched state from a
-matched state containing SQL NULL. Repeated lookups of one prefix use distinct
-relation identities, so a second cutoff cannot reuse the first cutoff's state.
-The fallback carries the complete timestamp-order marker, then rejoins the
-original state once; it does not independently skip null fields or expand
-anchors across events. NULL requests match no state, including nonnumeric payloads.
+`aggregate_windows` consumes resolved metrics and normalized source mappings,
+preserves original anchor instances, and returns one lazy multi-output
+`TemporalResult`. Every output records its window, role, observation interval,
+completeness and nullable reason. Raw event selection uses exact timestamp
+comparisons over `[t0 + start, t0 + end)`: `[t0-1h,t0)` excludes t0, while
+`[t0,t0+1h)` includes t0 and excludes its right endpoint. Daily input requires
+both endpoints at the catalog's local midnight and consumes whole buckets only.
 
-The cutoff and state keys come from the engine's expression policy
-(`Dialect.lookup_keys`). On DuckDB a microsecond pair compares natively: two
-`TIMESTAMPTZ` instants are their own keys, and when one side is naive it is
-attached to UTC explicitly (`timezone('UTC', x)`, exact and independent of
-the session `TimeZone`, which the implicit cast of a mixed comparison would
-apply instead) and then cast to the cutoff's declared type so both lookup
-strategies bind one key type. A nanosecond side keeps the lossless
-structured order key on both sides, since `TIMESTAMPTZ` and `TIMESTAMP_NS`
-compare only through a narrowing or overflowing cast. PostgreSQL, BigQuery,
-Snowflake and the portable policy compare their order keys, which are the
-values themselves. Native and fallback lookups share lossless structured
-ordering for mixed native microsecond/nanosecond axes, signed pre-epoch
-fractions and supported infinities. They do not narrow a nanosecond event or
-scale a wide microsecond cutoff into overflow. Unsupported native coarse
-timestamp representations raise `terrine.temporal.timestamp_order_unsupported`:
-normalize to a losslessly representable native microsecond/nanosecond
-timestamp before binding. Row order is not part of the dataset contract on
-any backend: DuckDB rewrites an as-of join whose estimated cutoff side is
-below its loop-join threshold (64 rows) into a hash aggregate whose scan
-order is thread dependent, so a small study may come back out of anchor
-order; sort explicitly when an order is needed.
+Backend timestamp helpers preserve supported native microsecond/nanosecond
+ordering, signed pre-epoch fractions and mixed naive/aware comparisons without
+narrowing nanosecond events or scaling wide microsecond bounds into overflow.
+Naive timestamps denote UTC, independently of the session timezone.
+Unsupported representations refuse
+`terrine.temporal.timestamp_order_unsupported`; normalize to a losslessly
+representable supported timestamp before binding. When executing an Ibis
+expression directly, sort explicitly if row order matters.
 
-`aggregate_window` consumes resolved measure-to-prefix mappings and returns a
-lazy `TemporalResult` for a named feature or outcome. It retains original
-anchors and records each output's window, role, observation interval,
-completeness and nullable reason. Event prefixes preserve exact intraday t0;
-day prefixes require both endpoints at the catalog's local midnight.
-For `[t0-1h,t0)`, t0 is excluded; for `[t0,t0+1h)`, t0 is included and the
-right endpoint is excluded.
+Attribute/as-of lookups and event-time selectors keep their own strict cutoff,
+tie and missing-history rules; they are not cumulative numeric window lookups.
+See [effective-time attributes](temporal-attributes.md) and
+[event-time origins](#bounded-event-sequences-and-event-time-origins).
+Min/max, distinct counts, quantiles and retention likewise keep their
+[separate range algorithms](#bounded-repeated-windows).
 
 Readiness intersects every metric source and the unit's optional observation
 interval. Incomplete coverage takes precedence over incomplete observation,
 then cell-level empty/all-null/zero-denominator meanings. Unavailable cells
-retain numeric NULL and their exact reason.
-Complete empty sums/counts are zero and conversion is false. A nonempty window
-whose event values are all null still counts events and conversion is true,
-but sums/averages are NULL.
+retain numeric NULL and their exact reason. Complete empty sums/counts are zero
+and conversion is false. A nonempty all-null window still counts events and
+conversion is true, but sums/averages are NULL with `all_values_null`.
 Unknown required filters in an available window refuse before output.
 
-Exact sums export as lossless decimal values with precision up to 38 and the
-original scale; counts use a checked exact integer representation.
-`terrine.temporal.exact_overflow` refuses a required unrepresentable result,
-not a wide internal prefix whose later window fits. Conversion booleans have
-no numeric precision policy.
+Float outputs carry `numeric_policy=None`, `arithmetic` set to `native` or
+`exact`, and no error column; eligibility thresholds and state-panel bins
+compare the published value. Conversion booleans have no numeric precision
+policy.
 
-An exact float window differences scale-9 coefficient prefixes, then converts
-the result to float64 under the quantized bounds above; a native float window
-differences binary64 running sums and publishes the difference unconverted.
-Means and ratios convert each exact operand once and divide once in float64,
-including nested ratios of means; they do not retain unrounded intermediate
-quotients. Float outputs carry `numeric_policy=None`, `arithmetic` set to
-`native` or `exact`, and no error column on every backend; eligibility
-thresholds and state-panel bins compare the published value. A known
-quantized zero denominator is NULL with `zero_denominator`. Cohort totals
-and means and cumulative lifetime value reduce published binary64 values
-natively and refuse `bound_overflow` when the result is not finite or when a
-policy that bounds float arithmetic withheld it.
-
-Run the focused fast boundary and window checks with
-`uv run pytest tests/temporal/test_prefix_lookup.py tests/temporal/test_window_aggregates.py`.
-Native quotient/calendar checks whose compilation cost exceeds the unit budget
-run in the integration tier with `uv run pytest integration/temporal`.
+Run the focused fast payload and window checks with
+`uv run pytest tests/temporal/test_sparse_state.py tests/temporal/test_window_aggregates.py`.
+Native quotient/calendar compositions whose compilation cost exceeds the unit
+budget run in the integration tier with `uv run pytest integration/temporal`.
 
 ## Bounded event sequences and event-time origins
 

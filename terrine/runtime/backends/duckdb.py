@@ -5,6 +5,7 @@ import io
 import json
 import re
 from collections.abc import Callable, Generator
+from dataclasses import replace
 from typing import Any
 
 import ibis
@@ -13,11 +14,15 @@ import pyarrow as pa
 import pyarrow.compute as pc
 
 from terrine.backends.registry import ENGINES
+from terrine.compile.provenance import EXECUTION_REVISION
 from terrine.errors import RefusalSpec
 from terrine.runtime.backends.base import (
+    _EXECUTION_IDENTITY,
     PublicationReceipt,
     Reconciliation,
     StagedGeneration,
+    _execution_payload,
+    _schema_execution_revision,
 )
 from terrine.runtime.cost import ScanEvidence
 from terrine.runtime.leases import _INVALID_NAMESPACE, LeaseStore
@@ -76,6 +81,13 @@ class DuckDBBackend:
             raise ValueError("generation must contain at least one partition")
         if lease.resource != f"dataset:{stage.dataset}":
             raise ValueError("lease resource does not match staged dataset")
+        stage = replace(
+            stage,
+            partitions={
+                name: _execution_payload(payload, stage.execution_revision)
+                for name, payload in stage.partitions.items()
+            },
+        )
         lease_store = LeaseStore(self.con, namespace=self.namespace)
         lease_store.assert_current(lease)
         current = self.current_generation(stage.dataset)
@@ -249,9 +261,15 @@ class DuckDBBackend:
         return PublicationReceipt(stage.dataset, stage.generation, version, tuple(stored))
 
     def reuse_generation(
-        self, dataset: str, *, expected_manifest: str | None, lease: Any, run_id: str
+        self,
+        dataset: str,
+        *,
+        expected_manifest: str | None,
+        lease: Any,
+        run_id: str | None = None,
+        execution_revision: int,
     ) -> PublicationReceipt:
-        """Record a no-change run against the current immutable publication."""
+        """Verify fenced reuse, recording a run receipt when a run identity is supplied."""
         if lease.resource != f"dataset:{dataset}":
             raise ValueError("lease resource does not match dataset")
         leases = LeaseStore(self.con, namespace=self.namespace)
@@ -266,19 +284,38 @@ class DuckDBBackend:
             if current is None or current[0] != expected_manifest:
                 raise ValueError("no-change refresh requires the current base publication")
             generation, version, snapshot_id = current
-            self._record_run_publication(
-                StagedGeneration(dataset, generation, {}, run_id=run_id, snapshot_id=snapshot_id),
-                version,
-            )
+            if (
+                execution_revision != EXECUTION_REVISION
+                or self.generation_execution_revision(dataset, generation) != execution_revision
+            ):
+                raise _EXECUTION_IDENTITY.error(reason="reuse_execution_revision_mismatch")
+            if run_id is not None:
+                self._record_run_publication(
+                    StagedGeneration(
+                        dataset,
+                        generation,
+                        {},
+                        run_id=run_id,
+                        snapshot_id=snapshot_id,
+                        execution_revision=execution_revision,
+                    ),
+                    version,
+                )
             partitions = self.con.execute(
                 f"SELECT partition FROM {self._schema}.runtime_partitions "
                 "WHERE dataset=? AND generation=? ORDER BY partition",
                 [dataset, generation],
             ).fetchall()
+            leases.assert_current(lease)
+            leases.guard_publication(lease)
+            if self.fault_injector is not None:
+                self.fault_injector("before_commit")
             self.con.execute("COMMIT")
         except Exception:
             self.con.execute("ROLLBACK")
             raise
+        if self.fault_injector is not None:
+            self.fault_injector("after_commit")
         return PublicationReceipt(dataset, generation, version, tuple(row[0] for row in partitions))
 
     def current_generation(self, dataset: str) -> str | None:
@@ -289,6 +326,32 @@ class DuckDBBackend:
             f"SELECT generation FROM {self._schema}.runtime_manifests WHERE dataset=?", [dataset]
         ).fetchone()
         return row[0] if row else None
+
+    def generation_execution_revision(self, dataset: str, generation: str) -> int:
+        """Read complete immutable generation evidence without reading its data."""
+        published = self.con.execute(
+            f"SELECT 1 FROM {self._schema}.runtime_publications WHERE dataset=? AND generation=?",
+            [dataset, generation],
+        ).fetchone()
+        rows = self.con.execute(
+            f"SELECT m.schema_metadata FROM {self._schema}.runtime_partitions p "
+            f"LEFT JOIN {self._schema}.runtime_partition_metadata m "
+            "ON p.dataset=m.dataset AND p.generation=m.generation AND p.partition=m.partition "
+            "WHERE p.dataset=? AND p.generation=? ORDER BY p.partition",
+            [dataset, generation],
+        ).fetchall()
+        if published is None or not rows or any(row[0] is None for row in rows):
+            raise _EXECUTION_IDENTITY.error(reason="incomplete_generation_evidence")
+        try:
+            revisions = {
+                _schema_execution_revision(pa.ipc.read_schema(pa.BufferReader(bytes(row[0]))))
+                for row in rows
+            }
+        except (ValueError, pa.ArrowException) as error:
+            raise _EXECUTION_IDENTITY.error(reason="invalid_generation_evidence") from error
+        if len(revisions) != 1:
+            raise _EXECUTION_IDENTITY.error(reason="inconsistent_generation_evidence")
+        return revisions.pop()
 
     def _matching_receipt(self, stage: StagedGeneration) -> PublicationReceipt:
         rows = self.con.execute(

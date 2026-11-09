@@ -1,0 +1,16 @@
+{
+  "python": "3.12.11",
+  "platform": "macOS-15.7.4-arm64-arm-64bit",
+  "ibis": "12.0.0",
+  "pyarrow": "23.0.1",
+  "args": {
+    "backend": "duckdb",
+    "postgres_url": null,
+    "units": 30,
+    "modes": "integer,native",
+    "anchors": "1,7",
+    "repeats": 1,
+    "full": true,
+    "output": "benchmarks/results/query-spike-smoke-20261108"
+  }
+}

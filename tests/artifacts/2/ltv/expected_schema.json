@@ -1,0 +1,218 @@
+{
+  "design.json": [
+    {
+      "name": "unit",
+      "type": "string",
+      "role": "unit"
+    },
+    {
+      "name": "anchor_id",
+      "type": "string",
+      "role": "anchor"
+    },
+    {
+      "name": "cohort_time",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "t0"
+    },
+    {
+      "name": "age",
+      "type": "int64",
+      "role": "output"
+    },
+    {
+      "name": "period_value",
+      "type": "double",
+      "role": "outcome"
+    },
+    {
+      "name": "period_value__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "period_value__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
+      "name": "period_value_mature",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "orders_30d",
+      "type": "int64",
+      "role": "feature"
+    },
+    {
+      "name": "orders_30d__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "orders_30d__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
+      "name": "cumulative_value",
+      "type": "double",
+      "role": "outcome"
+    },
+    {
+      "name": "cumulative_value__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "cumulative_value__reason",
+      "type": "string",
+      "role": "output"
+    }
+  ],
+  "design.yaml": [
+    {
+      "name": "unit",
+      "type": "string",
+      "role": "unit"
+    },
+    {
+      "name": "anchor_id",
+      "type": "string",
+      "role": "anchor"
+    },
+    {
+      "name": "cohort_time",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "t0"
+    },
+    {
+      "name": "age",
+      "type": "int64",
+      "role": "output"
+    },
+    {
+      "name": "period_value",
+      "type": "double",
+      "role": "outcome"
+    },
+    {
+      "name": "period_value__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "period_value__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
+      "name": "period_value_mature",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "orders_30d",
+      "type": "int64",
+      "role": "feature"
+    },
+    {
+      "name": "orders_30d__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "orders_30d__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
+      "name": "cumulative_value",
+      "type": "double",
+      "role": "outcome"
+    },
+    {
+      "name": "cumulative_value__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "cumulative_value__reason",
+      "type": "string",
+      "role": "output"
+    }
+  ],
+  "definition.json": [
+    {
+      "name": "unit",
+      "type": "string",
+      "role": "unit"
+    },
+    {
+      "name": "anchor_id",
+      "type": "string",
+      "role": "anchor"
+    },
+    {
+      "name": "cohort_time",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "t0"
+    },
+    {
+      "name": "age",
+      "type": "int64",
+      "role": "output"
+    },
+    {
+      "name": "period_value",
+      "type": "double",
+      "role": "outcome"
+    },
+    {
+      "name": "period_value__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "period_value__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
+      "name": "period_value_mature",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "orders_30d",
+      "type": "int64",
+      "role": "feature"
+    },
+    {
+      "name": "orders_30d__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "orders_30d__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
+      "name": "cumulative_value",
+      "type": "double",
+      "role": "outcome"
+    },
+    {
+      "name": "cumulative_value__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "cumulative_value__reason",
+      "type": "string",
+      "role": "output"
+    }
+  ]
+}

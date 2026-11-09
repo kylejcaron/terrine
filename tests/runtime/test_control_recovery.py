@@ -110,32 +110,94 @@ def test_cancel_rechecks_state_when_queued_run_starts_before_cancellation(
 
 
 def test_restart_restores_no_op_selection_before_recovered_success():
+    from datetime import UTC, datetime, timedelta
+
+    import pyarrow as pa
+
+    from terrine.compile.provenance import EXECUTION_REVISION
+    from terrine.runtime.backends.duckdb import DuckDBBackend, StagedGeneration
+    from terrine.runtime.changes import ChangeSet
+    from terrine.runtime.graph import dependency_graph
+    from terrine.runtime.leases import LeaseStore
+    from terrine.runtime.planner import plan_refresh
+    from terrine.runtime.saved_plan import (
+        DestinationRef,
+        ModelReference,
+        SavedPlan,
+        _bind_saved_plan,
+    )
+    from terrine.spec import Design, FixedDate
+
     con = duckdb.connect(":memory:")
     store = RuntimeStore(con, namespace="owner")
     store.initialize()
     schema = store._schema
+    leases = LeaseStore(con, namespace="owner")
+    backend = DuckDBBackend(con, namespace="owner")
+    prior = leases.acquire(
+        "dataset:orders", "prior", ttl=timedelta(minutes=1), now=datetime.now(UTC)
+    )
+    backend.publish_generation(
+        StagedGeneration(
+            "orders",
+            "g2",
+            {"frame-new": pa.table({"id": [1]})},
+            run_id="prior",
+            execution_revision=EXECUTION_REVISION,
+        ),
+        expected_manifest=None,
+        lease=prior,
+    )
+    leases.release(prior)
+    design = Design("user", FixedDate("2025-01-02"))
+    plan = plan_refresh(
+        namespace="owner",
+        dataset="orders",
+        definition_hash=design.spec_hash,
+        snapshot_id="snapshot",
+        graph=dependency_graph(sources=("events",)),
+        changes=ChangeSet((), "operator"),
+        reuse_base_generation="g2",
+        reuse_base_revision=backend.generation_execution_revision("orders", "g2"),
+    )
+    saved = SavedPlan.create(
+        plan_json=plan.serialize(),
+        design=design,
+        model=ModelReference("model", "catalog", "model", "units", "readiness", "events"),
+        destination=DestinationRef("output.duckdb", "owner", "orders"),
+        namespace="owner",
+        expected_base_manifest="g2",
+    )
+    bound = _bind_saved_plan(saved, namespace="owner")
+    con.execute(
+        f"INSERT INTO {schema}.runtime_dataset_requests VALUES (?,?)", ["request", saved.to_json()]
+    )
+    noop = leases.acquire("dataset:orders", "noop", ttl=timedelta(minutes=1), now=datetime.now(UTC))
     con.execute(
         f"INSERT INTO {schema}.runtime_runs "
-        "(run_id, dataset, fingerprint, state, published_generation, attempt_fence) VALUES "
-        "('prior','orders','fp','succeeded','g2',NULL),"
-        "('noop','orders','fp','running',NULL,1)"
+        "(run_id,dataset,fingerprint,state,published_generation,attempt_fence) VALUES "
+        "('prior','orders',?,'succeeded','g2',NULL),('noop','orders',?,'running',NULL,?)",
+        [bound.definition.fingerprint, bound.definition.fingerprint, noop.fence],
     )
-    con.execute(
-        f"INSERT INTO {schema}.runtime_leases VALUES "
-        "('dataset:orders','noop',1,TIMESTAMP '2000-01-01')"
+    backend.reuse_generation(
+        "orders",
+        expected_manifest="g2",
+        lease=noop,
+        run_id="noop",
+        execution_revision=bound.definition.execution_revision,
     )
-    con.execute(
-        f"INSERT INTO {schema}.runtime_run_publications VALUES "
-        "('prior','orders','g2',2),('noop','orders','g2',2)"
-    )
+    leases.release(noop)
     con.execute(f"INSERT INTO {schema}.runtime_run_results VALUES ('prior','frame-new')")
     server = ControlServer(
         store,
         namespace="owner",
-        endpoint=ControlEndpoint(Path(f"/tmp/terrine-recovery-copy-{os.getpid()}.sock")),
+        endpoint=ControlEndpoint(Path(f"/tmp/terrine-recovery-copy-{uuid.uuid4().hex}.sock")),
     )
     server.start()
     try:
+        status = ControlClient(server.endpoint, namespace="owner").get_run("noop")
+        assert status.durable_state == "succeeded"
+        assert status.pinned_result_ref == "g2"
         state = con.execute(
             f"SELECT state FROM {schema}.runtime_runs WHERE run_id='noop'"
         ).fetchone()

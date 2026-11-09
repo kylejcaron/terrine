@@ -1,4 +1,4 @@
-"""Lazy named study columns over sparse temporal states and candidate anchors."""
+"""Lazy named study columns over local temporal reductions and candidate anchors."""
 
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ from terrine.compile.anchors import (
     _utc_column,
     compile_anchors,
 )
-from terrine.compile.numeric import CompileContext, lower_aggregate
+from terrine.compile.numeric import CompileContext, lower_aggregates
 from terrine.compile.ranges import plan_ranges
 from terrine.compile.retention import compile_retention
 from terrine.data import (
@@ -67,7 +67,7 @@ from terrine.spec.expressions import (
 )
 from terrine.spec.sequence import _UNSUPPORTED_SHAPE
 from terrine.spec.validate import _fixed_anchors
-from terrine.temporal.aggregate import TemporalResult
+from terrine.temporal.aggregate import AggregateRequest, TemporalResult
 from terrine.temporal.attributes import (
     _enriched_property_columns,
     enrich_events,
@@ -401,7 +401,6 @@ def compile_columns(
     *,
     include_membership: bool = True,
     _anchor_table: AnchorTable | None = None,
-    persisted_prefixes: Mapping[tuple[str, str, str, str], ibis.Table] | None = None,
     persisted_anchors: ibis.Table | None = None,
 ) -> CompiledStudy:
     """Compile candidates and distinct expressions once without reading source rows."""
@@ -416,33 +415,31 @@ def compile_columns(
     table = anchors.table
     values: dict[Expr, CompiledValue] = {}
     checks: list[_DeferredCheck] = []
-    # Row checks of every window result become flag columns of the candidate
-    # relation, numbered in schedule order, so the audit can count them in one
-    # gate statement where the schedule allows it (see the splice below).
+    # Lift window flags once at candidate grain. Logical check registration is
+    # separate from batch attachment, so interleaved outputs keep refusal order.
     check_columns: list[str] = []
     lifted: dict[int, tuple[str, ...]] = {}
-    normalized_sources, sources, selector_sources, source_histories, states = {}, {}, {}, {}, {}
+    normalized_sources, sources, selector_sources, source_histories = {}, {}, {}, {}
+    source_checks: dict[str, list[_DeferredCheck]] = {}
     sketches: list[SketchSidecar] = []
     sketch_aliases: dict[str, list[str]] = {}
     selector_identity_checks = []
     checked_selector_sources = set()
-    for (source_name, measure_key, unit, resolution), relation in (
-        persisted_prefixes or {}
-    ).items():
-        if unit != design.unit:
-            raise ValueError("persisted prefix unit does not match design")
-        if not isinstance(relation, ibis.Table):
-            raise TypeError("persisted prefix relations must be Ibis tables")
-        states[(source_name, measure_key, unit, resolution)] = relation
     columns, feature_cutoffs, eligibility_cutoffs, strategies = {}, {}, {}, {}
     public: dict[str, str] = {}
     selector_identity_columns: dict[str, str] = {}
     source_property_columns = {}
+    # An override may contain generated or observed clocks unrelated to the
+    # outer declaration. Only ordinary compiled anchors prove calendar alignment.
     fixed = (
-        _fixed_anchors(design, model) if isinstance(design.anchor, (FixedDate, Schedule)) else None
+        _fixed_anchors(design, model)
+        if _anchor_table is None
+        and persisted_anchors is None
+        and isinstance(design.anchor, (FixedDate, Schedule))
+        else None
     )
 
-    def events_for(source_name, *, selector=False):
+    def events_for(source_name, *, selector=False, register_checks=True):
         if source_name not in normalized_sources:
             source = model.sources[source_name]
             raw = model._relation(source.relation)
@@ -460,16 +457,19 @@ def compile_columns(
                 raw, source, source.units[unit_name], extra_columns=extra_columns
             )
             histories = {}
+            source_checks[source_name] = []
             for dimension in source.dimensions:
                 history = model._relation(dimension.relation)
                 histories[dimension.name] = history
-                checks.append(_HistoryValidation(history, dimension))
+                source_checks[source_name].append(_HistoryValidation(history, dimension))
             source_property_columns[source_name] = _enriched_property_columns(
                 source.dimensions, events.columns
             )
             normalized_sources[source_name] = events
             source_histories[source_name] = histories
             sources[source_name] = enrich_events(events, source, histories)
+        if register_checks:
+            checks.extend(source_checks.pop(source_name, ()))
         if not selector:
             return sources[source_name]
         if source_name not in selector_sources:
@@ -492,17 +492,21 @@ def compile_columns(
             )
         return selector_sources[source_name]
 
-    lowering = CompileContext(model, unit_name, fixed, events_for, states)
+    lowering = CompileContext(
+        model, unit_name, fixed, lambda name: events_for(name, register_checks=False)
+    )
 
-    selector_columns: dict[EventTime, str] = {}
+    selector_origins: dict[EventTime, tuple[ibis.Table, str]] = {}
     selector_metadata = {}
     selector_index = 0
 
-    def resolve_selector(selector: EventTime, source_anchors: ibis.Table) -> tuple[ibis.Table, str]:
+    def resolve_selector(selector: EventTime) -> tuple[ibis.Table, str]:
         nonlocal selector_index
-        origin = source_anchors
+        if selector in selector_origins:
+            return selector_origins[selector]
+        origin = anchors.table
         if selector.relative_to is not None:
-            origin, _ = resolve_selector(selector.relative_to, source_anchors)
+            origin, _ = resolve_selector(selector.relative_to)
         event = model.catalog.events[selector.event]
         source = model.sources[event.source]
         events = events_for(source.name, selector=True)
@@ -753,8 +757,8 @@ def compile_columns(
             **{column: ibis.ifelse(left[metadata["complete"]], right.__selector_time, ibis.null())},
             **{name: left[name] for name in metadata.values()},
         )
-        selector_columns[selector] = column
         selector_metadata[selector] = metadata
+        selector_origins[selector] = joined_anchors, column
         return joined_anchors, column
 
     def selector_timing(selector: EventTime):
@@ -775,31 +779,213 @@ def compile_columns(
         anchor_source: ibis.Table,
         fields: Mapping[str, ir.Value],
     ) -> ibis.Table:
+        fields = {name: value for name, value in fields.items() if name not in result_table.columns}
         if not fields:
             return result_table
         anchor_fields = anchor_source.select(
             **{key: anchor_source[key] for key in _ANCHOR_KEY}, **fields
         )
         joined = result_table.left_join(
-            anchor_fields, [result_table[key] == anchor_fields[key] for key in _ANCHOR_KEY]
+            anchor_fields,
+            [null_safe_equal(result_table[key], anchor_fields[key]) for key in _ANCHOR_KEY],
         )
         return joined.select(
             **{name: result_table[name] for name in result_table.columns},
             **{name: anchor_fields[name] for name in fields},
         )
 
+    def attach_result(
+        result_table: ibis.Table,
+        metadata: Mapping[str, ColumnMeta],
+        timing_names,
+        result: _DeferredCheck | None,
+    ) -> dict[str, ColumnMeta]:
+        """Attach one result and its validation flags at full candidate grain."""
+        nonlocal table
+        key_prefix = next(iter(metadata))
+        projection = {f"{key_prefix}_key_{key}": result_table[key] for key in _ANCHOR_KEY}
+        renamed_metadata = {}
+        for output, meta in metadata.items():
+            renamed = {
+                field: f"{output}_{field.removesuffix('_column')}"
+                for field in _META_COLUMNS
+                if getattr(meta, field) is not None
+            }
+            projection[output] = result_table[output]
+            projection.update(
+                {name: result_table[getattr(meta, field)] for field, name in renamed.items()}
+            )
+            renamed_metadata[output] = replace(meta, **renamed)
+        projection.update(
+            {
+                name: result_table[name]
+                for name in dict.fromkeys(timing_names)
+                if name is not None and name not in {*_ANCHOR_KEY, "t0"} and name not in projection
+            }
+        )
+        if isinstance(result, TemporalResult) and result.row_checks:
+            row_checks = {
+                f"__terrine_check_{len(check_columns) + index}": result_table[check.column]
+                for index, check in enumerate(result.row_checks)
+            }
+            projection.update(row_checks)
+            lifted[id(result)] = tuple(row_checks)
+            check_columns.extend(row_checks)
+        right = result_table.select(**projection)
+        table = table.left_join(
+            right,
+            [null_safe_equal(table[key], right[f"{key_prefix}_key_{key}"]) for key in _ANCHOR_KEY],
+        )
+        return renamed_metadata
+
+    # Reserve names before any group is pending. A group may finish leaves that
+    # appear much later in the public traversal, without changing outward order.
+    output_names: dict[Expr, str] = {}
+    additive_groups: dict[EventTime | None, list[MetricAgg]] = {}
+    additive_checks: dict[MetricAgg, TemporalResult] = {}
+    for named in (design.features, design.outcomes, design.eligibility):
+        for node in named.values():
+            for leaf in _output_leaves(node):
+                if leaf in output_names:
+                    continue
+                output_names[leaf] = f"__terrine_value_{len(output_names)}"
+                if isinstance(leaf, MetricAgg):
+                    metric = model.metrics[leaf.metric]
+                    if len(metric.measures) == 1 and metric.measures[0].aggregation in {
+                        "min",
+                        "max",
+                        "count_distinct",
+                    }:
+                        continue
+                    # Every origin here is resolved against this invocation's
+                    # one candidate relation, including its full anchor identity.
+                    additive_groups.setdefault(leaf.relative_to, []).append(leaf)
+
+    def compile_additives(origin: EventTime | None) -> None:
+        group = additive_groups[origin]
+        expression_anchors = anchors.table if origin is None else resolve_selector(origin)[0]
+        lowered = lower_aggregates(
+            lowering,
+            [
+                AggregateRequest(
+                    model.metrics[node.metric], node.window, output_names[node], "feature"
+                )
+                for node in group
+            ],
+            anchors=expression_anchors,
+            relative=origin is not None,
+        )
+        result = lowered.result
+        result_table = result.table
+        metadata = dict(result.columns)
+        timing_names = []
+        if origin is None:
+            for node in group:
+                timing_column_refs[node] = ("t0", None, None)
+        else:
+            selector_meta = selector_metadata[origin]
+            point_column = selector_origins[origin][1]
+            origin_fields = {
+                selector_meta["complete"]: expression_anchors[selector_meta["complete"]],
+                selector_meta["reason"]: expression_anchors[selector_meta["reason"]],
+                point_column: expression_anchors[point_column],
+            }
+            for node in group:
+                output = output_names[node]
+                point = expression_anchors[point_column]
+                refs = (f"{output}_point_time", f"{output}_start_bound", f"{output}_end_bound")
+                timing_column_refs[node] = refs
+                timing_names.extend(refs)
+                origin_fields.update(
+                    {
+                        refs[0]: point,
+                        refs[1]: point + ibis.interval(seconds=node.window.start.seconds),
+                        refs[2]: point + ibis.interval(seconds=node.window.end.seconds),
+                    }
+                )
+            result_table = attach_anchor_fields(result_table, expression_anchors, origin_fields)
+            origin_complete = result_table[selector_meta["complete"]]
+            has_origin = result_table[point_column].notnull()
+            relative_values = {}
+            for output, meta in metadata.items():
+                if meta.complete_column is None or meta.reason_column is None:
+                    raise _UNSUPPORTED_SHAPE.error()
+                complete_name, reason_name = (
+                    f"{output}_relative_complete",
+                    f"{output}_relative_reason",
+                )
+                relative_values.update(
+                    {
+                        output: ibis.ifelse(
+                            origin_complete & has_origin,
+                            result_table[output],
+                            ibis.null().cast(result_table[output].type()),
+                        ),
+                        complete_name: (
+                            origin_complete & has_origin & result_table[meta.complete_column]
+                        ).fill_null(False),
+                        reason_name: ibis.cases(
+                            (~origin_complete, result_table[selector_meta["reason"]]),
+                            (~has_origin, reason_codes.MISSING_SELECTOR_ORIGIN),
+                            else_=result_table[meta.reason_column],
+                        ),
+                    }
+                )
+                metadata[output] = replace(
+                    meta, complete_column=complete_name, reason_column=reason_name
+                )
+            result_table = result_table.mutate(**relative_values)
+        metadata = attach_result(result_table, metadata, timing_names, result)
+        lifted_names = dict(
+            zip(
+                (check.column for check in result.row_checks),
+                lifted.pop(id(result), ()),
+                strict=True,
+            )
+        )
+        checks_by_output: dict[str, list[RowCheck]] = {output: [] for output in result.columns}
+        for check in result.row_checks:
+            checks_by_output[check.context["output"]].append(check)
+        for node in group:
+            output = output_names[node]
+            output_checks = checks_by_output[output]
+            deferred = TemporalResult(
+                result.table,
+                {output: result.columns[output]},
+                row_checks=tuple(output_checks),
+            )
+            additive_checks[node] = deferred
+            lifted[id(deferred)] = tuple(lifted_names[check.column] for check in output_checks)
+            cutoff = FeatureCutoff(
+                latest_seconds=(
+                    (selector_timing(origin)[0][1] if origin is not None else 0)
+                    + node.window.end.seconds
+                ),
+                strict=True,
+                knowledge="retrospective_effective_time",
+            )
+            values[node] = CompiledValue(output, metadata[output], cutoff)
+            strategies[output] = lowered.strategies[output]
+
     timing_column_refs = {}
 
     def expression(node: Expr) -> CompiledValue:
         nonlocal table
         if node in values:
+            if isinstance(node, MetricAgg) and node in additive_checks:
+                for measure in model.metrics[node.metric].measures:
+                    events_for(measure.source_name)
+                checks.append(additive_checks.pop(node))
             return values[node]
-        output = f"__terrine_value_{len(values)}"
+        if isinstance(node, MetricAgg) and node in additive_groups.get(node.relative_to, ()):
+            compile_additives(node.relative_to)
+            return expression(node)
+        output = output_names[node]
         expression_anchors = anchors.table
         relative = getattr(node, "relative_to", None)
         selector_point_column: str | None = None
         if isinstance(node, EventTime):
-            expression_anchors, selector_point_column = resolve_selector(node, expression_anchors)
+            expression_anchors, selector_point_column = resolve_selector(node)
             selector_meta = selector_metadata[node]
             result_table = expression_anchors.select(
                 **{key: expression_anchors[key] for key in _ANCHOR_KEY},
@@ -833,12 +1019,7 @@ def compile_columns(
             result = None
         else:
             if relative is not None:
-                expression_anchors, selector_point_column = resolve_selector(
-                    relative, expression_anchors
-                )
-                expression_anchors = expression_anchors.mutate(
-                    t0=expression_anchors[selector_point_column]
-                )
+                expression_anchors, selector_point_column = resolve_selector(relative)
             result = None
         if not isinstance(node, EventTime) and isinstance(node, AttributeAsOf):
             result = compile_asof(
@@ -1053,27 +1234,6 @@ def compile_columns(
             )
             strategy = "blocked_range_join/nonadditive"
             result_table = result.table
-        elif not isinstance(node, EventTime):
-            lowered = lower_aggregate(
-                lowering,
-                model.metrics[node.metric],
-                node.window,
-                anchors=expression_anchors,
-                output=output,
-                relative=relative is not None,
-            )
-            result = lowered.result
-            meta = result.columns[output]
-            cutoff_seconds = (
-                selector_timing(relative)[0][1] + node.window.end.seconds
-                if relative is not None
-                else node.window.end.seconds
-            )
-            cutoff = FeatureCutoff(
-                latest_seconds=cutoff_seconds, strict=True, knowledge="retrospective_effective_time"
-            )
-            strategy = lowered.strategy
-            result_table = result.table
 
         if relative is not None and selector_point_column is None:
             raise _UNSUPPORTED_SHAPE.error()
@@ -1152,45 +1312,10 @@ def compile_columns(
             }
             result_table = result_table.mutate(**relative_values)
             meta = replace(meta, complete_column=combined_complete, reason_column=combined_reason)
-        # Each value derives from the candidates independently, then joins back by
-        # null-safe anchor identity, so query nesting does not grow with column count.
-        # Internal support names are only unique within one result; rename them here.
-        renamed = {
-            field: f"{output}_{field.removesuffix('_column')}"
-            for field in _META_COLUMNS
-            if getattr(meta, field) is not None
-        }
-        timing_support = {
-            name: result_table[name]
-            for name in dict.fromkeys(timing_refs)
-            if name is not None
-            and name not in {*_ANCHOR_KEY, "t0"}
-            and name != output
-            and name not in renamed.values()
-        }
-        row_checks = {}
-        if isinstance(result, TemporalResult) and result.row_checks:
-            row_checks = {
-                f"__terrine_check_{len(check_columns) + index}": result_table[check.column]
-                for index, check in enumerate(result.row_checks)
-            }
-            lifted[id(result)] = tuple(row_checks)
-            check_columns.extend(row_checks)
-        right = result_table.select(
-            **{f"{output}_key_{key}": result_table[key] for key in _ANCHOR_KEY},
-            **{output: result_table[output]},
-            **{name: result_table[getattr(meta, field)] for field, name in renamed.items()},
-            **timing_support,
-            **row_checks,
-        )
-        assert cutoff is not None
-        meta = replace(meta, **renamed)
-        table = table.left_join(
-            right,
-            [null_safe_equal(table[key], right[f"{output}_key_{key}"]) for key in _ANCHOR_KEY],
-        )
+        meta = attach_result(result_table, {output: meta}, timing_refs, result)[output]
         if result is not None:
             checks.append(result)
+        assert cutoff is not None
         compiled = CompiledValue(output, meta, cutoff)
         values[node] = compiled
         strategies[output] = strategy

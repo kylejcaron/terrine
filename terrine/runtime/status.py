@@ -3,9 +3,9 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from terrine.errors import RefusalSpec
+from terrine.errors import RefusalSpec, TerrineError
 from terrine.runtime.events import (
     _latest_event_cursor,
     event_read_transaction,
@@ -17,6 +17,9 @@ from terrine.runtime.state import RuntimeStore
 from terrine.runtime.synchronization import run_publication_lock
 
 __all__ = ["RunStatus", "CancelReceipt", "get_run", "cancel_run"]
+
+if TYPE_CHECKING:
+    from terrine.runtime.planner import RefreshPlan
 
 _UNAVAILABLE = RefusalSpec(
     "terrine.runtime.run_unavailable",
@@ -207,27 +210,66 @@ _INTERRUPTED = RefusalSpec(
 )
 
 
-def _recover_interrupted_runs(con: Any, *, namespace: str) -> None:
+def _recover_interrupted_runs(con: Any, *, namespace: str, plan: RefreshPlan | None = None) -> None:
     """Reconcile attempts whose fenced execution lease is no longer live."""
     store = RuntimeStore(con, namespace=namespace)
     store.initialize()
     schema = store._schema
     with event_transaction(con, namespace=namespace):
         stale = con.execute(
-            f"SELECT r.run_id,r.state,r.attempt_fence FROM {schema}.runtime_runs r "
+            f"SELECT r.run_id,r.state,r.attempt_fence,r.fingerprint,p.dataset,p.generation "
+            f"FROM {schema}.runtime_runs r "
             f"LEFT JOIN {schema}.runtime_leases l ON l.resource='dataset:' || r.dataset "
             "AND l.owner=r.run_id AND l.fence=r.attempt_fence "
+            f"LEFT JOIN {schema}.runtime_run_publications p ON p.run_id=r.run_id "
             "WHERE r.state IN ('queued','running','cancel_requested') "
             "AND (r.state<>'queued' OR "
             "(r.attempt_fence IS NOT NULL AND r.updated_at IS NOT NULL)) "
             "AND (l.resource IS NULL OR l.expires_at<=(current_timestamp AT TIME ZONE 'UTC')) "
             "ORDER BY r.run_id"
         ).fetchall()
-        for run_id, old_state, fence in stale:
-            publication = con.execute(
-                f"SELECT dataset,generation FROM {schema}.runtime_run_publications WHERE run_id=?",
-                [run_id],
-            ).fetchone()
+        if not stale:
+            return
+        from terrine.runtime.execute import _verify_generation
+        from terrine.runtime.planner import admit_execution
+        from terrine.runtime.saved_plan import _stored_plan_identities
+
+        stale_ids = {run_id for run_id, *_rest in stale}
+        fingerprints = {
+            fingerprint
+            for _run_id, _state, _fence, fingerprint, dataset, _generation in stale
+            if dataset is not None
+        }
+        fingerprints.update(
+            fingerprint
+            for run_id, (state, fingerprint, _references) in store._snapshot_pinned_runs().items()
+            if state == "failed" or (run_id in stale_ids and state != "cancel_requested")
+        )
+        identities = _stored_plan_identities(
+            con, schema=schema, namespace=namespace, fingerprints=fingerprints
+        )
+        for run_id, old_state, fence, fingerprint, dataset, published_generation in stale:
+            publication = (dataset, published_generation) if dataset is not None else None
+            publication_error = None
+            if publication is not None:
+                identity = (
+                    (plan, None)
+                    if plan is not None and plan.definition.fingerprint == fingerprint
+                    else identities.get(fingerprint)
+                )
+                try:
+                    if identity is None:
+                        raise ValueError("publication has no verified plan identity")
+                    recovering_plan, saved_version = identity
+                    admit_execution(
+                        recovering_plan, namespace=namespace, saved_plan_version=saved_version
+                    )
+                    _verify_generation(
+                        recovering_plan, publication[1], con=con, namespace=namespace
+                    )
+                except (ValueError, TerrineError):
+                    publication = None
+                    publication_error = "terrine.runtime.saved_plan_mismatch"
             state = (
                 "succeeded"
                 if publication is not None
@@ -265,7 +307,7 @@ def _recover_interrupted_runs(con: Any, *, namespace: str) -> None:
                     state,
                     generation,
                     datetime.now(UTC).replace(tzinfo=None),
-                    _INTERRUPTED.code if state == "failed" else None,
+                    (publication_error or _INTERRUPTED.code) if state == "failed" else None,
                     run_id,
                     old_state,
                     fence,
@@ -280,3 +322,6 @@ def _recover_interrupted_runs(con: Any, *, namespace: str) -> None:
                     namespace=namespace,
                     _in_transaction=True,
                 )
+        store.release_terminal_run_snapshot_references(
+            _in_transaction=True, _plan_identities=identities
+        )

@@ -157,7 +157,20 @@ def test_saved_plan_execution_reopens_retained_snapshot_for_each_task(tmp_path):
             return pa.table({"id": [task.task_id]})
 
         def publish(self, plan, outputs, lease, run_id):
-            return "generation-1"
+            from terrine.runtime.backends.duckdb import DuckDBBackend, StagedGeneration
+
+            return DuckDBBackend(con.con, namespace="runtime").publish_generation(
+                StagedGeneration(
+                    plan.dataset,
+                    "generation-1",
+                    outputs,
+                    run_id=run_id,
+                    snapshot_id=plan.snapshot_id,
+                    execution_revision=plan.definition.execution_revision,
+                ),
+                expected_manifest=plan.expected_base_manifest,
+                lease=lease,
+            )
 
     executor = SnapshotExecutor()
     with pytest.raises(RuntimeError) as error:
@@ -244,8 +257,16 @@ def test_saved_plan_execution_reopens_retained_snapshot_for_each_task(tmp_path):
             )
         assert changed_error.value.code == "terrine.runtime.request_key_conflict"
 
+    builtin_saved = SavedPlan.create(
+        plan_json=plan.serialize(),
+        design=design,
+        model=saved_plan.model,
+        destination=saved_plan.destination,
+        namespace="runtime",
+        expected_base_manifest=result.published_generation,
+    )
     built_in = runtime.run_serialized_plan(
-        saved_plan.to_json(),
+        builtin_saved.to_json(),
         con=con.con,
         namespace="runtime",
         request_key="built-in-scoped-model",

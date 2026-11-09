@@ -1,13 +1,10 @@
 # ruff: noqa: F811
-import json
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import duckdb
-import ibis.expr.datatypes as dt
 import pyarrow as pa
 import pytest
-import sqlglot.expressions as sge
 
 from terrine.compile.layers import plan_layers
 from terrine.runtime.backends.duckdb import DuckDBBackend, StagedGeneration
@@ -17,9 +14,6 @@ from terrine.runtime.state import DefinitionVersion, GenerationRef, RuntimeStore
 from terrine.spec import Design, FixedDate, agg
 from tests.compile.test_columns import column_model  # noqa: F401,F811
 
-_BIGNUM = dt.Unknown(raw_type=sge.DataType.build("BIGNUM", dialect="duckdb"))
-_HUGEINT = dt.Unknown(raw_type=sge.DataType.build("HUGEINT", dialect="duckdb"))
-
 
 def _lease(con):
     store = LeaseStore(con, namespace="owner")
@@ -27,7 +21,7 @@ def _lease(con):
     return store.acquire("dataset:orders", "run", ttl=timedelta(minutes=1), now=datetime.now(UTC))
 
 
-def _published_generation(model, design, *, con=None, prefix_value=7, prefix_table=None):
+def _published_generation(model, design, *, con=None):
     con = duckdb.connect(":memory:") if con is None else con
     backend = DuckDBBackend(con, namespace="owner")
     store = RuntimeStore(con, namespace="owner")
@@ -53,11 +47,6 @@ def _published_generation(model, design, *, con=None, prefix_value=7, prefix_tab
             "orders",
             "g1",
             {
-                "prefix-partition": (
-                    pa.table({"unit": ["a"], "sum": [prefix_value]})
-                    if prefix_table is None
-                    else prefix_table
-                ),
                 "anchor-partition": anchor_partition,
             },
         ),
@@ -65,7 +54,7 @@ def _published_generation(model, design, *, con=None, prefix_value=7, prefix_tab
         lease=_lease(con),
     )
     key = replace(
-        next(key for key in plan_layers(design, model).keys if key.layer == "prefix"),
+        plan_layers(design, model).keys[0],
         snapshot_id="snapshot",
     )
     return con, store, backend, ref, receipt, key
@@ -98,123 +87,6 @@ def test_build_layer_composition_matches_direct_compilation(column_model):
     assert actual.columns == expected.columns
     assert actual.expression_timings == expected.expression_timings
 
-
-def _text_layer(relation, execute):
-    """A layer as earlier runtimes wrote it: every exact column as text, all named."""
-    columns = tuple(name for name, dtype in relation.schema().items() if dtype.is_unknown())
-    arrow = execute(relation.mutate(**{name: relation[name].cast("string") for name in columns}))
-    return arrow.replace_schema_metadata(
-        {b"terrine.runtime.exact_layer_columns": json.dumps(columns).encode()}
-    )
-
-
-@pytest.mark.parametrize("persist", ["current", "text"])
-def test_exact_prefix_layers_roundtrip_through_arrow_storage(column_model, persist):
-    from types import SimpleNamespace
-
-    from terrine.compile.columns import compile_columns
-    from terrine.compile.layers import build_layer
-    from terrine.compile.materialize import compose_materialized_frame
-    from terrine.runtime.api import _persistable_layer, _restore_persisted_layer
-
-    design = _design()
-    writer = _persistable_layer if persist == "current" else _text_layer
-    keys = plan_layers(design, column_model).keys
-    layers = {
-        key: writer(build_layer(design, column_model, key), column_model.con.to_pyarrow)
-        for key in keys
-    }
-    prefix = next(key for key in keys if key.layer == "prefix")
-    arrow = layers[prefix]
-    exact_columns = set(json.loads(arrow.schema.metadata[b"terrine.runtime.exact_layer_columns"]))
-    assert "sum_value" in exact_columns
-    assert arrow.schema.field("sum_value").type == pa.string()
-    if persist == "current":
-        # Counts travel as DuckDB's Arrow type for HUGEINT, not as text.
-        assert "event_count" not in exact_columns
-        assert arrow.schema.field("event_count").type == pa.decimal128(38, 0)
-        count_columns = json.loads(arrow.schema.metadata[b"terrine.runtime.count_layer_columns"])
-        assert "event_count" in count_columns
-    restored = {
-        replace(key, snapshot_id="snapshot"): _restore_persisted_layer(
-            SimpleNamespace(con=column_model.con), layer, f"{persist}_{index}"
-        )
-        for index, (key, layer) in enumerate(layers.items())
-    }
-    schema = restored[replace(prefix, snapshot_id="snapshot")].schema()
-    assert schema["sum_value"].is_unknown()
-    assert schema["event_count"] == (_HUGEINT if persist == "current" else _BIGNUM)
-    actual = compose_materialized_frame(design, column_model, persisted=restored)
-    expected = compile_columns(design, column_model)
-    assert column_model.con.to_pyarrow(actual.table.order_by("unit")).equals(
-        column_model.con.to_pyarrow(expected.table.order_by("unit"))
-    )
-
-
-def test_restored_counts_need_no_witness_while_stored_decimals_do(monkeypatch):
-    """Counts restore as the native count state direct compilation reads; a
-    decimal(38, 0) value of the same physical type still needs the witness."""
-    from types import SimpleNamespace
-
-    import ibis
-
-    from terrine.errors import TerrineError
-    from terrine.execution import _native
-    from terrine.runtime.api import _persistable_layer, _restore_persisted_layer
-
-    con = ibis.duckdb.connect()
-    try:
-        layer = (
-            ibis.literal(0)
-            .as_table()
-            .select(
-                event_count=ibis.literal(3).cast(_HUGEINT),
-                amount=ibis.literal(5).cast("decimal(38, 0)"),
-            )
-        )
-        arrow = _persistable_layer(layer, con.to_pyarrow)
-        restored = _restore_persisted_layer(SimpleNamespace(con=con), arrow, "layer")
-        assert restored.schema()["event_count"] == _HUGEINT
-        assert restored.schema()["amount"] == dt.Decimal(38, 0)
-        monkeypatch.setattr(_native, "_exact_arithmetic_answer", lambda _: ("SELECT 1", (2,)))
-        admit = _native.exact_arithmetic_admission(con)
-        admit(restored.select("event_count"))
-        with pytest.raises(TerrineError) as error:
-            admit(restored.select("amount"))
-        assert error.value.context["status"] == "witness_failed"
-    finally:
-        con.disconnect()
-
-
-def test_streamed_exact_prefix_layer_keeps_metadata_for_arrow_storage(column_model, tmp_path):
-    from terrine.compile.layers import build_layer
-    from terrine.execution.inputs import _ClosingArrowReader
-    from terrine.runtime.api import _persistable_layer
-    from terrine.runtime.arrow import ArrowOutput
-
-    design = _design()
-    prefix_key = next(
-        key for key in plan_layers(design, column_model).keys if key.layer == "prefix"
-    )
-    relation = build_layer(design, column_model, prefix_key)
-
-    def execute(query):
-        table = column_model.con.to_pyarrow(query)
-        source = (batch for batch in table.to_batches())
-        reader = pa.RecordBatchReader.from_batches(table.schema, source)
-        return _ClosingArrowReader(reader, source)
-
-    persisted = ArrowOutput.write(
-        _persistable_layer(relation, execute),
-        root=tmp_path,
-    )
-
-    with persisted.path.open("rb") as stream:
-        schema = pa.ipc.open_stream(stream).schema
-
-    exact_columns = json.loads(schema.metadata[b"terrine.runtime.exact_layer_columns"])
-    assert "sum_value" in exact_columns
-    assert schema.field("sum_value").type == pa.string()
 
 def test_build_anchor_layer_accepts_snapshot_relation_resolver(column_model):
     from terrine.compile.layers import build_layer
@@ -295,9 +167,11 @@ def test_runtime_translates_verified_physical_partition_to_compiler_layer_key(co
         model=column_model,
         ref=ref,
         receipt=receipt,
-        partitions={key: "prefix-partition"},
+        partitions={key: "anchor-partition"},
     )
-    assert actual[key].execute().to_dict("records") == [{"unit": "a", "sum": 7}]
+    assert actual[key].select("unit", "anchor_id", "anchor_provenance").execute().to_dict(
+        "records"
+    ) == [{"unit": "a", "anchor_id": "fixed", "anchor_provenance": "fixed_date"}]
 
 
 def test_runtime_layer_resolution_preserves_owner_timezone(column_model):
@@ -311,9 +185,9 @@ def test_runtime_layer_resolution_preserves_owner_timezone(column_model):
         model=column_model,
         ref=ref,
         receipt=receipt,
-        partitions={key: "prefix-partition"},
+        partitions={key: "anchor-partition"},
     )
-    assert actual[key].execute().to_dict("records") == [{"unit": "a", "sum": 7}]
+    assert actual[key].select("unit").execute().to_dict("records") == [{"unit": "a"}]
     assert con.execute("SELECT current_setting('TimeZone')").fetchone()[0] == "America/New_York"
 
 
@@ -329,31 +203,10 @@ def test_runtime_layer_resolution_reuses_model_backend_for_shared_connection(col
         model=column_model,
         ref=ref,
         receipt=receipt,
-        partitions={key: "prefix-partition"},
-    )
-    assert actual[key]._find_backend(use_default=False) is column_model.con
-    assert actual[key].execute().to_dict("records") == [{"unit": "a", "sum": 7}]
-
-
-def test_runtime_translates_persisted_anchor_record(column_model):
-    design = _design()
-    _, store, backend, ref, receipt, _prefix_key = _published_generation(column_model, design)
-    key = replace(
-        next(key for key in plan_layers(design, column_model).keys if key.layer == "anchor"),
-        snapshot_id="snapshot",
-    )
-    actual = translate_persisted_layers(
-        store,
-        backend,
-        design=design,
-        model=column_model,
-        ref=ref,
-        receipt=receipt,
         partitions={key: "anchor-partition"},
     )
-    assert actual[key].select("unit", "anchor_id", "anchor_provenance").execute().to_dict(
-        "records"
-    ) == [{"unit": "a", "anchor_id": "fixed", "anchor_provenance": "fixed_date"}]
+    assert actual[key]._find_backend(use_default=False) is column_model.con
+    assert actual[key].select("unit").execute().to_dict("records") == [{"unit": "a"}]
 
 
 def test_runtime_partition_does_not_resolve_same_name_from_model_database(column_model):
@@ -362,7 +215,7 @@ def test_runtime_partition_does_not_resolve_same_name_from_model_database(column
     table_name = con.execute(
         "SELECT table_name FROM owner.runtime_partitions WHERE dataset=? AND generation=? "
         "AND partition=?",
-        [receipt.dataset, receipt.generation, "prefix-partition"],
+        [receipt.dataset, receipt.generation, "anchor-partition"],
     ).fetchone()[0]
     column_model.con.raw_sql("CREATE SCHEMA owner")
     column_model.con.raw_sql(
@@ -376,9 +229,9 @@ def test_runtime_partition_does_not_resolve_same_name_from_model_database(column
         model=column_model,
         ref=ref,
         receipt=receipt,
-        partitions={key: "prefix-partition"},
+        partitions={key: "anchor-partition"},
     )
-    assert actual[key].execute().to_dict("records") == [{"unit": "a", "sum": 7}]
+    assert actual[key].select("unit").execute().to_dict("records") == [{"unit": "a"}]
 
 
 @pytest.mark.parametrize(
@@ -398,7 +251,7 @@ def test_runtime_refuses_physical_partition_with_mismatched_logical_identity(
             model=column_model,
             ref=ref,
             receipt=receipt,
-            partitions={replace(key, **{field: value}): "prefix-partition"},
+            partitions={replace(key, **{field: value}): "anchor-partition"},
         )
 
 

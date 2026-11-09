@@ -2,6 +2,7 @@ import duckdb
 import pyarrow as pa
 import pytest
 
+from terrine.compile.provenance import EXECUTION_REVISION
 from terrine.runtime.execute import execute_plan
 from terrine.runtime.graph import dependency_graph
 from terrine.runtime.planner import plan_refresh
@@ -16,6 +17,37 @@ def _plan():
     )
 
 
+def _publish(con, plan, outputs, lease, run_id=None, generation="g1"):
+    from contextlib import ExitStack
+
+    from terrine.runtime.arrow import ArrowOutput
+    from terrine.runtime.backends.duckdb import DuckDBBackend, StagedGeneration
+
+    backend = DuckDBBackend(con, namespace=plan.namespace)
+
+    with ExitStack() as stack:
+        partitions = {
+            key: stack.enter_context(value.open()) if isinstance(value, ArrowOutput) else value
+            for key, value in outputs.items()
+        }
+        return backend.publish_generation(
+            StagedGeneration(
+                plan.dataset,
+                generation,
+                partitions,
+                run_id=lease.owner if run_id is None else run_id,
+                snapshot_id=plan.snapshot_id,
+                execution_revision=plan.definition.execution_revision,
+            ),
+            expected_manifest=(
+                plan.expected_base_manifest
+                if plan.expected_base_manifest_bound
+                else backend.current_generation(plan.dataset)
+            ),
+            lease=lease,
+        )
+
+
 def test_duplicate_task_completion_is_idempotent():
     con = duckdb.connect(":memory:")
     calls = []
@@ -27,7 +59,19 @@ def test_duplicate_task_completion_is_idempotent():
 
     def publish(plan, outputs, lease):
         publish_calls.append(tuple(outputs))
-        return "g1"
+        from terrine.runtime.backends.duckdb import DuckDBBackend, StagedGeneration
+
+        return DuckDBBackend(con, namespace="owner").publish_generation(
+            StagedGeneration(
+                plan.dataset,
+                "g1",
+                outputs,
+                run_id="run-1",
+                execution_revision=plan.definition.execution_revision,
+            ),
+            expected_manifest=None,
+            lease=lease,
+        )
 
     first = execute_plan(
         _plan(), con=con, namespace="owner", run_id="run-1", run_task=run_task, publish=publish
@@ -36,7 +80,7 @@ def test_duplicate_task_completion_is_idempotent():
         _plan(), con=con, namespace="owner", run_id="run-1", run_task=run_task, publish=publish
     )
     assert first == second
-    assert len(calls) == 4
+    assert len(calls) == len(_plan().tasks)
     assert len(publish_calls) == 1
 
 
@@ -50,7 +94,7 @@ def test_execution_persists_lifecycle_events_for_terminal_replay():
         namespace="owner",
         run_id="evented-run",
         run_task=lambda task, dependencies: pa.table({"task": [task.task_id]}),
-        publish=lambda plan, outputs, lease: "g1",
+        publish=lambda plan, outputs, lease: _publish(con, plan, outputs, lease),
     )
 
     events = read_run_events("evented-run", con=con, namespace="owner").events
@@ -61,7 +105,7 @@ def test_execution_persists_lifecycle_events_for_terminal_replay():
     ]
 
 
-def test_prefix_runner_receives_daily_output_for_design_plan():
+def test_frame_runner_receives_retained_anchor_output_for_design_plan():
     from types import SimpleNamespace
 
     con = duckdb.connect(":memory:")
@@ -79,7 +123,7 @@ def test_prefix_runner_receives_daily_output_for_design_plan():
     observed = {}
 
     def run_task(task, dependencies):
-        if task.layer == "prefix":
+        if task.layer == "frame":
             observed.update(dependencies)
         return pa.table({"layer": [task.layer]})
 
@@ -87,12 +131,12 @@ def test_prefix_runner_receives_daily_output_for_design_plan():
         plan,
         con=con,
         namespace="owner",
-        run_id="prefix-dependency",
+        run_id="anchor-dependency",
         run_task=run_task,
-        publish=lambda plan, outputs, lease: "g1",
+        publish=lambda plan, outputs, lease: _publish(con, plan, outputs, lease),
     )
     assert len(observed) == 1
-    assert next(iter(observed.values())).to_pylist() == [{"layer": "daily"}]
+    assert next(iter(observed.values())).to_pylist() == [{"layer": "anchor"}]
 
 
 def test_cancel_before_publish_never_exposes_generation():
@@ -111,7 +155,8 @@ def test_cancel_before_publish_never_exposes_generation():
     assert published == []
 
 
-def test_post_commit_publish_error_reconciles_run_and_retains_snapshot():
+@pytest.mark.parametrize("revision", [EXECUTION_REVISION, EXECUTION_REVISION + 1])
+def test_post_commit_publish_error_reconciles_only_matching_revision(revision):
     from terrine.runtime.backends.base import StagedGeneration
     from terrine.runtime.backends.duckdb import DuckDBBackend
     from terrine.runtime.state import RuntimeStore
@@ -122,30 +167,60 @@ def test_post_commit_publish_error_reconciles_run_and_retains_snapshot():
     backend = DuckDBBackend(con, namespace="owner")
 
     def publish(plan, outputs, lease):
-        backend.fault_injector = lambda boundary: (
-            (_ for _ in ()).throw(RuntimeError("lost response"))
-            if boundary == "after_commit"
-            else None
-        )
+        def fail(boundary):
+            if boundary == "after_commit":
+                if revision != EXECUTION_REVISION:
+                    con.execute(
+                        "UPDATE owner.runtime_partition_metadata SET schema_metadata=?",
+                        [
+                            pa.schema(
+                                [("id", pa.int64())],
+                                metadata={
+                                    b"terrine.execution": (
+                                        f'{{"version":1,"execution_revision":{revision}}}'.encode()
+                                    )
+                                },
+                            )
+                            .serialize()
+                            .to_pybytes()
+                        ],
+                    )
+                raise RuntimeError("lost response")
+
+        backend.fault_injector = fail
         return backend.publish_generation(
             StagedGeneration(
                 plan.dataset,
                 "generation-1",
                 {"all": next(iter(outputs.values()))},
                 run_id="ambiguous-run",
+                execution_revision=plan.definition.execution_revision,
             ),
             expected_manifest=None,
             lease=lease,
         )
 
-    result = execute_plan(
-        _plan(),
-        con=con,
-        namespace="owner",
-        run_id="ambiguous-run",
-        run_task=lambda task, dependencies: pa.table({"id": [1]}),
-        publish=publish,
-    )
+    def run():
+        return execute_plan(
+            _plan(),
+            con=con,
+            namespace="owner",
+            run_id="ambiguous-run",
+            run_task=lambda task, dependencies: pa.table({"id": [1]}),
+            publish=publish,
+        )
+
+    if revision != EXECUTION_REVISION:
+        from terrine.errors import TerrineError
+
+        with pytest.raises(TerrineError) as error:
+            run()
+        assert error.value.code == "terrine.runtime.saved_plan_mismatch"
+        assert con.execute(
+            "SELECT state FROM owner.runtime_runs WHERE run_id='ambiguous-run'"
+        ).fetchone() != ("succeeded",)
+        return
+    result = run()
     assert result.state == "succeeded"
     assert result.published_generation == "generation-1"
     assert store.snapshot_references("s") == (("published_manifest", '["orders","generation-1"]'),)
@@ -171,6 +246,7 @@ def test_post_commit_empty_refresh_restores_previous_result_partitions():
                 {"all": next(iter(outputs.values()))},
                 snapshot_id=plan.snapshot_id,
                 run_id="prior-run",
+                execution_revision=plan.definition.execution_revision,
             ),
             expected_manifest=None,
             lease=lease,
@@ -188,6 +264,8 @@ def test_post_commit_empty_refresh_restores_previous_result_partitions():
         snapshot_id="s",
         graph=dependency_graph(sources=("events",), definition_hash="def", partitions=("p1",)),
         changes=ChangeSet((), "revision"),
+        reuse_base_generation="generation-old",
+        reuse_base_revision=EXECUTION_REVISION,
     )
 
     def publish_empty(plan, outputs, lease):
@@ -196,16 +274,12 @@ def test_post_commit_empty_refresh_restores_previous_result_partitions():
             if boundary == "after_commit"
             else None
         )
-        return backend.publish_generation(
-            StagedGeneration(
-                "orders",
-                "generation-empty",
-                {"all": pa.table({"id": [7]})},
-                snapshot_id="s",
-                run_id="empty-run",
-            ),
-            expected_manifest="generation-old",
+        return backend.reuse_generation(
+            plan.dataset,
+            expected_manifest=plan.expected_base_manifest,
             lease=lease,
+            run_id="empty-run",
+            execution_revision=plan.definition.execution_revision,
         )
 
     result = execute_plan(
@@ -227,16 +301,12 @@ def test_post_commit_empty_refresh_restores_previous_result_partitions():
         namespace="owner",
         run_id="same-generation-run",
         run_task=lambda task, dependencies: pa.table({"id": []}),
-        publish=lambda current_plan, outputs, lease: backend.publish_generation(
-            StagedGeneration(
-                "orders",
-                "generation-empty",
-                {"all": pa.table({"id": [7]})},
-                snapshot_id="s",
-                run_id="same-generation-run",
-            ),
-            expected_manifest="generation-empty",
+        publish=lambda current_plan, outputs, lease: backend.reuse_generation(
+            current_plan.dataset,
+            expected_manifest=current_plan.expected_base_manifest,
             lease=lease,
+            run_id="same-generation-run",
+            execution_revision=current_plan.definition.execution_revision,
         ),
     )
     assert same_generation.state == "succeeded"
@@ -261,7 +331,9 @@ def test_expected_base_manifest_mismatch_refuses_before_source_work():
             namespace="owner",
             run_id="stale-base",
             run_task=lambda task, dependencies: work.append(task.task_id),
-            publish=lambda plan, outputs, lease: "g3",
+            publish=lambda plan, outputs, lease: _publish(
+                con, plan, outputs, lease, generation="g3"
+            ),
         )
     assert work == []
 
@@ -275,10 +347,20 @@ def test_overlapping_saved_base_replay_returns_terminal_receipt(monkeypatch):
 
     con = duckdb.connect(":memory:")
     plan = _plan().bind_base_manifest("generation-1")
-    ensure_runtime_schema(con, "owner")
+    from tests.runtime.test_duckdb_publication import _lease
+
+    lease = _lease(con, "owner")
+    _publish(
+        con,
+        _plan(),
+        {"all": pa.table({"id": [2]})},
+        lease,
+        "seed",
+        generation="generation-2",
+    )
+    LeaseStore(con, namespace="owner").release(lease)
     con.execute(
-        "INSERT INTO owner.runtime_manifests (dataset, generation, version) "
-        "VALUES ('orders','generation-1',1)"
+        "UPDATE owner.runtime_manifests SET generation='generation-1' WHERE dataset='orders'"
     )
     acquire = LeaseStore.acquire
 
@@ -341,6 +423,7 @@ def test_retry_reconciles_publication_before_rejecting_its_own_manifest():
             "generation-2",
             {"all": pa.table({"id": [1]})},
             run_id="ambiguous",
+            execution_revision=plan.definition.execution_revision,
         ),
         expected_manifest="generation-1",
         lease=lease,
@@ -365,7 +448,9 @@ def test_retry_reconciles_publication_before_rejecting_its_own_manifest():
         namespace="owner",
         run_id="ambiguous",
         run_task=lambda task, dependencies: pa.table({"id": [2]}),
-        publish=lambda plan, outputs, lease: "wrong-generation",
+        publish=lambda plan, outputs, lease: _publish(
+            con, plan, outputs, lease, generation="wrong-generation"
+        ),
     )
 
     assert con.execute(
@@ -392,7 +477,7 @@ def test_plan_task_bound_is_checked_before_running_work():
             con=con,
             namespace="owner",
             run_id="too-many",
-            max_tasks=3,
+            max_tasks=len(_plan().tasks) - 1,
             run_task=lambda task, dependencies: calls.append(task.task_id),
             publish=lambda plan, outputs, lease: None,
         )
@@ -438,7 +523,7 @@ def test_disjoint_partition_tasks_run_concurrently_with_configured_bound():
         namespace="owner",
         run_id="parallel-partitions",
         run_task=run_task,
-        publish=lambda plan, outputs, lease: "g1",
+        publish=lambda plan, outputs, lease: _publish(con, plan, outputs, lease),
         max_concurrency=2,
     )
     assert peak == 2
@@ -486,7 +571,7 @@ def test_successful_partition_output_is_persisted_when_sibling_fails(monkeypatch
             namespace="owner",
             run_id="sibling-retry",
             run_task=fail_once,
-            publish=lambda plan, outputs, lease: "g1",
+            publish=lambda plan, outputs, lease: _publish(con, plan, outputs, lease),
             max_concurrency=2,
         )
     completed_before_retry = {
@@ -507,7 +592,7 @@ def test_successful_partition_output_is_persisted_when_sibling_fails(monkeypatch
         run_task=lambda task, dependencies: (
             calls.append(task.task_id) or pa.table({"task": [task.task_id]})
         ),
-        publish=lambda plan, outputs, lease: "g1",
+        publish=lambda plan, outputs, lease: _publish(con, plan, outputs, lease),
         max_concurrency=2,
     )
     assert receipt.state == "succeeded"
@@ -535,7 +620,7 @@ def test_runtime_budget_is_cumulative_across_final_frame_outputs():
             namespace="owner",
             run_id="over-budget",
             run_task=lambda task, dependencies: pa.table({"id": [1]}),
-            publish=lambda plan, outputs, lease: "g1",
+            publish=lambda plan, outputs, lease: _publish(con, plan, outputs, lease),
         )
 
     assert getattr(error.value, "code", None) == "terrine.budget.rows_exceeded"
@@ -562,7 +647,9 @@ def test_expired_attempt_cannot_fail_or_overwrite_successful_retry():
                 namespace="owner",
                 run_id="same-run",
                 run_task=lambda task, dependencies: pa.table({"id": [2]}),
-                publish=lambda plan, outputs, lease: "g2",
+                publish=lambda plan, outputs, lease: _publish(
+                    con, plan, outputs, lease, generation="g2"
+                ),
                 lease_ttl=timedelta(seconds=1),
             )
             return pa.table({"id": [1]})
@@ -575,7 +662,7 @@ def test_expired_attempt_cannot_fail_or_overwrite_successful_retry():
             namespace="owner",
             run_id="same-run",
             run_task=run_task,
-            publish=lambda plan, outputs, lease: "g1",
+            publish=lambda plan, outputs, lease: _publish(con, plan, outputs, lease),
             lease_ttl=timedelta(seconds=1),
         )
 
@@ -609,7 +696,7 @@ def test_existing_runtime_budget_refusal_codes_are_used():
             namespace="owner",
             run_id="coded-budget",
             run_task=lambda task, dependencies: pa.table({"id": [1]}),
-            publish=lambda plan, outputs, lease: "g1",
+            publish=lambda plan, outputs, lease: _publish(con, plan, outputs, lease),
         )
     assert error.value.code == "terrine.budget.rows_exceeded"
     status = get_run("coded-budget", con=con, namespace="owner")
@@ -633,7 +720,7 @@ def test_existing_runtime_budget_refusal_codes_are_used():
             namespace="owner",
             run_id="coded-byte-budget",
             run_task=lambda task, dependencies: pa.table({"id": [1]}),
-            publish=lambda plan, outputs, lease: "g1",
+            publish=lambda plan, outputs, lease: _publish(con, plan, outputs, lease),
         )
     assert byte_error.value.code == "terrine.budget.output_bytes_exceeded"
     assert get_run("coded-byte-budget", con=byte_con, namespace="owner").error_code == (
@@ -675,6 +762,10 @@ def test_failed_run_retries_to_a_persisted_success_receipt():
     calls = 0
     publish_calls = []
 
+    def publish(current_plan, outputs, lease):
+        publish_calls.append("g1")
+        return _publish(con, current_plan, outputs, lease, "retry-run")
+
     def run_task(task, dependencies):
         nonlocal calls
         calls += 1
@@ -689,7 +780,7 @@ def test_failed_run_retries_to_a_persisted_success_receipt():
             namespace="owner",
             run_id="retry-run",
             run_task=run_task,
-            publish=lambda plan, outputs, lease: "g1",
+            publish=lambda plan, outputs, lease: _publish(con, plan, outputs, lease),
         )
 
     failed_row = con.execute(
@@ -703,7 +794,7 @@ def test_failed_run_retries_to_a_persisted_success_receipt():
         namespace="owner",
         run_id="retry-run",
         run_task=run_task,
-        publish=lambda plan, outputs, lease: publish_calls.append("g1") or "g1",
+        publish=publish,
     )
     succeeded_row = con.execute(
         'SELECT state, attempt_fence FROM "owner".runtime_runs WHERE run_id=?', ["retry-run"]
@@ -752,7 +843,7 @@ def test_lease_heartbeat_keeps_long_task_alive(monkeypatch):
         namespace="owner",
         run_id="long-task",
         run_task=run_task,
-        publish=lambda plan, outputs, lease: "g1",
+        publish=lambda plan, outputs, lease: _publish(con, plan, outputs, lease),
         lease_ttl=timedelta(seconds=30),
     )
     assert result.state == "succeeded"
@@ -811,7 +902,7 @@ def test_cancellation_serializes_with_heartbeat_persistence(monkeypatch):
         namespace="owner",
         run_id="cancel-heartbeat",
         run_task=run_task,
-        publish=lambda plan, outputs, lease: "g1",
+        publish=lambda plan, outputs, lease: _publish(con, plan, outputs, lease),
         lease_ttl=timedelta(seconds=30),
     )
 
@@ -844,7 +935,9 @@ def test_delayed_lease_claim_cannot_overwrite_successful_retry(monkeypatch):
                 namespace="owner",
                 run_id="delayed-claim",
                 run_task=lambda task, dependencies: pa.table({"id": [2]}),
-                publish=lambda plan, outputs, lease: "g2",
+                publish=lambda plan, outputs, lease: _publish(
+                    con, plan, outputs, lease, "delayed-claim", generation="g2"
+                ),
             )
 
     monkeypatch.setattr(module, "_check_expected_base_manifest", delayed_check)
@@ -911,7 +1004,9 @@ def test_stale_claim_during_running_takeover_preserves_newer_run_fence(monkeypat
                     namespace="owner",
                     run_id="running-takeover",
                     run_task=unexpected_task,
-                    publish=lambda plan, outputs, lease: "old",
+                    publish=lambda plan, outputs, lease: _publish(
+                        con, plan, outputs, lease, generation="old"
+                    ),
                 )
             )
         except Exception as error:
@@ -930,7 +1025,9 @@ def test_stale_claim_during_running_takeover_preserves_newer_run_fence(monkeypat
                         finish_new_attempt.wait(timeout=HANG_GUARD_SECONDS),
                         pa.table({"id": [2]}),
                     )[-1],
-                    publish=lambda plan, outputs, lease: "new",
+                    publish=lambda plan, outputs, lease: _publish(
+                        con, plan, outputs, lease, generation="new"
+                    ),
                 )
             )
         except Exception as error:
@@ -1010,7 +1107,9 @@ def test_stale_task_claim_cannot_replace_takeover_task_fence():
                 namespace="owner",
                 run_id="task-takeover",
                 run_task=unexpected_task,
-                publish=lambda plan, outputs, lease: "old",
+                publish=lambda plan, outputs, lease: _publish(
+                    con, plan, outputs, lease, generation="old"
+                ),
             )
         except Exception as error:
             old_errors.append(error)
@@ -1028,7 +1127,9 @@ def test_stale_task_claim_cannot_replace_takeover_task_fence():
                         finish_new_attempt.wait(timeout=HANG_GUARD_SECONDS),
                         pa.table({"id": [2]}),
                     )[-1],
-                    publish=lambda plan, outputs, lease: "new",
+                    publish=lambda plan, outputs, lease: _publish(
+                        con, plan, outputs, lease, generation="new"
+                    ),
                 )
             )
         except Exception as error:
@@ -1089,15 +1190,16 @@ def test_intermediate_partition_sizes_do_not_consume_final_output_budget():
         graph=graph,
         budget=Budget(max_rows=2),
     )
+    con = duckdb.connect(":memory:")
     result = execute_plan(
         plan,
-        con=duckdb.connect(":memory:"),
+        con=con,
         namespace="owner",
         run_id="intermediate-budget",
         run_task=lambda task, dependencies: pa.table(
             {"id": [1]} if task.layer == "frame" else {"id": list(range(100))}
         ),
-        publish=lambda plan, outputs, lease: "g1",
+        publish=lambda plan, outputs, lease: _publish(con, plan, outputs, lease),
     )
     assert result.state == "succeeded"
 
@@ -1118,7 +1220,7 @@ def test_failed_retry_reserves_concurrency_before_lease_start(monkeypatch):
                 namespace="owner",
                 run_id="retry",
                 run_task=fail,
-                publish=lambda *a: "g1",
+                publish=lambda *a: _publish(con, *a),
                 max_active_runs=1,
             )
         acquire = LeaseStore.acquire
@@ -1138,7 +1240,7 @@ def test_failed_retry_reserves_concurrency_before_lease_start(monkeypatch):
             run_id="retry",
             max_active_runs=1,
             run_task=lambda task, deps: pa.table({"id": [task.task_id]}),
-            publish=lambda *a: "g1",
+            publish=lambda *a: _publish(con, *a),
         )
         assert retried.state == "succeeded"
     finally:
@@ -1156,9 +1258,14 @@ def test_expired_or_missing_lease_does_not_consume_concurrency():
             namespace="owner",
             max_active_runs=1,
             run_task=lambda task, deps: pa.table({"id": [task.task_id]}),
-            publish=lambda *a: "g1",
+            publish=lambda *a: _publish(con, *a),
         )
-        run(_plan(), run_id="interrupted")
+        with pytest.raises(RuntimeError):
+            run(
+                _plan(),
+                run_id="interrupted",
+                run_task=lambda *_: (_ for _ in ()).throw(RuntimeError("owner stopped")),
+            )
         con.execute("UPDATE owner.runtime_runs SET state='running' WHERE run_id='interrupted'")
         result = run(_plan(), run_id="next")
         assert result.state == "succeeded"
@@ -1237,3 +1344,62 @@ def test_non_utc_owner_preserves_active_admission_and_recovery():
         assert row is not None and row[0] == "running"
     finally:
         con.close()
+
+
+@pytest.mark.parametrize("changed", ["base", "revision"])
+def test_reuse_evidence_is_rechecked_under_lease_before_custom_callbacks(changed):
+    from datetime import UTC, datetime, timedelta
+
+    from terrine.runtime.backends.duckdb import DuckDBBackend, StagedGeneration
+    from terrine.runtime.changes import ChangeSet
+    from terrine.runtime.leases import LeaseStore
+
+    con = duckdb.connect()
+    backend = DuckDBBackend(con, namespace="owner")
+    leases = LeaseStore(con, namespace="owner")
+    lease = leases.acquire(
+        "dataset:orders", "setup", ttl=timedelta(minutes=1), now=datetime.now(UTC)
+    )
+    backend.publish_generation(
+        StagedGeneration(
+            "orders", "base", {"p": pa.table({"id": [1]})}, execution_revision=EXECUTION_REVISION
+        ),
+        expected_manifest=None,
+        lease=lease,
+    )
+    leases.release(lease)
+    plan = plan_refresh(
+        namespace="owner",
+        dataset="orders",
+        definition_hash="def",
+        snapshot_id="s",
+        graph=dependency_graph(sources=("events",), definition_hash="def"),
+        changes=ChangeSet((), "revision"),
+        reuse_base_generation="base",
+        reuse_base_revision=EXECUTION_REVISION,
+    )
+    if changed == "base":
+        con.execute("UPDATE owner.runtime_manifests SET generation='other'")
+    else:
+        con.execute(
+            "UPDATE owner.runtime_partition_metadata SET schema_metadata=?",
+            [pa.schema([("id", pa.int64())]).serialize().to_pybytes()],
+        )
+    callbacks = []
+    from terrine.runtime.cost import ScanAuthorization
+
+    def authorize(current_plan):
+        callbacks.append("authorize")
+        return ScanAuthorization(current_plan.definition.fingerprint)
+
+    with pytest.raises(ValueError):
+        execute_plan(
+            plan,
+            con=con,
+            namespace="owner",
+            run_id="reuse",
+            run_task=lambda *_: callbacks.append("task") or pa.table({"id": [1]}),
+            publish=lambda *_: callbacks.append("publish"),
+            authorize_scan=authorize,
+        )
+    assert callbacks == []

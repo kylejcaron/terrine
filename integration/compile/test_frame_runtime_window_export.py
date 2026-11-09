@@ -137,9 +137,7 @@ def _refusal(design, model):
 
 @pytest.mark.parametrize("order", ["metric_first", "nonadditive_first"])
 def test_first_refusal_follows_registration_order_across_check_kinds(con, order):
-    """An additive sum over a NaN amount and a filtered distinct count whose filter
-    is unknown for a matched event both fail; the output registered first refuses.
-    Outputs register in name order, so the names fix the schedule."""
+    """An unrelated valid additive output must not reorder interleaved refusals."""
     model = _orders_model(
         con,
         [_order("a", datetime(2025, 1, 1, 12, tzinfo=UTC), amount=float("nan"), channel=None)],
@@ -147,10 +145,11 @@ def test_first_refusal_follows_registration_order_across_check_kinds(con, order)
     spend = agg("spend", window=("-1d", "0s"))
     distinct = agg("web_distinct", window=("-1d", "0s"))
     features = (
-        {"a_spend": spend, "b_distinct": distinct}
+        {"b_spend": spend, "c_distinct": distinct}
         if order == "metric_first"
-        else {"a_distinct": distinct, "b_spend": spend}
+        else {"b_distinct": distinct, "c_spend": spend}
     )
+    features = {"a_empty": agg("spend", window=("-2d", "-1d")), **features}
     error = _refusal(Design("user", FixedDate("2025-01-02"), features=features), model)
     assert error.code == (
         "terrine.temporal.float64_precision"
@@ -158,6 +157,90 @@ def test_first_refusal_follows_registration_order_across_check_kinds(con, order)
         else "terrine.filter.unknown"
     )
     assert error.context["failed_count"] == 1
+
+
+@pytest.mark.parametrize(
+    ("history_first", "conversion"),
+    [
+        pytest.param(False, False, id="earlier_numeric"),
+        pytest.param(True, False, id="own_history_before_numeric"),
+        pytest.param(True, True, id="conversion_without_row_checks"),
+    ],
+)
+def test_source_history_refusal_follows_first_consuming_output(con, history_first, conversion):
+    model = _orders_model(
+        con, [_order("a", datetime(2025, 1, 1, 12, tzinfo=UTC), amount=float("nan"))]
+    )
+    con.create_table("other_orders", con.table("orders"))
+    con.create_table(
+        "history",
+        pa.table(
+            {
+                "user_id": ["a", "a"],
+                "starts": pa.array(
+                    [datetime(2024, 12, 1, tzinfo=UTC)] * 2,
+                    type=pa.timestamp("us", tz="UTC"),
+                ),
+                "ends": pa.array(
+                    [datetime(2025, 2, 1, tzinfo=UTC)] * 2,
+                    type=pa.timestamp("us", tz="UTC"),
+                ),
+                "tier": ["gold", "silver"],
+            }
+        ),
+    )
+    definition = model.catalog.model_dump(mode="python")
+    definition["sources"]["other"] = {
+        **definition["sources"]["orders"],
+        "relation": {"kind": "table", "name": "other_orders"},
+        "events": ["other_amount"],
+        "properties": ["tier"],
+        "dimensions": ["history"],
+    }
+    definition["events"]["other_amount"] = {"source": "other", "column": "amount"}
+    definition["properties"]["tier"] = {
+        "source": "other",
+        "column": "tier",
+        "dtype": "string",
+        "as_of": "event_time",
+        "dimension": "history",
+    }
+    definition["dimensions"]["history"] = {
+        "relation": {"kind": "table", "name": "history"},
+        "unit": "user",
+        "key": "user_id",
+        "validity": {"valid_from": "starts", "valid_to": "ends"},
+        "properties": ["tier"],
+    }
+    definition["measures"]["other_sum"] = {
+        "event": "other_amount",
+        "aggregation": "count" if conversion else "sum",
+        "exact": conversion,
+    }
+    definition["metrics"]["other_spend"] = {
+        "kind": "conversion" if conversion else "mean",
+        "unit": "user",
+        "measure": "other_sum",
+    }
+    model = Model.from_catalog(
+        definition,
+        con=con,
+        units={"user": UnitSource("users", "user_id")},
+        readiness={name: Coverage("2024-12-01", "2025-02-01") for name in ("orders", "other")},
+    )
+    invalid = agg("spend", window=("-1d", "0s"))
+    history = agg("other_spend", window=("-1d", "0s"))
+    features = (
+        {"a_history": history, "b_invalid": invalid}
+        if history_first
+        else {"a_invalid": invalid, "b_history": history}
+    )
+    error = _refusal(Design("user", FixedDate("2025-01-02"), features=features), model)
+    assert error.code == (
+        "terrine.temporal.duplicate_history"
+        if history_first
+        else "terrine.temporal.float64_precision"
+    )
 
 
 def test_metric_refusal_precedes_shape_refusal():
@@ -230,6 +313,23 @@ def test_row_checks_count_base_candidates_not_shape_rows(con):
     assert error.value.code == "terrine.temporal.float64_precision"
     assert error.value.context["reason"] == "nonfinite_input"
     assert error.value.context["failed_count"] == 1
+
+    con.raw_sql("UPDATE orders SET amount = 0 WHERE user_id = 'b'")
+    materialized = design.build(model).materialize()
+    meta = materialized.columns["spend"]
+    assert sorted(
+        (
+            row["t0"],
+            row["spend"],
+            row[meta.complete_column],
+            row[meta.reason_column],
+        )
+        for row in materialized.table.to_pylist()
+        if row["unit"] == "a"
+    ) == [
+        (datetime(2025, 1, 3, tzinfo=UTC), 0, True, None),
+        (datetime(2025, 1, 4, tzinfo=UTC), 1, True, None),
+    ]
 
 
 # --- the output statement carries the final run and the eligibility summary ------

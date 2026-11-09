@@ -400,18 +400,23 @@ class DatasetTools:
             f"SELECT invocation_json FROM {store._schema}.runtime_plan_invocations"
         ).fetchall()
         for record in invocations:
-            invocation = PlanInvocation.from_dict(json.loads(record[0]))
-            if invocation.destination != destination or not invocation.saved_plan_json:
+            try:
+                document = json.loads(record[0])
+                if "saved_plan_json" not in document:
+                    continue
+                invocation = PlanInvocation.from_dict(document)
+                if invocation.destination != destination or not invocation.saved_plan_json:
+                    continue
+                definition = SavedPlan.from_json(invocation.saved_plan_json)
+                bound = _bind_saved_plan(definition, namespace=self.namespace)
+            except TerrineError as error:
+                if error.code != "terrine.runtime.saved_plan_mismatch":
+                    raise
                 continue
-            definition = SavedPlan.from_json(invocation.saved_plan_json)
             if (
                 definition.model != self.policy.model_reference
                 or definition.namespace != self.namespace
-            ):
-                continue
-            if (
-                _bind_saved_plan(definition, namespace=self.namespace).definition.fingerprint
-                != row[1]
+                or bound.definition.fingerprint != row[1]
             ):
                 continue
             report = validate_design(from_json(definition.design_json), self.model)
@@ -702,12 +707,18 @@ class DatasetTools:
             saved = SavedPlan.from_json(invocation.saved_plan_json)
             if saved.namespace != self.namespace or saved.model != self.policy.model_reference:
                 raise _SCOPE.error()
+            from terrine.runtime.planner import admit_execution
+
+            bound = _bind_saved_plan(saved, namespace=self.namespace)
+            admit_execution(
+                bound, namespace=self.namespace, saved_plan_version=saved.schema_version
+            )
             valid = validate_design(from_json(saved.design_json), self.model)
             self.policy.authorize(
                 permission, sources=valid.required_sources, destination=saved.destination
             )
             self._owner_planner(saved.destination)
-            planned_budget = _bind_saved_plan(saved, namespace=self.namespace).budget
+            planned_budget = bound.budget
             if effective_budget(self.policy.budget, planned_budget) != planned_budget:
                 raise _SCOPE.error(route="Prepare a new invocation under the current owner budget.")
             return invocation, saved

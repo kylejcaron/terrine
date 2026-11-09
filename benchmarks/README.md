@@ -11,7 +11,7 @@ uv run python -m benchmarks.report /path/to/new-run.json
 ```
 
 This executes real Model/Design Frames for exact min/max/distinct, exact Type-7
-quantiles, additive prefixes, HLL distinct and t-digest quantiles. Cases include
+quantiles, additive window aggregates, HLL distinct and t-digest quantiles. Cases include
 fixed, sparse scheduled, Sequential and EventPanel windows. The t-digest case
 uses the supported ordinary cross-section Frame path; it is not silently
 substituted into unsupported runtime composition.
@@ -21,7 +21,49 @@ owner-retained snapshot, publishes an exact generation, applies declared source
 updates/deletions, captures a new snapshot and verifies the new generation
 against the independent oracle. Re-reading the old receipt verifies its
 immutability. It is explicitly an owner single-task **full rebuild**, not a
-claim of incremental prefix reuse or a second compiler.
+claim of partial recomputation or a second compiler.
+
+## Wide window materialization
+
+Use the five-metric, ten-window fixture to measure the actual public Frame
+boundary rather than the prototype's server-only query:
+
+```sh
+uv run python -m benchmarks.query_strategy_spike --frame-only \
+  --units 10000 --events-per-unit 30 --anchors 1 --repeats 3 \
+  --output /path/to/new-fixed-run
+uv run python -m benchmarks.query_strategy_spike --frame-only \
+  --units 1000 --events-per-unit 300 --anchors 21 --repeats 3 \
+  --output /path/to/new-dense-run
+uv run python -m benchmarks.query_strategy_spike --frame-only --poor-compression --irregular \
+  --units 1000 --events-per-unit 30 --anchors 1 --repeats 3 \
+  --output /path/to/new-irregular-run
+```
+
+Each timed sample includes validation and full Arrow materialization; its
+values, reasons, completeness and observation bounds are checked afterward
+against independent Python arithmetic. Every sample also verifies the complete
+declared unit/origin multiset and unique anchor IDs, allowing tied timestamps
+without allowing omitted or duplicate origins. Records separate build/compile times,
+raw/formatted SQL bytes, all materialization samples, medians, output rows/bytes
+and distinct unit/day buckets. SQL and an additional, untimed `EXPLAIN ANALYZE`
+are stored separately. Source scan bytes remain unmeasured.
+
+The poor-compression fixture has one event per unit/day and varying intraday
+times. Event-relative repeated anchors force the general path; its bucket count
+can be compared directly with its event count. `--anchors` controls only the
+fixed/scheduled cases, not the number of event-relative origins. Each irregular
+mode runs once even when multiple `--anchors` counts are supplied.
+
+Add `--retained` to measure stage, a source correction and refresh in a
+disposable owner database, including capture/validation/publication. Corrected
+data is checked against a fresh public rebuild and independent arithmetic;
+the old generation must remain unchanged. These timings are separate from
+ordinary materialization. Run the same driver and fixture against both commits
+for end-to-end ratios. Prototype timings are not a public-Frame baseline.
+
+Integrated results and the pathway/compatibility ledger:
+[local window aggregation](../docs/research/2026-11-09-local-window-aggregation.md).
 
 ## Inputs, references and bounds
 

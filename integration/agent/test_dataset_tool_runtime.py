@@ -231,6 +231,31 @@ def test_catalog_description_instructions_are_not_executable_metadata(case, shar
 def test_publication_replay_conflict_and_refresh_keep_old_generation(owner_tools):
     tools = owner_tools
     receipt = _prepare(tools)
+    from terrine.runtime.saved_plan import SavedPlan
+    from tests.runtime.test_saved_plan import _legacy_saved_plan
+
+    raw = tools.model.con.con
+    current = raw.execute("SELECT * FROM agent.runtime_plan_invocations").fetchone()
+    invocation = json.loads(current[3])
+    legacy = _legacy_saved_plan(SavedPlan.from_json(invocation["saved_plan_json"]))
+    raw.execute("DELETE FROM agent.runtime_plan_invocations")
+    raw.execute(
+        "INSERT INTO agent.runtime_plan_invocations VALUES (?,?,?,?)",
+        [
+            "historical",
+            "historical",
+            current[2],
+            json.dumps(
+                dict(
+                    invocation,
+                    invocation_id="historical",
+                    saved_plan_json=legacy.to_json(),
+                    serialized_plan=legacy.plan_json,
+                )
+            ),
+        ],
+    )
+    raw.execute("INSERT INTO agent.runtime_plan_invocations VALUES (?,?,?,?)", current)
     first = tools.stage(receipt, request_key="stable")
     assert first.status == "ok" and first.output is not None
     assert tools.stage(receipt, request_key="stable").output == first.output

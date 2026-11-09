@@ -1,7 +1,6 @@
-"""Every stored Design compiles with the current code to its recorded schema and roles."""
+"""Current-generation Designs compile to their recorded schema and roles."""
 
 import json
-import shutil
 from pathlib import Path
 
 import ibis
@@ -16,8 +15,9 @@ from scripts.write_artifact_corpus import (
 from terrine.spec import DatasetDefinition, from_json, from_yaml
 
 ARTIFACTS = Path(__file__).parents[1] / "tests" / "artifacts"
+CORPUS = ARTIFACTS / "2"
 
-DESIGNS = sorted(ARTIFACTS.glob("1/**/design.json"))
+DESIGNS = sorted(CORPUS.rglob("design.json"))
 
 
 @pytest.mark.parametrize(
@@ -32,7 +32,7 @@ def test_generation_designs_compile_to_recorded_schema(design_path):
     with _reproducible_staging():
         con = ibis.duckdb.connect()
         try:
-            model = bind_model(con, ARTIFACTS / "1" / "data")
+            model = bind_model(con, CORPUS / "data")
             frames = {
                 "design.json": from_json(read("design.json")).build(model),
                 "design.yaml": from_yaml(read("design.yaml")).build(model),
@@ -50,9 +50,10 @@ def test_generation_designs_compile_to_recorded_schema(design_path):
 
 
 def test_corpus_generator_is_deterministic_without_mutating_baseline(tmp_path):
-    baseline = ARTIFACTS / "1"
+    baseline = CORPUS
     regenerated = tmp_path / "generation"
-    shutil.copytree(baseline, regenerated)
+    manifest = json.loads((baseline / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["frame_metadata"]["provenance"].get("execution_revision") == 2
 
     def contents(directory: Path) -> dict[Path, bytes]:
         return {
@@ -62,8 +63,10 @@ def test_corpus_generator_is_deterministic_without_mutating_baseline(tmp_path):
         }
 
     expected = contents(baseline)
+    historical = contents(ARTIFACTS / "1")
     write_generation(regenerated)
 
     actual = contents(regenerated)
     assert actual == expected, [path for path in expected if actual.get(path) != expected[path]]
     assert contents(baseline) == expected
+    assert contents(ARTIFACTS / "1") == historical

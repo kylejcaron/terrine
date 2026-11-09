@@ -259,19 +259,21 @@ Reached schedules and deadlines use notify.* for the current owner, or the autho
   values, input-order changes, merged partitions, and values near overflow.
   Prefer centered, mergeable moments and overflow-safe cross terms.
 - Float measures have two arithmetic modes; counts, integers, declared
-  decimals, keys and timestamps are always exact. Test propagated bounds with
-  `tests/_float_bound.py`, never exact float bits; neither mode promises
-  bitwise or order-independent results.
-  - Native (default): binary64 sums; windows are prefix differences, so the
-    bound is against the unit's history prefix `P` through the window end,
-    `2 * n_P * 2**-53 * sum(abs(x) for x in P)` (`native_window_bound`). A
-    small window after a large history is only as accurate as the history
-    total allows; `backend-compatibility.md` says so and names exact mode as
-    the remedy. Means divide by the actual denominator; ratios convert each
-    operand once, divide once, and propagate both native bounds. Values below
-    `5e-10` are kept. Non-finite input refuses `nonfinite_input`; a result
-    beyond binary64 refuses `bound_overflow` (both
-    `terrine.temporal.float64_precision`).
+  decimals, keys and timestamps are always exact. Test exact propagated bounds
+  with `tests/_float_bound.py`, and native results against independent,
+  fixture-appropriate selected-input answers, never exact float bits. Neither
+  mode promises bitwise or order-independent floating results.
+  - Native (default): sum selected source-window contributions in backend
+    binary64, without lifetime prefix differences or a magnitude certificate.
+    Normal order dependence, rounding and underflow follow the backend; there
+    is no universal relative-error bound for ill-conditioned sums or ratios.
+    Means use the actual denominator; ratios convert each operand once and
+    divide once. Nonzero values below `5e-10` are retained. Selected nonfinite
+    inputs refuse `terrine.temporal.float64_precision` / `nonfinite_input`;
+    returned nonfinite results refuse `bound_overflow`. If backend arithmetic
+    raises instead, preserve its execution cause rather than classify it as
+    exact overflow. Do not restore preemptive native magnitude/quotient guards
+    to ordinary source-window aggregation.
   - Exact (`exact=True`): floats entering sums quantize once to
     `DECIMAL(38, 9)`-scale values using the engine's float-to-decimal
     conversion (nearest, ties away from zero, about `1e-16` relative
@@ -288,21 +290,20 @@ Reached schedules and deadlines use notify.* for the current owner, or the autho
     `10**29` refuse `out_of_range`; `1e29` itself is admitted. Bounded
     coefficient accumulation refuses `terrine.temporal.exact_overflow`;
     DuckDB's BIGNUM remains unbounded.
-  - Zero denominators yield `zero_denominator`; nonzero denominators within
-    their bound of zero have no stated accuracy. Original values drive row
-    filters; thresholds use published results.
-  - Policies that bound float arithmetic (PostgreSQL, portable; BigQuery and
-    Snowflake inherit) withhold binary64 sums, quotients and products before
-    the engine evaluates them, so `bound_overflow` there also refuses finite
-    results whose admission bound leaves the safe range: a history whose
-    magnitude sum reaches about `MAX / 2` even where values cancel, quotients
-    that could round to zero (below `2**-1020` with a divisor of magnitude at
-    least one) or overflow (above `2**1020` with a divisor below one), cohort
-    means whose scaled quotient or product leaves that range (products also
-    above `MAX / 2`), cohort totals and cumulative values past half the range.
-    DuckDB (IEEE 754) publishes those finite results. Never wrap an aggregate
-    in a CASE to avoid an engine error: the aggregate is still evaluated;
-    withhold its inputs.
+  - Zero denominators yield `zero_denominator`. Exact-derived ratios whose
+    nonzero denominator is within its propagated bound of zero have no stated
+    accuracy; native ill-conditioned ratios have no general accuracy promise.
+    Original values drive row filters; thresholds use published results.
+  - Specialized cumulative trajectories and cohort reductions retain their
+    existing magnitude, quotient, product and underflow safeguards. On
+    PostgreSQL and portable policies (inherited by BigQuery and Snowflake),
+    these withhold unsafe inputs before arithmetic and can refuse finite
+    results with `bound_overflow`: cumulative/cohort magnitude totals near
+    `MAX / 2`, quotients outside the existing `2**-1020` / `2**1020` bounds,
+    and cohort mean rescaling products outside their safe range. DuckDB can
+    publish those finite results. This is not the ordinary source-window
+    policy. Never wrap an aggregate in a CASE to avoid an engine error: the
+    aggregate still evaluates; a required guard must withhold its inputs.
 - When a result can be unavailable, preserve a numeric null and its exact
   reason through schemas, conversions, serialization, and saved fixtures.
 - Portable or hashed formats define collection order, tuple encoding, alias

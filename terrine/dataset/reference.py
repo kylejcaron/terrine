@@ -10,6 +10,7 @@ import uuid
 import warnings
 from collections.abc import Generator
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pyarrow as pa
@@ -33,8 +34,9 @@ from terrine.runtime.backends.base import PublicationReceipt
 from terrine.runtime.backends.duckdb import DuckDBBackend, _digest_relation, _digest_version
 from terrine.runtime.changes import ChangeSet
 from terrine.runtime.graph import dependency_graph
+from terrine.runtime.leases import LeaseStore
 from terrine.runtime.owner import RuntimeOwner
-from terrine.runtime.planner import RefreshPlan, plan_refresh
+from terrine.runtime.planner import RefreshPlan, admit_execution, plan_refresh
 from terrine.runtime.saved_plan import (
     DestinationRef,
     ModelReference,
@@ -500,6 +502,7 @@ class Dataset:
             snapshot_id=self.manifest.source_snapshots["snapshot_id"],
             budget=budget if budget is not None else Budget(strict_scan=False),
             changes=changes,
+            base_generation=self.manifest.generation.generation_id,
         )
 
     def refresh(
@@ -515,7 +518,26 @@ class Dataset:
         ):
             raise _STALE_BASE.error()
         if not plan.tasks:
-            return Dataset.from_manifest(self.manifest, con=model.con, namespace=self._namespace)
+            admit_execution(plan, namespace=self._namespace)
+            leases = LeaseStore(model.con.con, namespace=self._namespace)
+            lease = leases.acquire(
+                f"dataset:{plan.dataset}",
+                f"refresh-{uuid.uuid4().hex}",
+                ttl=timedelta(minutes=5),
+                now=datetime.now(UTC),
+            )
+            try:
+                DuckDBBackend(model.con.con, namespace=self._namespace).reuse_generation(
+                    plan.dataset,
+                    expected_manifest=plan.definition.reuse_base_generation,
+                    lease=lease,
+                    execution_revision=plan.definition.execution_revision,
+                )
+                return Dataset.from_manifest(
+                    self.manifest, con=model.con, namespace=self._namespace
+                )
+            finally:
+                leases.release(lease)
         return stage_frame(
             self.manifest.definition.build(model),
             self.manifest.generation.dataset_id,
@@ -529,13 +551,23 @@ class Dataset:
         )
 
 
-def _plan_frame(frame, *, namespace, table, snapshot_id, budget, changes=None):
+def _plan_frame(
+    frame, *, namespace, table, snapshot_id, budget, changes=None, base_generation=None
+):
     from terrine.spec.validate import validate_design
 
     definition = _definition_for(frame)
     definition_hash = hashlib.sha256(
         (definition.digest + frame._model.model_hash).encode()
     ).hexdigest()
+    base_revision = None
+    if base_generation is not None:
+        try:
+            base_revision = DuckDBBackend(
+                frame._model.con.con, namespace=namespace
+            ).generation_execution_revision(table, base_generation)
+        except TerrineError:
+            pass
     return plan_refresh(
         namespace=namespace,
         dataset=table,
@@ -543,6 +575,8 @@ def _plan_frame(frame, *, namespace, table, snapshot_id, budget, changes=None):
         snapshot_id=snapshot_id,
         budget=budget,
         changes=changes,
+        reuse_base_generation=base_generation,
+        reuse_base_revision=base_revision,
         graph=dependency_graph(
             frame._model,
             frame._design,
@@ -612,6 +646,7 @@ def stage_frame(
         snapshot_id=snapshot.snapshot_id,
         budget=budget,
         changes=_changes,
+        base_generation=expected_base,
     )
     saved = SavedPlan.create(
         plan_json=plan.serialize(),

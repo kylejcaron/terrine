@@ -4,6 +4,7 @@ import duckdb
 import pyarrow as pa
 import pytest
 
+from terrine.compile.provenance import EXECUTION_REVISION
 from terrine.errors import TerrineError
 from terrine.runtime.backends.duckdb import DuckDBBackend, StagedGeneration
 from terrine.runtime.leases import LeaseStore
@@ -18,6 +19,19 @@ def test_duckdb_manifest_switch_is_atomic_with_generation():
     receipt = backend.publish_generation(stage, expected_manifest=None, lease=lease)
     assert backend.current_generation("orders") == "g1"
     assert backend.read_partition(receipt, "p1").to_pylist() == [{"id": 1}, {"id": 2}]
+    before = con.execute("SELECT schema_metadata FROM owner.runtime_partition_metadata").fetchall()
+    assert backend.generation_execution_revision("orders", "g1") == 0
+    with pytest.raises(ValueError):
+        backend.publish_generation(
+            StagedGeneration("orders", "g1", stage.partitions, execution_revision=1),
+            expected_manifest="g1",
+            lease=lease,
+        )
+    assert (
+        con.execute("SELECT schema_metadata FROM owner.runtime_partition_metadata").fetchall()
+        == before
+    )
+    assert con.execute("SELECT version FROM owner.runtime_schema_version").fetchone() == (1,)
 
 
 def test_publication_preserves_arrow_schema_and_values():
@@ -397,3 +411,163 @@ def test_publication_retry_verifies_original_checksum_format(reader):
     with pytest.raises(ValueError):
         backend.publish_generation(stage, expected_manifest="g1", lease=lease)
     con.close()
+
+
+def test_execution_marker_covers_plain_arrow_multipart_and_typed_empty_retries():
+    import json
+
+    con = duckdb.connect()
+    backend = DuckDBBackend(con, namespace="owner")
+    lease = _lease(con, "owner")
+    partitions = {
+        "empty": pa.table({"id": pa.array([], type=pa.int64())}),
+        "rows": pa.table({"id": [2, 3]}),
+    }
+    stage = StagedGeneration("orders", "g1", partitions, execution_revision=1)
+    receipt = backend.publish_generation(stage, expected_manifest=None, lease=lease)
+    assert backend.generation_execution_revision("orders", "g1") == 1
+    for name, original in partitions.items():
+        actual = backend.read_partition(receipt, name)
+        assert actual.to_pylist() == original.to_pylist()
+        assert json.loads(actual.schema.metadata[b"terrine.execution"]) == {
+            "version": 1,
+            "execution_revision": 1,
+        }
+    retry = StagedGeneration(
+        "orders", "g1", {k: v.to_reader() for k, v in partitions.items()}, execution_revision=1
+    )
+    assert backend.publish_generation(retry, expected_manifest=None, lease=lease) == receipt
+    with pytest.raises(ValueError):
+        backend.publish_generation(
+            StagedGeneration("orders", "g1", partitions, execution_revision=2),
+            expected_manifest="g1",
+            lease=lease,
+        )
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "missing_schema",
+        "mixed_absence",
+        "unequal",
+        "malformed",
+        "no_partitions",
+    ],
+)
+def test_complete_generation_evidence_never_trusts_one_partition(damage):
+    con = duckdb.connect()
+    backend = DuckDBBackend(con, namespace="owner")
+    backend.publish_generation(
+        StagedGeneration(
+            "orders",
+            "g1",
+            {"a": pa.table({"id": [1]}), "b": pa.table({"id": [2]})},
+            execution_revision=1,
+        ),
+        expected_manifest=None,
+        lease=_lease(con, "owner"),
+    )
+    if damage == "missing_schema":
+        con.execute("DELETE FROM owner.runtime_partition_metadata WHERE partition='b'")
+    elif damage == "no_partitions":
+        con.execute("DELETE FROM owner.runtime_partitions")
+    else:
+        marker = {
+            "mixed_absence": None,
+            "unequal": b'{"version":1,"execution_revision":2}',
+            "malformed": b'{"version":1,"execution_revision":true}',
+        }[damage]
+        schema = pa.schema(
+            [("id", pa.int64())],
+            metadata=({b"terrine.execution": marker} if marker is not None else None),
+        )
+        con.execute(
+            "UPDATE owner.runtime_partition_metadata SET schema_metadata=? WHERE partition='b'",
+            [schema.serialize().to_pybytes()],
+        )
+    with pytest.raises(TerrineError) as error:
+        backend.generation_execution_revision("orders", "g1")
+    assert error.value.code == "terrine.runtime.saved_plan_mismatch"
+
+
+@pytest.mark.parametrize(
+    ("revision", "metadata"),
+    [
+        (1, {b"terrine.execution": b"not JSON"}),
+        (1, {b"terrine.execution": b'{"version":1,"execution_revision":2}'}),
+        (1, {b"terrine.materialized_frame.v2": b'{"provenance":{}}'}),
+        (1, {b"terrine.materialized_frame.v2": b'{"provenance":{"execution_revision":2}}'}),
+        (None, {b"terrine.execution": b'{"version":1,"execution_revision":1}'}),
+    ],
+)
+def test_execution_context_cannot_relabel_conflicting_or_legacy_metadata(revision, metadata):
+    con = duckdb.connect()
+    backend = DuckDBBackend(con, namespace="owner")
+    with pytest.raises(TerrineError) as error:
+        backend.publish_generation(
+            StagedGeneration(
+                "orders",
+                "g1",
+                {"p": pa.table({"id": [1]}).replace_schema_metadata(metadata)},
+                execution_revision=revision,
+            ),
+            expected_manifest=None,
+            lease=_lease(con, "owner"),
+        )
+    assert error.value.code == "terrine.runtime.saved_plan_mismatch"
+    assert backend.current_generation("orders") is None
+
+
+def test_reuse_rechecks_base_revision_and_fence_before_recording_receipt():
+    con = duckdb.connect()
+    backend = DuckDBBackend(con, namespace="owner")
+    lease = _lease(con, "owner")
+    backend.publish_generation(
+        StagedGeneration("orders", "old", {"p": pa.table({"id": [1]})}),
+        expected_manifest=None,
+        lease=lease,
+    )
+    with pytest.raises(TerrineError):
+        backend.reuse_generation(
+            "orders",
+            expected_manifest="old",
+            lease=lease,
+            run_id="old-reuse",
+            execution_revision=EXECUTION_REVISION,
+        )
+    backend.publish_generation(
+        StagedGeneration(
+            "orders", "new", {"p": pa.table({"id": [2]})}, execution_revision=EXECUTION_REVISION
+        ),
+        expected_manifest="old",
+        lease=lease,
+    )
+    with pytest.raises(ValueError):
+        backend.reuse_generation(
+            "orders",
+            expected_manifest="old",
+            lease=lease,
+            run_id="stale-base",
+            execution_revision=EXECUTION_REVISION,
+        )
+    takeover = LeaseStore(con.cursor(), namespace="owner")
+
+    def take_over(phase):
+        takeover.acquire(
+            "dataset:orders",
+            "new-owner",
+            ttl=timedelta(minutes=5),
+            now=datetime.now(UTC) + timedelta(minutes=2),
+        )
+
+    backend.fault_injector = take_over
+    with pytest.raises(duckdb.TransactionException):
+        backend.reuse_generation(
+            "orders",
+            expected_manifest="new",
+            lease=lease,
+            run_id="stale-fence",
+            execution_revision=EXECUTION_REVISION,
+        )
+    assert con.execute("SELECT count(*) FROM owner.runtime_run_publications").fetchone() == (0,)

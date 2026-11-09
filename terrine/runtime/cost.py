@@ -193,10 +193,6 @@ def authorize_plan_scan(
     evaluate_costs(
         plan.tasks, plan.budget, definition_hash=plan.definition_hash, snapshot_id=plan.snapshot_id
     )
-    from terrine.runtime.planner import RefreshPlan
-
-    if RefreshPlan.deserialize(plan.serialize()) != plan:
-        raise ValueError("runtime plan fields differ from its canonical definition")
     if (
         not plan.tasks
         or plan.budget is None

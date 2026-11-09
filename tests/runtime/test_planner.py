@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from terrine.compile.provenance import EXECUTION_REVISION
 from terrine.data import Budget
 from terrine.errors import TerrineError
 from terrine.runtime.changes import Change, ChangeSet
@@ -30,8 +31,35 @@ def test_refresh_plan_serialization_is_stable_and_costs_remain_unknown():
     )
     assert first.serialize() == second.serialize()
     data = json.loads(first.serialize())
-    assert data["schema_version"] == 2
+    assert data["schema_version"] == 3
     assert all(task.estimated_scan_bytes is None for task in first.tasks)
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        ChangeSet((), "revision"),
+        ChangeSet((Change("insert", "events", revision="r2"),), "change_feed"),
+    ],
+)
+def test_unknown_execution_base_rebuilds_the_complete_graph(changes):
+    graph = dependency_graph(sources=("events", "other"), definition_hash="definition")
+    full = plan_refresh(
+        namespace="owner",
+        dataset="study",
+        definition_hash="definition",
+        snapshot_id="snapshot",
+        graph=graph,
+    )
+    changed = plan_refresh(
+        namespace="owner",
+        dataset="study",
+        definition_hash="definition",
+        snapshot_id="snapshot",
+        graph=graph,
+        changes=changes,
+    )
+    assert changed.tasks == full.tasks
 
 
 def test_unknown_scan_estimate_fails_strict_budget_before_execution():
@@ -64,6 +92,8 @@ def test_plan_fingerprint_includes_change_evidence():
         snapshot_id="snap",
         graph=graph,
         changes=ChangeSet((Change("insert", "events", revision="r2"),), "change_feed"),
+        reuse_base_generation="base",
+        reuse_base_revision=EXECUTION_REVISION,
     )
     assert initial.definition.fingerprint != changed.definition.fingerprint
     from terrine.runtime.planner import RefreshPlan
@@ -83,6 +113,8 @@ def test_plan_fingerprint_includes_change_support_not_only_revision():
             (Change("insert", "events", after_key_range=("a", "a"), revision="r1"),),
             "change_feed",
         ),
+        reuse_base_generation="base",
+        reuse_base_revision=EXECUTION_REVISION,
     )
     later = plan_refresh(
         namespace="owner",
@@ -94,6 +126,8 @@ def test_plan_fingerprint_includes_change_support_not_only_revision():
             (Change("insert", "events", after_key_range=("z", "z"), revision="r1"),),
             "change_feed",
         ),
+        reuse_base_generation="base",
+        reuse_base_revision=EXECUTION_REVISION,
     )
     assert earlier.definition.fingerprint != later.definition.fingerprint
 
@@ -114,6 +148,8 @@ def test_planner_limits_work_to_changed_sources_and_skips_readiness_only_advance
             (Change("insert", "numerator", revision="r2"),),
             "change_feed",
         ),
+        reuse_base_generation="base",
+        reuse_base_revision=EXECUTION_REVISION,
     )
     assert {task.source for task in changed.tasks} == {"numerator"}
     no_change = plan_refresh(
@@ -123,6 +159,8 @@ def test_planner_limits_work_to_changed_sources_and_skips_readiness_only_advance
         snapshot_id="snap",
         graph=graph,
         changes=ChangeSet((), "revision"),
+        reuse_base_generation="base",
+        reuse_base_revision=EXECUTION_REVISION,
     )
     assert no_change.tasks == ()
 
@@ -137,6 +175,8 @@ def test_planner_limits_work_to_changed_sources_and_skips_readiness_only_advance
             datetime(2025, 1, 2, tzinfo=UTC),
             datetime(2025, 1, 3, tzinfo=UTC),
         ),
+        reuse_base_generation="base",
+        reuse_base_revision=EXECUTION_REVISION,
     )
     assert any(task.layer == "frame" for task in readiness.tasks)
 
@@ -154,6 +194,8 @@ def test_roster_and_dimension_corrections_select_dependent_outputs():
         snapshot_id="snap",
         graph=graph,
         changes=ChangeSet((Change("roster", "roster", revision="r2"),), "change_feed"),
+        reuse_base_generation="base",
+        reuse_base_revision=EXECUTION_REVISION,
     )
     dimension = plan_refresh(
         namespace="owner",
@@ -162,6 +204,8 @@ def test_roster_and_dimension_corrections_select_dependent_outputs():
         snapshot_id="snap",
         graph=graph,
         changes=ChangeSet((Change("update", "tier_history", revision="d2"),), "change_feed"),
+        reuse_base_generation="base",
+        reuse_base_revision=EXECUTION_REVISION,
     )
     assert {task.partition for task in roster.tasks if task.layer == "frame"} == {
         "window-1",
@@ -177,7 +221,7 @@ def test_source_invalidation_includes_cross_source_dependents():
     from terrine.runtime.graph import DependencyGraph
     from terrine.runtime.state import LayerNode
 
-    source = LayerNode("daily", "events", "p1", "d", "g")
+    source = LayerNode("anchor", "events", "p1", "d", "g")
     dependent = LayerNode("frame", "study", "p1", "d", "g")
     graph = DependencyGraph((source, dependent), ((source, dependent),))
     plan = plan_refresh(
@@ -187,6 +231,8 @@ def test_source_invalidation_includes_cross_source_dependents():
         snapshot_id="snap",
         graph=graph,
         changes=ChangeSet((Change("insert", "events", revision="r1"),), "change_feed"),
+        reuse_base_generation="base",
+        reuse_base_revision=EXECUTION_REVISION,
     )
     assert {task.source for task in plan.tasks} == {"events", "study"}
 
@@ -204,9 +250,11 @@ def test_max_tasks_applies_after_change_selection():
         snapshot_id="snap",
         graph=graph,
         changes=ChangeSet((Change("insert", "events", revision="r1"),), "change_feed"),
-        max_tasks=4,
+        max_tasks=2,
+        reuse_base_generation="base",
+        reuse_base_revision=EXECUTION_REVISION,
     )
-    assert len(plan.tasks) == 4
+    assert len(plan.tasks) == 2
 
 
 def test_readiness_only_noop_plan_satisfies_strict_scan_budget():
@@ -219,6 +267,8 @@ def test_readiness_only_noop_plan_satisfies_strict_scan_budget():
         graph=graph,
         changes=ChangeSet((), "revision"),
         budget=Budget(max_scan_bytes=1),
+        reuse_base_generation="base",
+        reuse_base_revision=EXECUTION_REVISION,
     )
     assert plan.tasks == ()
 
@@ -236,6 +286,8 @@ def test_unchanged_readiness_produces_strict_budget_noop_plan():
         graph=graph,
         changes=ChangeSet.from_readiness_advance("events", unchanged, unchanged),
         budget=Budget(max_scan_bytes=1),
+        reuse_base_generation="base",
+        reuse_base_revision=EXECUTION_REVISION,
     )
     assert plan.tasks == ()
 
@@ -257,6 +309,8 @@ def test_definition_change_starts_new_fingerprint():
         snapshot_id="snap",
         graph=next_graph,
         changes=ChangeSet((Change("definition", "events"),), "revision"),
+        reuse_base_generation="base",
+        reuse_base_revision=EXECUTION_REVISION,
     )
     assert first.definition.fingerprint != next_plan.definition.fingerprint
 
@@ -277,6 +331,8 @@ def test_event_anchor_identity_change_rebuilds_all_source_partitions():
             (Change("insert", "events", after_key_range=("earlier-event", "earlier-event")),),
             "change_feed",
         ),
+        reuse_base_generation="base",
+        reuse_base_revision=EXECUTION_REVISION,
     )
     assert {task.partition for task in plan.tasks if task.layer == "frame"} == {
         "2025-01",
@@ -355,6 +411,8 @@ def test_state_panel_correction_rebuilds_adjacent_terminal_and_baseline_layers()
             (Change("update", "events", before_key_range=("u", "u"), revision="r3"),),
             "change_feed",
         ),
+        reuse_base_generation="base",
+        reuse_base_revision=EXECUTION_REVISION,
     )
     assert {
         (task.layer, task.partition)
@@ -389,6 +447,8 @@ def test_state_panel_incremental_change_routes_to_clean_rebuild():
         snapshot_id="s2",
         graph=graph,
         changes=ChangeSet((Change("update", "events", revision="r2"),), "change_feed"),
+        reuse_base_generation="base",
+        reuse_base_revision=EXECUTION_REVISION,
     )
     clean = plan_refresh(
         namespace="owner",
@@ -401,7 +461,7 @@ def test_state_panel_incremental_change_routes_to_clean_rebuild():
     assert incremental.tasks == clean.tasks
 
 
-def test_historical_prefix_change_replans_prefixes_and_frames():
+def test_historical_source_correction_replans_anchors_and_frames():
     from datetime import UTC, datetime
     from types import SimpleNamespace
 
@@ -430,8 +490,10 @@ def test_historical_prefix_change_replans_prefixes_and_frames():
             ),
             "change_feed",
         ),
+        reuse_base_generation="base",
+        reuse_base_revision=EXECUTION_REVISION,
     )
-    assert {task.layer for task in plan.tasks} == {"daily", "prefix", "anchor", "frame"}
+    assert {task.layer for task in plan.tasks} == {"anchor", "frame"}
     for partition in ("p1", "p2"):
-        assert any(task.layer == "prefix" and task.partition == partition for task in plan.tasks)
+        assert any(task.layer == "anchor" and task.partition == partition for task in plan.tasks)
         assert any(task.layer == "frame" and task.partition == partition for task in plan.tasks)

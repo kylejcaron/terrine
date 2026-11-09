@@ -167,6 +167,7 @@ def test_partition_and_retry_reopen_same_retained_input_authority(
                     outputs,
                     run_id=run_id,
                     snapshot_id=resolved_plan.snapshot_id,
+                    execution_revision=resolved_plan.definition.execution_revision,
                 ),
                 expected_manifest=None,
                 lease=lease,

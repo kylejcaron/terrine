@@ -94,12 +94,10 @@ def verify_exact_arithmetic(con: Any) -> None:
 
 
 def _needs_exact_arithmetic(queries: tuple[Any, ...]) -> bool:
+    """Witness coefficient arithmetic, not decimal-valued clock coordinates."""
     exact_type = ENGINES["duckdb"].dialect("duckdb").exact_type()
     for query in queries:
-        if any(
-            value.dtype.is_decimal() or value.dtype == exact_type
-            for value in query.op().find(ops.Value)
-        ):
+        if any(value.dtype == exact_type for value in query.op().find(ops.Value)):
             return True
     return False
 

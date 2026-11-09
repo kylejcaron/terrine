@@ -43,8 +43,7 @@ from terrine.semantic.models import (
     TableRef,
 )
 from terrine.temporal.aggregate import narrow_exact
-from terrine.temporal.daily import sparse_daily
-from terrine.temporal.prefix import sparse_prefix
+from terrine.temporal.daily import contributions, reduce_payload, resolve_measure
 from tests._float_bound import window_sum_bound
 
 _WIDE = dt.Decimal(38, 0)
@@ -335,20 +334,22 @@ def test_filtered_source_decimal_keeps_wide_coefficient_domain(connection):
         None,
         None,
     )
-    daily = sparse_daily(events, measure, "UTC", "user_id", source=source)
-    prefix = sparse_prefix(daily, measure, resolution="day")
-    schema = prefix.schema()
+    measure = resolve_measure(events, measure, source=source)
+    projected, fields = contributions(events, measure, source=source)
+    leaf = projected.select("_unit", **fields)
+    daily, _ = reduce_payload(leaf, ["_unit"], native_values=[], exact_values=["sum_value"])
+    schema = daily.schema()
     assert schema["sum_value"] == _WIDE
     assert schema["event_count"] == _WIDE
     assert schema["unknown_filter_count"] == _WIDE
     (row,) = _rows(
         connection,
-        prefix.select(
+        daily.select(
             "sum_value",
             "event_count",
             "nonnull_count",
             "unknown_filter_count",
-            narrowed=narrow_exact(prefix.sum_value, 2, dt.Decimal(38, 2)),
+            narrowed=narrow_exact(daily.sum_value, 2, dt.Decimal(38, 2)),
         ),
     )
     assert row["sum_value"] == Decimal(coefficient)
@@ -388,6 +389,7 @@ _CATALOG = {
         "amount_average": {"event": "amount", "aggregation": "avg_event"},
         "weight_total": {"event": "weight", "aggregation": "sum"},
         "weight_average": {"event": "weight", "aggregation": "avg_event"},
+        "native_weight_total": {"event": "weight", "aggregation": "sum", "exact": False},
     },
     "metrics": {
         "orders": {"kind": "mean", "unit": "user", "measure": "order_count"},
@@ -412,6 +414,12 @@ _CATALOG = {
             "unit": "user",
             "numerator": "weight_average",
             "denominator": "quantity_average",
+        },
+        "native_weight_per_spend": {
+            "kind": "ratio",
+            "unit": "user",
+            "numerator": "native_weight_total",
+            "denominator": "amount_total",
         },
     },
 }
@@ -458,8 +466,8 @@ def _values(model, **features):
 def test_window_quotients_cancellation_and_order_invariance(connection):
     history = datetime(2024, 12, 20, tzinfo=UTC)
     inside = [datetime(2025, 1, 1, 12, minute, tzinfo=UTC) for minute in (0, 1, 2)]
-    # Unit b receives unit a's window events in a different order; both cancel
-    # 1e20 history exactly and add three quantized ticks.
+    # Reordered selected inputs retain three quantized ticks, without evaluating
+    # large or non-finite excluded history.
     window = [
         _event("a", inside[0], qty=3, amount="0.01", weight=1e-9),
         _event("a", inside[1], qty=4, amount="0.02", weight=2e-9),
@@ -467,6 +475,7 @@ def test_window_quotients_cancellation_and_order_invariance(connection):
     events = [
         _event("a", history, qty=1, amount="6" + "0" * 34 + ".00", weight=1e20),
         _event("a", history, qty=1, amount="-6" + "0" * 34 + ".00", weight=-1e20),
+        _event("a", history, weight=math.nan),
         *window,
         _event("b", history, qty=1, weight=-1e20),
         _event("b", history, qty=1, weight=1e20),
@@ -510,7 +519,7 @@ def test_window_quotients_cancellation_and_order_invariance(connection):
     [
         (
             [
-                _event("a", datetime(2024, 12, 20, tzinfo=UTC), weight=math.nan),
+                _event("a", datetime(2025, 1, 1, 11, tzinfo=UTC), weight=math.nan),
                 _event("a", datetime(2025, 1, 1, 12, tzinfo=UTC), weight=1.0),
             ],
             "weight",
@@ -527,7 +536,7 @@ def test_window_quotients_cancellation_and_order_invariance(connection):
             "terrine.temporal.float64_precision",
             "out_of_range",
         ),
-        # Opposite-sign prefixes whose difference leaves the fixed-scale domain.
+        # Selected opposite-sign contributions leave the fixed-scale domain.
         (
             [
                 _event("a", datetime(2024, 12, 20, tzinfo=UTC), weight=-6e28),
@@ -564,8 +573,7 @@ def test_window_quotients_cancellation_and_order_invariance(connection):
 )
 def test_domain_failures_are_coded_refusals(connection, events, metric, code, failure):
     model = _model(connection, events)
-    # A two-day window spans both day groups, so each prefix stays inside the domain
-    # and only the endpoint difference leaves it.
+    # Selected invalid leaves or exact output-domain overflow must refuse.
     with pytest.raises(TerrineError) as error:
         _values(model, value=tr.agg(metric, window=("-2d", "0s")))
     assert error.value.code == code
@@ -593,7 +601,7 @@ _SAME_DAY_HUGE_AMOUNTS = [
             "terrine.temporal.exact_overflow",
             None,
         ),
-        # Successive prefixes overflow although each day group fits.
+        # Selected day groups overflow their combined exact domain.
         (
             [
                 _event("a", datetime(2024, 12, 31, 12, tzinfo=UTC), weight=6e28),
@@ -603,8 +611,8 @@ _SAME_DAY_HUGE_AMOUNTS = [
             "terrine.temporal.exact_overflow",
             None,
         ),
-        # Three facts scale to 1.8e38, beyond a 128-bit accumulator: the group and
-        # prefix sums must never receive them.
+        # Three facts scale to 1.8e38, beyond a 128-bit accumulator; exact
+        # accumulation must withhold them before summation.
         (
             [
                 _event("a", datetime(2025, 1, 1, hour, tzinfo=UTC), weight=6e28)
@@ -635,6 +643,13 @@ _SAME_DAY_HUGE_AMOUNTS = [
         # the exact output: the average's quotient and a ratio's numerator.
         (_SAME_DAY_HUGE_AMOUNTS, "average_spend", "terrine.temporal.exact_overflow", None),
         (_SAME_DAY_HUGE_AMOUNTS, "spend_per_order", "terrine.temporal.exact_overflow", None),
+        # Invalid exact denominator state must not become native division by zero.
+        (
+            _SAME_DAY_HUGE_AMOUNTS,
+            "native_weight_per_spend",
+            "terrine.temporal.exact_overflow",
+            None,
+        ),
     ],
 )
 def test_accumulated_state_overflow_is_a_coded_refusal(connection, events, metric, code, failure):

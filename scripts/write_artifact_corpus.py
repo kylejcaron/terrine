@@ -92,7 +92,7 @@ def source_tables() -> dict[str, pa.Table]:
 def bind_model(con: Any, data: Path) -> tr.Model:
     """Load each ``data/*.parquet`` table into ``con`` and bind the corpus Model.
 
-    The schema check binds every stored generation's data with this declaration.
+    The current-generation schema check binds its data with this declaration.
     """
     for path in sorted(data.glob("*.parquet")):
         con.create_table(path.stem, pq.read_table(path))

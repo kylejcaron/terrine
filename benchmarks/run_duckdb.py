@@ -116,7 +116,12 @@ def _runtime(con, model, design, config: ScaleConfig, directory: Path) -> dict[s
             generation = "scale-1" if plan.expected_base_manifest is None else "scale-2"
             return backend.publish_generation(
                 StagedGeneration(
-                    plan.dataset, generation, outputs, run_id=run_id, snapshot_id=plan.snapshot_id
+                    plan.dataset,
+                    generation,
+                    outputs,
+                    run_id=run_id,
+                    snapshot_id=plan.snapshot_id,
+                    execution_revision=plan.definition.execution_revision,
                 ),
                 expected_manifest=plan.expected_base_manifest,
                 lease=lease,

@@ -16,7 +16,7 @@ from terrine.backends.numeric import exact_type
 from terrine.backends.registry import ENGINES, engine_supports, get_engine, resolve_engine
 from terrine.errors import TerrineError
 from terrine.execution.backend import backend_capabilities
-from terrine.temporal.prefix import _require_backend
+from terrine.temporal.daily import _require_backend
 
 
 def test_registry_metadata_is_immutable_and_case_insensitive():
