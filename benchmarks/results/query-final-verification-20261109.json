@@ -1,0 +1,97 @@
+{
+  "dependency_lock_sha256": "0e016f3f8163dd3390ae5b8d02fdeee805fb454719eeae1ea9ecbea84b17ea74",
+  "engine": "1.5.6",
+  "execution_limits": [
+    "BigQuery/Snowflake live selections unconfigured, not executed",
+    "Six optional statistical handoffs skipped",
+    "No scale tier or universal performance claim"
+  ],
+  "expression_operator_counts": {
+    "baseline": {
+      "ASOF_JOIN": 2,
+      "HASH_GROUP_BY": 2,
+      "HASH_JOIN": 50,
+      "TABLE_SCAN": 2,
+      "WINDOW": 2
+    },
+    "current": {
+      "ASOF_JOIN": 0,
+      "HASH_GROUP_BY": 1,
+      "HASH_JOIN": 3,
+      "TABLE_SCAN": 3,
+      "WINDOW": 0
+    }
+  },
+  "generation_one_sha256": {
+    "arrow_metadata.json": "8c61c9cb823c4e2e2fc5e87a8e98a8e563b83c242085bd8cbf408f5ba814e36f",
+    "catalog.yaml": "de73c9921879e982f37a77506c07276e8824823bcd4014d09336b2bc50e60e0e",
+    "data/customers.parquet": "58125b7fc7f957f1dda6f085a4019a591596d4a7c3ef1b0de3a79985a6a2bc4e",
+    "data/orders.parquet": "58e16f8dd76da2ef3d8c073b2c99003da9bd5aed3a3dd5b473deffc8201ff19b",
+    "definition.json": "06811fe9ccb787303a0621b84340d7f708de03969cf05596bfa7352e860736a5",
+    "design.json": "17f6b49d424a84d9917fd5b1718df49611dde2c4d77a2dda8bcf4895bfdbfcb9",
+    "design.yaml": "a3a6862b0a14abe7aeedcfe291679ee9db9d9253710d7bcc5b3249b000ffc430",
+    "event_panel/definition.json": "562524f8d07ba22b9ccb01f959e107155152f13090d3eaa5c7279f70e14cb6e6",
+    "event_panel/design.json": "a4af9edff0a9a1d6cfe44f5d6888353505866ad2b03eabf13d512b0be7f684a8",
+    "event_panel/design.yaml": "53e5bf57e5a14bc83a7d08c0e59ec5be5de311c928854203a4a3d83a44423e0f",
+    "event_panel/expected_schema.json": "55631a8489addac1fc9910928ebfbd7c4d03a26d83d1199c940f3e16a6b6330d",
+    "event_sequence/definition.json": "e6e7f4e4cfb221fca180027787b6e411657d28c6f73663157daa56c923126944",
+    "event_sequence/design.json": "77660e8c18c7b7397cd60c3141142b87165d0e840a88d052505be624f6fe1670",
+    "event_sequence/design.yaml": "4dbacc1f0175cf8cdccd0a8fcca22811fa716260245785b924e5edf15107860c",
+    "event_sequence/expected_schema.json": "785498b7df71698a7bed1a82520c348d25b63224a6bc4d77011a4ca486053ed6",
+    "expected_schema.json": "bc8c6d3d540a97683150e3d93466c507af4ca5bdc794b84f12abec4c7c3fa611",
+    "life_table/definition.json": "851059958c1e95b7d98b4c99ca58f7c7dd2aaf4a591cbc72c57c779350958ca0",
+    "life_table/design.json": "1bac6b37b5057edf3fb938480f0fc367b374b43ac7c0ddbba4341c9a632feb33",
+    "life_table/design.yaml": "ddb594341fbc541c4cea86794bc4c58df75ca3f3d8457bd5f7933da79b062e7a",
+    "life_table/expected_schema.json": "5c5a2dc647be3ee6934e77ca9ea2ceb7436cc07c922f634e77c35802e49fb8a3",
+    "ltv/definition.json": "de92f1e7f2e643b157459c06e589bb34d05d85b0a373d1f73c9caf68a0f0f6ec",
+    "ltv/design.json": "4ee63581f19fa9c30d8ec1cf57a7791fe6418448c2dd01e897b72240dab434d1",
+    "ltv/design.yaml": "b59f69a00fc02a7ca69dc84924ccda6ca90b0a11d057308621170092ae6abc04",
+    "ltv/expected_schema.json": "8975fd2458755f0e2fee59bf5c902478eead7c064063f6366c62279a9250d9c4",
+    "manifest.json": "09e073aff509006e64a0bb386e6d49f14b0d11cfbb9a526e08e2e99e81defb62",
+    "receipt.json": "87881fc17e30d7efc9f553231452a56b8e33a92cc14204acb32abd8325941db7",
+    "state_panel/definition.json": "090159b20693c235dcb0e514b05329da1e433437a5ad5c9d6cef5fcad6167bfe",
+    "state_panel/design.json": "69f9184c943b7b7c1d089b328433ee41940f69f5b588ca15cf3fd6a8d4900884",
+    "state_panel/design.yaml": "a386c5ca10d9e46d96bcdb0f77509b7bb130949fb018f3d57764b8be17c828e7",
+    "state_panel/expected_schema.json": "3b8c664739c58530da684b402a4acab8646919f338bbb8041c50b31bbd2a4b02",
+    "survival/definition.json": "3e13d9c39fdbe2ddf8485a0e67cdc4625ff81aa8971a543cd0bbbdfd5da8924e",
+    "survival/design.json": "688e37a846630c27cc67aa20f3869397cefe5f0e8e1b3f0aeff61bbdf4269343",
+    "survival/design.yaml": "940c16d72e3f5a3d88ae93d746f207d1928b3f6833e643e1df7e7fc4b445542d",
+    "survival/expected_schema.json": "25847491bb54771e9976dd0bf4e1acb13d04da2eb50a2eb42aefe85a6233af6a",
+    "time_series/definition.json": "afb958fbd7a1cc83a5c38eeddeab7aac19bef81d55a45db55d73134048317e05",
+    "time_series/design.json": "5431a97053a7aa14cd1ae9eace1a53ad13237f320084406bf5e63c9452cc4af3",
+    "time_series/design.yaml": "27dda69b853b8c58906e0d28da5669e3544f556e48e885379b6b0fe8c5834123",
+    "time_series/expected_schema.json": "09ea84458fb559f90ad0025a696bb43a7841e8ccbb799c0449c8f721e770ae89",
+    "trial_panel/definition.json": "da1e6125b4eac1234104c19a9f6f58525ae835dbbf0f4e312b25122eed516670",
+    "trial_panel/design.json": "f84a0a0423034be45c409a4b7fa891f19c33837f7eaf0273810004b90a6a102c",
+    "trial_panel/design.yaml": "1ea66e6c0c3154095dd5acbfcf6e51aff81fd47d80429514ae76ae816715dc27",
+    "trial_panel/expected_schema.json": "3b20a69cebceadd848ffb57d62ef02528737bc1cacdd0d4c1ac09fc77a961ae4"
+  },
+  "package_version": "0.1.0a1",
+  "production_source": "2d6b0b00f802d0367d8d21d88822bbe8a937d042",
+  "release_index_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "source_identity_files": [
+    "query-frame-final2-fixed-20261109/source-identity.json",
+    "query-frame-final2-dense-20261109/source-identity.json",
+    "query-frame-final2-irregular-20261109/source-identity.json",
+    "query-frame-final2-retained-20261109/source-identity.json",
+    "query-local-kernel-final2-dense-20261109/source-identity.json"
+  ],
+  "verification": {
+    "generic_duckdb": {
+      "deselected": 45,
+      "passed": 16
+    },
+    "generic_postgres": {
+      "passed": 15
+    },
+    "local": {
+      "passed": 2836,
+      "skipped": 7
+    },
+    "postgres": {
+      "passed": 115,
+      "skipped": 1
+    }
+  },
+  "verified_output_file_digests": 39
+}

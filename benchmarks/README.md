@@ -11,7 +11,7 @@ uv run python -m benchmarks.report /path/to/new-run.json
 ```
 
 This executes real Model/Design Frames for exact min/max/distinct, exact Type-7
-quantiles, additive prefixes, HLL distinct and t-digest quantiles. Cases include
+quantiles, additive window aggregates, HLL distinct and t-digest quantiles. Cases include
 fixed, sparse scheduled, Sequential and EventPanel windows. The t-digest case
 uses the supported ordinary cross-section Frame path; it is not silently
 substituted into unsupported runtime composition.
@@ -21,7 +21,7 @@ owner-retained snapshot, publishes an exact generation, applies declared source
 updates/deletions, captures a new snapshot and verifies the new generation
 against the independent oracle. Re-reading the old receipt verifies its
 immutability. It is explicitly an owner single-task **full rebuild**, not a
-claim of incremental prefix reuse or a second compiler.
+claim of partial recomputation or a second compiler.
 
 ## Wide window materialization
 
@@ -61,6 +61,9 @@ data is checked against a fresh public rebuild and independent arithmetic;
 the old generation must remain unchanged. These timings are separate from
 ordinary materialization. Run the same driver and fixture against both commits
 for end-to-end ratios. Prototype timings are not a public-Frame baseline.
+
+Integrated results and the pathway/compatibility ledger:
+[local window aggregation](../docs/research/2026-11-09-local-window-aggregation.md).
 
 ## Inputs, references and bounds
 
