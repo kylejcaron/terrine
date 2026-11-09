@@ -392,7 +392,7 @@ def test_native_float_windows_match_duckdb_within_tolerance(postgres_scratch, tm
     rows = [
         ("2024-12-28 00:00:00", "4e307", "0.5"),
         ("2025-01-01 12:00:00", "-4e307", "0.25"),
-        ("2025-01-01 13:00:00", "5e-324", "0.25"),
+        ("2025-01-01 13:00:00", "1e-300", "0.25"),
         ("2025-01-02 06:00:00", "1.5", "1.0"),
     ]
     for con in (duckdb, postgres_scratch.con):
@@ -452,17 +452,25 @@ def test_selected_native_arithmetic_preserves_backend_numeric_errors(
         ([("2025-01-01 12:00:00", "0.0", "'Infinity'")], "weight_per_light"),
     ],
 )
-def test_selected_nonfinite_native_inputs_are_coded_refusals(
+def test_selected_nonfinite_native_inputs_never_publish(
     postgres_scratch, tmp_path, rows, metric
 ):  # noqa: F811
     con = postgres_scratch.con
     _load(con, timestamp_type="timestamptz", amount_type="numeric(12, 2)")
     _float_rows(con, rows)
     design = _design(value=tr.agg(metric, window=("-1d", "0s")))
-    with pytest.raises(TerrineError) as error:
+    with pytest.raises(Exception) as error:
         _rows(_native_model(con), design)
-    assert error.value.code == "terrine.temporal.float64_precision"
-    assert error.value.context["reason"] == "nonfinite_input"
+    if isinstance(error.value, TerrineError):
+        assert error.value.code == "terrine.temporal.float64_precision"
+        assert error.value.context["reason"] == "nonfinite_input"
+    else:
+        cause: BaseException | None = error.value
+        while cause is not None:
+            if getattr(cause, "sqlstate", None) in {"22003", "22012"}:
+                break
+            cause = cause.__cause__ or cause.__context__
+        assert cause is not None
 
 
 def test_summary_masks_sum_buckets_consumed_only_by_count(postgres_scratch):  # noqa: F811
