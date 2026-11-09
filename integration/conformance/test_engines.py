@@ -297,7 +297,7 @@ def test_sub_resolution_values_sum_natively_and_the_exact_path_notes_their_loss(
     if exact:
         assert (row["weight"], row["weight__reason"]) == (0.0, "below_resolution")
         return
-    assert row["weight"] == pytest.approx(7e-10, rel=1e-15)
+    assert row["weight"] == pytest.approx(7e-10, rel=1e-15, abs=0)
     assert row["weight__reason"] is None
 
 
