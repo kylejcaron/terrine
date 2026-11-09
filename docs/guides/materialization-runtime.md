@@ -33,13 +33,13 @@ Owner preparation accepts `PlanRequest.dataset_definition` and persists the
 complete saved plan as `PlanInvocation.saved_plan_json`.
 
 New saved plans use envelope version **2** and runtime plan-definition version
-**3**, with execution revision **1** in the execution fingerprint. Declaration
+**3**, with execution revision **2** in the execution fingerprint. Declaration
 identity is unchanged: a plan's `definition_hash` still equals its saved
-Design's hash. Historical version-1 saved plans and version-2 runtime plans
-verify their original checksums and remain available for inspection, snapshot
-pin release, and authorized status, event and cancellation operations. They
-cannot execute or return an execution replay: rebuild a plan from the dataset
-definition after `terrine.runtime.saved_plan_mismatch`.
+Design's hash. Historical version-1 saved plans, version-2 runtime plans and
+revision-1 plans verify their original checksums and remain available for
+inspection, snapshot pin release, and authorized status, event and cancellation
+operations. They cannot execute or return an execution replay: rebuild a plan
+from the dataset definition after `terrine.runtime.saved_plan_mismatch`.
 
 Missing, unknown or superseded current envelope fields also refuse, even with
 a valid checksum. Superseded owner request fields refuse with
@@ -72,12 +72,14 @@ ordinary Frames. Its supported logical-input matrix is:
 Unsupported substitutions refuse before source resolution with
 `terrine.compile.runtime_shape_unsupported`, including direct `compile_design`
 calls. The coded refusal carries the shape and the route
-`ordinary Frame materialization or a full rebuild`. Additive and nonadditive
-windows use the ordinary compiler against the retained snapshot. Retained
-execution does not produce daily/prefix tasks, substitute cumulative prefix
-relations, or transport exact prefix state through Arrow. The ordinary compiler
-can still build inline prefix expressions; it is not a persisted intermediate
-ABI. Nested event selectors keep their existing dependency invalidation.
+`ordinary Frame materialization or a full rebuild`. Additive windows use the
+same dependency-ready local batch collector as ordinary Frames, with raw
+contributions or declaration-proven aligned noncumulative day payloads inside
+the retained snapshot. Supplied/generated anchor clocks do not inherit an
+outer schedule's alignment proof. Nonadditive and selector algorithms remain
+separate. Neither path builds lifetime numeric prefixes; retained execution
+produces no daily/prefix tasks or numeric intermediate Arrow ABI.
+Nested event selectors keep their existing dependency invalidation.
 
 Approximate quantile sidecars remain available only through ordinary Frame
 materialization. Dataset staging, owner planning and saved plans refuse them
@@ -104,7 +106,7 @@ with that schema and closes its cursor when the reader closes.
 
 Every newly executed partition, including typed-empty and plain Arrow output,
 carries a separate `terrine.execution` schema marker:
-`{"version":1,"execution_revision":1}`. The publisher takes this revision from
+`{"version":1,"execution_revision":2}`. The publisher takes this revision from
 the validated executing plan, not the installed code or incoming data. Existing
 markers and any Frame provenance must agree; historical Frame metadata cannot
 be silently relabeled. Ordinary Frames also record `Provenance.execution_revision`;
@@ -115,13 +117,16 @@ generation's complete partition-schema evidence without reading source rows.
 All markers absent means historical/unknown revision 0. Missing schema rows,
 mixed absence, malformed markers or unequal revisions cannot authorize reuse.
 Only a verified current-revision base permits a reduced or no-change plan;
-unknown or older bases retain the full graph even for a partial ChangeSet.
+unknown or older bases retain the full graph even for an empty or partial
+ChangeSet. Explicit historical reads keep the selected generation's original
+values and provenance; refreshing it does not relabel or mutate that generation.
 Reuse is rechecked under the dataset lease before callbacks and transactionally
 before recording its receipt. A custom no-op returning an arbitrary generation
 is not verified reuse. Request-key replay and post-commit recovery check the
 exact committed generation, including when a newer generation is current.
 The marker uses the existing partition schema storage: runtime namespaces
-remain at schema version **1**, with no schema migration or new runtime columns.
+remain at schema version **1**, and DatasetManifest envelopes remain version
+**1**, with no schema migration or new runtime columns.
 
 ## Cost evidence and scan budgets
 

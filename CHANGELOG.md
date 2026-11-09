@@ -4,43 +4,38 @@
 
 ### Internal aggregation
 
-- Add a raw multi-output window reducer with output-specific availability,
-  half-open selection, nonnull event-mean denominators and source-local
-  reduction before cross-source ratios. Native arithmetic is window-local;
-  exact coefficient domains, per-input float quantization and discarded-term
-  notes are preserved.
-- Preserve physical event/filter values when a source column shares the daily
-  bucket name `local_day`.
-- Add scoped daily inputs and declaration-derived batch lowering. Repeated
-  aligned fixed-offset origins can share unique unit/day payloads; partial-day,
-  relative and single-origin requests retain raw input. Primitive-specific
-  masks keep count-only buckets and unavailable requests out of numerical
-  conversion, checks and sums, without multiplying overlapping contributions.
-  Raw/day reduction shares finalization, exact domains and per-input quantization.
-- Preserve independent exact-source batches under bounded arithmetic policies.
-- Stage independent local-window contexts, selected contributions and outputs
-  at their named-column dependency depth, so wide batches compile without a
-  projection chain that grows with output count. Existing masks, arithmetic
-  guards and metadata remain unchanged.
-- Preserve pre-epoch nanosecond event membership in local-day batches, including
-  fixed offsets, and avoid timestamp overflow from unused final-day source events
-  by comparing bucket starts against aligned half-open window bounds.
-- Keep DuckDB mixed naive/aware comparisons within their original timestamp
-  domains using exact timestamp parts, so unused finite endpoint events do not
-  overflow UTC attachment during raw-window selection.
-- Extract DuckDB microsecond timestamp parts from native epoch ticks rather than
-  calendar differences, preserving equal and adjacent naive/aware instants at
-  finite timestamp endpoints.
-- Collect additive feature, outcome and eligibility leaves into dependency-ready
-  local batches. Resolve shared and nested event-selector origins once per
-  invocation, join each batch/check set once at full anchor identity, and preserve
-  independent completeness, reasons and timing metadata. Unproven supplied or
-  generated origin alignment uses raw input. Excluded large native history no
-  longer erases a small selected window. Nonadditive/selector algorithms and
-  specialized cumulative/cohort safeguards remain unchanged.
-- Mask unused source timestamps with typed NULLs before local-day conversion,
-  using one available/aligned request envelope per unit while preserving exact
-  gap-bucket and primitive consumption masks, event multiplicity and anchor grain.
+- Compile additive features, outcomes and eligibility through shared local
+  multi-output window reduction in ordinary and retained execution. Collect
+  dependency-ready leaves by actual origin, resolve shared/nested selectors
+  once per invocation, reduce each source before cross-source ratios, and join
+  each batch and its checks once at null-safe `(unit, anchor_id)` identity.
+  Duplicate anchors, output order, roles, timing, availability and reasons are
+  preserved; candidate validation still precedes eligibility filtering.
+- Choose raw contributions for single, relative, partial-day or unproven origins;
+  repeated declaration-proven aligned fixed/scheduled origins can share
+  noncumulative unit/day payloads. Primitive-specific masks precede numerical
+  conversion, checks and sums, including in unused gaps or buckets needed only
+  by another count. Raw/day inputs share contribution reduction and finalization
+  without lifetime prefixes, a persisted summary cache or a public strategy knob.
+- Ordinary native sums use selected backend binary64 contributions, so excluded
+  large history no longer erases a small recent window. Rounding, order
+  dependence, underflow and backend arithmetic errors remain possible; there is
+  no magnitude certificate or universal relative-error bound. Selected nonfinite
+  inputs and returned nonfinite results still refuse. Exact coefficient domains,
+  per-input scale-9 float quantization, checked output narrowing and
+  `below_resolution` notes remain intact. Nonadditive/selector algorithms and the
+  separate cumulative/cohort magnitude, quotient, product and underflow
+  safeguards are unchanged.
+- Share independent contexts, contributions and finalizers at their named-column
+  dependency depth, without a projection chain per output. Keep bounded exact
+  arithmetic private to each source before independent summaries join.
+- Preserve original event/filter values when a physical column is named
+  `local_day`, fixed-offset/pre-epoch nanosecond bucket membership, and exact
+  half-open bounds at finite timestamp endpoints. Unused timestamps become typed
+  NULLs before local-day conversion; exact consumption masks still exclude gaps.
+  DuckDB mixed naive/aware comparisons use exact timestamp parts, and
+  microsecond extraction uses native epoch ticks rather than calendar
+  differences, avoiding overflow or loss of adjacent endpoint instants.
 
 ### Breaking changes
 
@@ -184,9 +179,6 @@
   catch it and inspect immutable `code` and `context` rather than relying on
   bare `TypeError`, `RuntimeError` or `FileExistsError`. Pydantic records retain
   `ValidationError`.
-- DuckDB runtime prefix layers store counts as Arrow `decimal128(38, 0)`:
-  read newly written layers with this version or newer; older layers still
-  restore and compose.
 - Runtime owner namespaces record metadata schema version 1. Databases created
   by earlier pre-releases without a version refuse with
   `terrine.runtime.schema_unsupported` (`reason="unversioned"`) before any write,
@@ -301,51 +293,19 @@
   term's reason. Their records (`Lt`, `Lte`, `Gte`, `Ne`, `IsIn`, `Between`,
   `Or`, `Not`, and now `Gt`, `Eq`, `IsNull`, `And`) are stable exports of
   `terrine.spec`, and Design documents stay at version 4 with new node tags.
-- Native float sums and means are evaluated as differences of binary64 running
-  sums, without `DECIMAL(38, 9)` quantization or exact backend state, and their
-  generated SQL is smaller (the README design drops from about 86k to 66k
-  characters). Non-finite inputs and running sums beyond binary64's range
-  still refuse with `terrine.temporal.float64_precision`.
-  `ColumnMeta.arithmetic` records each metric column's declared arithmetic
+- `ColumnMeta.arithmetic` records each metric column's arithmetic
   (`"native"` or `"exact"`; `None` for other columns) through Arrow and JSON
-  metadata; metadata saved without it reads as `None`. `tr.preview` names
-  native float windows' strategies
-  `sparse_day_prefix/native_float` and `sparse_event_prefix/native_float`.
-- On PostgreSQL and the portable expression policy, whose float arithmetic
-  raises on overflow and underflow, native sums are withheld by a magnitude
-  bound once a unit's accumulated history could leave half of binary64's range,
-  and means and ratios are withheld when their divisor-dependent guard allows
-  a quotient to round to zero (below `2**-1020` with divisor magnitude at least
-  one) or overflow (above `2**1020` with a divisor below one).
-  Cohort totals and cumulative trajectory values of native metrics are bounded
-  the same way. Affected windows and summaries refuse
-  `terrine.temporal.float64_precision` (`bound_overflow`) instead of failing
-  with a driver error; DuckDB results are unchanged. Cohort summaries record
-  the value column's `arithmetic` in their metadata.
+  metadata; metadata saved without it reads as `None`. `tr.preview` reports
+  `local_event/native_float`, `local_day/native_float`, `local_event/exact` or
+  `local_day/exact`, according to the declaration-derived input and arithmetic.
+  Cohort summaries also retain the value column's arithmetic.
 - An exact float window that discards a nonzero contribution below its `1e-9`
-  resolution publishes the sum of retained contributions with
-  `__reason = "below_resolution"` and `__complete` unchanged; means, ratios,
-  cumulative trajectory values and complete cohort summaries carry the note.
-  The numerical contract documents both arithmetic modes: the native bound
-  against the history prefix (`2·n_P·2^-53·Σ_P|x|`), the exact window bound,
-  and when to choose exact. PostgreSQL and the portable policy also refuse
-  `bound_overflow` for histories reaching half the binary64 range, quotients
-  that could round to zero (below `2^-1020` with a divisor of magnitude at
-  least one) or overflow (above `2^1020` with a divisor below one), and cohort
-  means whose scaled quotient or product the engine would raise on. Prefix
-  state format is part of every layer identity, rebuilding earlier layers;
-  portable prefix lookup aligns an unscaled anchor instant with microsecond
-  state.
-- Generated study SQL is smaller and faster with unchanged results: columns no
-  later step reads are dropped from every nested projection, prefix lookups for
-  one window join in a single chain, windows over the same anchors, bounds and
-  coverage share one relation of request points, and DuckDB compares
-  microsecond timestamps natively. The README design compiles to about 19.7k
-  characters (from 66k); time-to-event and trial designs shrink by roughly
-  three to five times. The scheduled scale tier checks each recipe's SQL size
-  and results against hand-written queries of the same values (see the cost
-  guide's budget table). Query-time comparisons are tracked separately; run
-  `uv run python -m benchmarks.run_cost` to measure them.
+  resolution publishes the retained sum with `__reason = "below_resolution"`
+  and `__complete` unchanged; means, ratios, cumulative trajectory values and
+  complete cohort summaries carry the note. The
+  [numerical contract](docs/guides/backend-compatibility.md#shared-numerical-contract)
+  distinguishes the selected-input exact bound from ordinary native backend
+  arithmetic and the preserved specialized cumulative/cohort safeguards.
 - Warehouse exports retain scoring rows when there are no outcome windows.
 ### Fixed
 
@@ -379,12 +339,12 @@
   and results holding records are read in binary so the identifiers publish as
   the same Arrow struct DuckDB returns.
 
-- PostgreSQL prefix and first-occurrence lookups use set-based union/window
-  evaluation instead of correlated top-one scans. Anchor assembly uses
-  hash/merge-joinable, null-preserving keys, retaining strict window boundaries,
-  event tie ordering and duplicate request multiplicity. DuckDB's native lookup
-  path is unchanged; portable union timelines also normalize key nullability
-  and compatible integer widths without changing output key types.
+- PostgreSQL first-occurrence lookups use set-based union/window evaluation
+  instead of correlated top-one scans. Anchor assembly uses hash/merge-joinable,
+  null-preserving keys, retaining strict window boundaries, event tie ordering
+  and duplicate request multiplicity. DuckDB's selector lookup path is unchanged;
+  portable union timelines normalize key nullability and compatible integer
+  widths without changing output key types.
 
 ## 0.1.0.dev2
 

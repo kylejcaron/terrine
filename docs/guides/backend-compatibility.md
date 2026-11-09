@@ -457,12 +457,15 @@ microsecond precision. Decimal columns need a declared `numeric(p, s)` with
 `terrine.backend.nonfinite_decimal`. Sums that do not fit the output type refuse
 with `terrine.temporal.exact_overflow`.
 
-Prefix and first-occurrence lookups use set-based union/window evaluation,
-not correlated top-one subqueries. Equal-timestamp ordering retains strict
-prefix cutoffs and the inclusive lower bound of a first-occurrence window;
-duplicate requests keep their multiplicity. Lookup keys use the UTC wall
-clock at native microsecond precision, including naive source timestamps.
-Nullable anchor identities remain null-safe while admitting hash/merge joins.
+Additive windows use local selected-input reduction with exact half-open
+timestamp membership, not cumulative numeric lookups. First-occurrence
+selectors retain set-based union/window evaluation rather than correlated
+top-one subqueries, including the inclusive lower bound and exclusive upper
+bound of their windows. As-of attributes keep their own strict-before/history
+rules. Duplicate requests keep their multiplicity. The surviving lookup helpers
+use UTC wall-clock keys at native microsecond precision, including naive source
+timestamps. Nullable anchor identities remain null-safe while admitting
+hash/merge joins.
 Struct anchor identities, such as an event panel's `{event_id, period}`, are
 anonymous records on PostgreSQL: a missing one stays NULL, distinct from a record
 of NULL fields, and results holding them are read in binary, which carries each
@@ -471,15 +474,15 @@ Compatible integer unit keys use a lossless common timeline type, including
 different roster and event key widths; output keys retain their original types.
 
 Float windows, averages and ratios use the [shared numerical contract](#shared-numerical-contract),
-not bitwise parity with DuckDB. Native float measures sum in `float8`, and
-because `float8` raises on overflow and underflow the PostgreSQL policy
-withholds sums, quotients and products before evaluating them (the finite
-refusals listed in the contract). Exact float measures accumulate scale-9
-coefficients in `NUMERIC`; each exact quotient operand converts at its own
-scale before one float64 division. These columns carry
-`numeric_policy=None`, their `arithmetic`, and no error column. A non-finite
-or out-of-range input at or before the end of a non-empty window refuses; an
-empty sum window remains zero.
+not bitwise parity with DuckDB. Ordinary native measures sum selected `float8`
+contributions without magnitude or quotient preflight; PostgreSQL can raise on
+overflow or underflow. The separate cumulative/cohort safeguards still withhold
+unsafe sums, quotients and products. Exact float measures quantize each selected
+input at scale 9 and accumulate coefficients in `NUMERIC`; exact-only quotients
+retain policy-aware conversion and division. Float outputs carry
+`numeric_policy=None`, their `arithmetic`, and no error column. Selected
+nonfinite inputs refuse; selected out-of-range exact inputs refuse; a complete
+empty sum remains zero.
 PostgreSQL rounds in unconstrained `NUMERIC` at scale 9, so a conversion
 that rounds an admitted boundary input up to $10^{29}$ cannot overflow an
 intermediate fixed-precision cast.
@@ -505,10 +508,11 @@ Supported, matching the DuckDB reference ([live probes][bigquery]): everything
 listed for PostgreSQL above, with the same tolerance contract for averages,
 ratios and float windows. Exact coefficient state is `BIGNUMERIC`, whose
 accumulation limit remains that of declared decimals; an exact accumulation
-beyond it refuses with `terrine.temporal.exact_overflow`. Exact float
-measures quantize at scale 9 under the shared contract, native ones sum in
-`FLOAT64` under the portable guards, and quotients divide converted float64
-operands once. Timestamps are
+beyond it refuses with `terrine.temporal.exact_overflow`. Exact float measures
+quantize each selected input at scale 9 under the shared contract. Ordinary
+native measures sum selected `FLOAT64` contributions without magnitude guards;
+means and ratios convert each operand once and divide once in float64.
+The distinct cumulative/cohort safeguards remain unchanged. Timestamps are
 microsecond-exact from year 1 to 9999; `DATETIME` columns denote UTC. Ibis reads
 every `NUMERIC` column as `decimal(38, 9)`, so decimal outputs carry scale 9 even
 when the column declares `NUMERIC(12, 2)`; values are exact. `BIGNUMERIC` source
@@ -576,13 +580,16 @@ column's 38-digit range, so a 20-digit value is correctly excluded by a
 Supported, matching the DuckDB reference ([parity probes][snowflake]): everything
 listed for PostgreSQL above, with the same tolerance contract for averages,
 ratios and float windows. Exact state is `NUMBER(38, 0)`; counts and decimal
-sums are exact, and a sum or difference beyond 38 digits refuses with
-`terrine.temporal.exact_overflow`, including float coefficients.
-Exact float measures quantize at scale 9 and share this exact coefficient
-state; native ones sum in `FLOAT` under the portable guards. Unsafe bounded
-accumulations are withheld and refuse rather than publishing partial sums.
-Means and ratios convert each operand once with its scale and divide once in
-float64 under the shared error bounds.
+sums are exact, and a required result outside the 38-digit output domain refuses
+`terrine.temporal.exact_overflow`, including bounded float coefficient
+accumulation. Exact float measures quantize each selected input at scale 9 and
+share this exact coefficient domain. Unsafe bounded exact accumulations are
+withheld rather than publishing partial sums. Ordinary native measures sum
+selected `FLOAT` contributions without a magnitude certificate, following the
+backend's rounding, underflow and error behavior. Means and ratios convert each
+operand once with its scale and divide once in float64; exact-derived bounds
+apply only as stated in the shared contract. Specialized cumulative/cohort
+guards remain unchanged.
 
 Timestamps are exact at their declared scale, nanoseconds by default, from year
 1 to 9999 (`TIMESTAMP_TZ`, `TIMESTAMP_LTZ` and `TIMESTAMP_NTZ`; naive values

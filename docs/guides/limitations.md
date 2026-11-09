@@ -58,26 +58,27 @@ timestamp or overflowing an amount. Float measures sum in native binary64
 unless declared `exact=True`; counts, integers, declared decimals, keys and
 timestamps are always exact.
 
-A native sum's error is bounded against the unit's whole history prefix
-through the window end, $2\,n_P\,2^{-53}\sum_{i\in P}|x_i|$, not against the
-window alone: a small window after a large history is only as accurate as
-that history total allows (three small events after $10^6$ events of
-$10^3$ are answered within $0.22$). A mean divides that bound by its actual
-denominator; ratios propagate both operands' bounds. Non-finite inputs and
-results outside the binary64 range refuse. On PostgreSQL and the portable
-policy, whose float arithmetic raises instead of rounding to an infinity or
-zero, `bound_overflow` also refuses finite results the guards cannot admit:
-a unit whose summed history magnitudes reach about half the range
-($8.99\cdot10^{307}$, even where values cancel), quotients that could round
-to zero (below $2^{-1020}$ with a divisor of magnitude at least one) or
-overflow (above $2^{1020}$ with a divisor below one), and cohort reductions
-whose scaled quotients or products leave that range; DuckDB publishes those
-finite results.
+Native binary64 reduction has finite range and precision. Ordinary source-window
+sums consume selected contributions only, not lifetime running totals, but
+rounding and cancellation can still erase small terms among the selected values.
+Physical reduction order, including daily regrouping, can change results;
+neither arithmetic mode promises bitwise floating parity. Ill-conditioned sums
+and ratios have no universal relative-error bound. Underflow and arithmetic
+errors follow the backend. Selected nonfinite inputs and returned nonfinite
+results are checked, but an engine arithmetic exception can occur first.
 
-An exact float measure quantizes once to `DECIMAL(38, 9)`-scale values by the
-engine's float-to-decimal conversion (nearest, ties away from zero, with about
-$10^{-16}$ relative binary64 conversion error), so a value within that error
-of a halfway point may round either way; only the stated bound is promised.
+The separate cumulative-trajectory and cohort reductions retain their
+magnitude, quotient, product and underflow safeguards. These can refuse finite
+results on PostgreSQL and portable policies that DuckDB may publish; they are
+not an ordinary source-window magnitude certificate. The
+[specialized arithmetic contract](backend-compatibility.md#specialized-cumulative-and-cohort-arithmetic)
+describes those limits.
+
+An exact float measure quantizes each selected input once to
+`DECIMAL(38, 9)`-scale values by the engine's float-to-decimal conversion
+(nearest, ties away from zero, with about $10^{-16}$ relative binary64 conversion
+error), so a value within that error of a halfway point may round either way;
+only the stated bound is promised.
 Quantized values share the declared-decimal exact coefficient path, so the
 window's error is bounded by $10^{-9}n_W + 10^{-12}\sum_{i\in W}|x_i|$
 whatever the history; a mean divides that by its actual denominator. Nonzero
@@ -85,9 +86,10 @@ float values below $5\cdot10^{-10}$ vanish from exact sums: the window
 publishes the retained sum with `__reason = below_resolution` (and
 `__complete` unchanged) whenever it discarded one. Declare decimals or
 rescale small measures (for example into micro-units) when those
-contributions matter, in either mode. Ratios with a nonzero denominator within
-its error bound of zero have no stated accuracy; exactly zero quantized
-denominators return NULL with `zero_denominator`.
+contributions matter. Exact-derived ratios with a nonzero denominator within
+its propagated error bound of zero have no stated accuracy; native ratios have
+no general accuracy promise. Exactly zero denominators return NULL with
+`zero_denominator`.
 See the [shared numerical contract](backend-compatibility.md#shared-numerical-contract)
 for the bounds, when to choose exact, and the input and accumulation limits,
 and [temporal engine](temporal-engine.md) for error propagation. Row filters
