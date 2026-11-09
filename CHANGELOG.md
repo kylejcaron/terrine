@@ -55,8 +55,10 @@
   lease without recapturing sources or applying recomputation scan checks.
   Reopening that result preserves its explicitly selected runtime namespace
   even when the environment default differs.
-  Restart recovery verifies stored owner or dataset-request identity and
-  terminates unverifiable interrupted runs instead of leaving them running.
+  Restart recovery admits stored owner, dataset-request or direct-execution
+  identity under the current revision. Obsolete or unverifiable interrupted
+  runs terminate with a saved-plan mismatch instead of becoming successful
+  or remaining running; historical publications remain unchanged.
 - Python 3.12 is the minimum supported version; CPython 3.12, 3.13 and 3.14
   are supported.
 - Float sums and means use native arithmetic unless `exact=True`.

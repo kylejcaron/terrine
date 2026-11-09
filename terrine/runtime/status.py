@@ -239,10 +239,12 @@ def _recover_interrupted_runs(con: Any, *, namespace: str, plan: RefreshPlan | N
                     else _recovery_plan(con, schema, namespace, fingerprint)
                 )
                 from terrine.runtime.execute import _verify_generation
+                from terrine.runtime.planner import admit_execution
 
                 try:
                     if recovering_plan is None:
                         raise ValueError("publication has no verified plan identity")
+                    admit_execution(recovering_plan, namespace=namespace)
                     _verify_generation(
                         recovering_plan, publication[1], con=con, namespace=namespace
                     )
@@ -304,7 +306,7 @@ def _recover_interrupted_runs(con: Any, *, namespace: str, plan: RefreshPlan | N
 
 
 def _recovery_plan(con: Any, schema: str, namespace: str, fingerprint: str) -> RefreshPlan | None:
-    from terrine.runtime.planner import RefreshPlan
+    from terrine.runtime.planner import RefreshPlan, admit_execution
     from terrine.runtime.saved_plan import SavedPlan, _bind_saved_plan
 
     for payload, invocation in con.execute(
@@ -322,6 +324,9 @@ def _recovery_plan(con: Any, schema: str, namespace: str, fingerprint: str) -> R
             else:
                 saved = SavedPlan.from_json(document["saved_plan_json"] if invocation else payload)
                 bound = _bind_saved_plan(saved, namespace=namespace)
+                admit_execution(
+                    bound, namespace=namespace, saved_plan_version=saved.schema_version
+                )
         except (KeyError, TypeError, ValueError, TerrineError):
             continue
         if bound.definition.fingerprint == fingerprint:

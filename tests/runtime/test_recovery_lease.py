@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import hashlib
+import json
+
 import duckdb
 import pyarrow as pa
 import pytest
@@ -29,13 +32,23 @@ def test_recovery_fails_runs_with_absent_or_replaced_lease():
     ).fetchall() == [("absent", "failed"), ("replaced", "failed")]
 
 
-@pytest.mark.parametrize("identity", ["invocation", "dataset_request", "unknown", "reuse_request"])
+@pytest.mark.parametrize(
+    "identity",
+    [
+        "invocation",
+        "dataset_request",
+        "unknown",
+        "reuse_request",
+        "legacy_invocation",
+        "legacy_envelope",
+    ],
+)
 def test_committed_recovery_uses_stored_plan_identity_or_finishes_failed(identity):
     from terrine.runtime.backends.duckdb import DuckDBBackend, StagedGeneration
     from terrine.runtime.changes import ChangeSet
     from terrine.runtime.graph import dependency_graph
     from terrine.runtime.leases import LeaseStore
-    from terrine.runtime.planner import plan_refresh
+    from terrine.runtime.planner import RefreshPlan, plan_refresh
     from terrine.runtime.planning import PlanInvocation
     from terrine.runtime.saved_plan import (
         DestinationRef,
@@ -56,27 +69,43 @@ def test_committed_recovery_uses_stored_plan_identity_or_finishes_failed(identit
             expected_manifest=None,
             lease=lease,
         )
-    design = Design("user", FixedDate("2025-01-02"))
-    plan = plan_refresh(
-        namespace="owner",
-        dataset="orders",
-        definition_hash=design.spec_hash,
-        snapshot_id="snapshot",
-        graph=dependency_graph(sources=("events",)),
-        changes=ChangeSet((), "operator") if reuse else None,
-        reuse_base_generation="base" if reuse else None,
-        reuse_base_revision=1 if reuse else None,
-    )
-    saved = SavedPlan.create(
-        plan_json=plan.serialize(),
-        design=design,
-        model=ModelReference("model", "catalog", "model", "units", "readiness", "events"),
-        destination=DestinationRef("output.duckdb", "owner", "orders"),
-        namespace="owner",
-        expected_base_manifest="base" if reuse else None,
-    )
+    if identity == "legacy_invocation":
+        from pathlib import Path
+
+        saved = SavedPlan.from_json(
+            (Path(__file__).parents[1] / "fixtures/retained_plan_v1.json").read_text()
+        )
+    else:
+        design = Design("user", FixedDate("2025-01-02"))
+        plan = plan_refresh(
+            namespace="owner",
+            dataset="orders",
+            definition_hash=design.spec_hash,
+            snapshot_id="snapshot",
+            graph=dependency_graph(sources=("events",)),
+            changes=ChangeSet((), "operator") if reuse else None,
+            reuse_base_generation="base" if reuse else None,
+            reuse_base_revision=1 if reuse else None,
+        )
+        saved = SavedPlan.create(
+            plan_json=plan.serialize(),
+            design=design,
+            model=ModelReference("model", "catalog", "model", "units", "readiness", "events"),
+            destination=DestinationRef("output.duckdb", "owner", "orders"),
+            namespace="owner",
+            expected_base_manifest="base" if reuse else None,
+        )
+    if identity == "legacy_envelope":
+        document = json.loads(saved.to_json())
+        document["schema_version"] = 1
+        del document["plan_hash"]
+        document["plan_hash"] = hashlib.sha256(
+            json.dumps(document, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        saved = SavedPlan.from_json(json.dumps(document))
+    plan = RefreshPlan.deserialize(saved.plan_json)
     bound = _bind_saved_plan(saved, namespace="owner")
-    if identity == "invocation":
+    if identity in {"invocation", "legacy_invocation", "legacy_envelope"}:
         invocation = PlanInvocation(
             "invocation",
             plan.serialize().decode(),
@@ -86,8 +115,6 @@ def test_committed_recovery_uses_stored_plan_identity_or_finishes_failed(identit
             None,
             saved.to_json(),
         )
-        import json
-
         con.execute(
             "INSERT INTO owner.runtime_plan_invocations VALUES (?,?,?,?)",
             ["invocation", "hash", "snapshot", json.dumps(invocation.to_dict())],
@@ -102,7 +129,7 @@ def test_committed_recovery_uses_stored_plan_identity_or_finishes_failed(identit
             "committed",
             {"p": pa.table({"id": [2]})},
             run_id="stale",
-            execution_revision=1,
+            execution_revision=None if identity == "legacy_invocation" else 1,
         ),
         expected_manifest="base" if reuse else None,
         lease=lease,
@@ -115,10 +142,13 @@ def test_committed_recovery_uses_stored_plan_identity_or_finishes_failed(identit
         [bound.definition.fingerprint],
     )
     _recover_interrupted_runs(con, namespace="owner")
-    expected = "failed" if identity in {"unknown", "reuse_request"} else "succeeded"
-    assert con.execute("SELECT state FROM owner.runtime_runs WHERE run_id='stale'").fetchone() == (
-        expected,
-    )
+    from terrine.runtime.status import get_run
+
+    failed = identity in {"unknown", "reuse_request", "legacy_invocation", "legacy_envelope"}
+    status = get_run("stale", con=con, namespace="owner")
+    assert status.durable_state == ("failed" if failed else "succeeded")
+    assert status.error_code == ("terrine.runtime.saved_plan_mismatch" if failed else None)
+    assert status.pinned_result_ref == (None if failed else "committed")
 
 
 def test_direct_execution_persists_plan_identity_before_committed_crash():
