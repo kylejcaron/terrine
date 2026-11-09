@@ -10,6 +10,7 @@ Date: 2026-11-08. Status: proposed design, not an implemented compiler change.
 | Keep guarantees only when useful and practical | Owner: “only if theyre both useful and more importantly practical” | Confirmed design criterion; no obligation to preserve implementation-driven refusals |
 | Benchmark representative strategies before specifying the replacement | Owner: “lets do it”, following the benchmark-then-spec discussion | This deliverable: experiment, evidence, pathway map and specification; no production changes |
 | Obtain independent architecture assessment | Owner explicitly requested independent Astra xhigh review | Completed before the experiment and revisited with measured overlap results |
+| Relax native magnitude/quotient/product/underflow safeguards in specialized cumulative/cohort reducers | Agent-proposed extension, not separately confirmed by owner | Deferred owner decision; no implementation task. Their source-window inputs migrate, but specialized safeguards remain |
 | Remove `exact=True`, change Catalog defaults, add support for new backends/shapes | Not requested | Excluded; existing exact declarations retain their meaning |
 | Publish, release, merge or migrate user artifacts | Not authorized by this experiment | Excluded |
 
@@ -48,7 +49,7 @@ Selected nonfinite inputs and nonfinite results cannot be returned as successful
 
 A summary introduces intermediate sums. Their overflow/underflow outcomes need not match a differently ordered raw reduction on every extreme input. Explicit arithmetic failure is allowed under the backend's supported domain; silently publishing corrupted values or discarded contributions is not. Do not reintroduce certification or automatic retries to make all physical orderings behave identically.
 
-Validation follows the same policy in window results, cumulative trajectories and cohort reductions. Those specialized reducers do not need to use the source-window join algorithm, but must not retain obsolete native certification solely because it lived outside `lower_aggregate`.
+The policy above governs source-window aggregation. Extending it to the distinct native magnitude, quotient, product and underflow safeguards in cumulative trajectories and cohort reductions was an agent-proposed extension, not separately confirmed scope. Preserve those specialized safeguards pending owner confirmation; migrate all their additive source-window inputs and preserve cumulative missingness/cohort grain.
 
 ### Exact arithmetic and `exact=True`
 
@@ -83,6 +84,8 @@ For statically aligned windows, a noncumulative daily summary may carry shared c
 
 Do not introduce partial-bucket reconstruction in the first implementation. Ineligible requests use raw rows. Raw and summary inputs feed the same aggregate combination and semantic finalization. Scope summarization to consumed units and buckets, not merely a global minimum-start/maximum-end envelope: disjoint requests can leave unused gaps inside that envelope. A bounded semijoin of required unit/bucket identities, followed by the exact window and predicate conditions, is one suitable implementation. Unconsumed buckets must not be aggregated first and only discarded afterward.
 
+The shared source-access union is not the numerical scope of every primitive. Apply primitive-specific consumption masks before value conversion, invalid-input checks and aggregation: a bucket needed only by a wide count cannot enter a narrower sum's arithmetic. Include a PostgreSQL known answer with finite values that overflow only in an unconsumed sum bucket; checking only DuckDB's final values can miss this error.
+
 Choose representations with small declaration-derived rules and demonstrated workload evidence, not hidden row-count probes or arbitrary anchor-count thresholds. A fixed-anchor raw plan and an aligned repeated-anchor summary plan are supported shapes. Physical changes preserve selected inputs, exact result domains and availability/validation rules; they do not promise identical exceptional-arithmetic behavior under different reduction orders. Explain the chosen representation through existing strategy/preview metadata.
 
 No promise of one SQL statement or one scan: a shared scoped intermediate can be legitimate if total execution improves. No new persisted-summary/cache subsystem is included. Inline Ibis relations are the initial representation; future persistence must earn its complexity.
@@ -107,7 +110,7 @@ Keep all study computation in Ibis. Concrete backend modules retain only necessa
 | Event panel | `compile/shapes/event_panel.py` | Batch after event-period expansion; preserve composite anchor IDs |
 | Calendar comparison | `compile/shapes/calendar_comparison.py` | Replace base scheduled aggregation before cohort/control stacking |
 | LTV period outputs | `compile/shapes/ltv.py` | Batch generated age-window requests, not only user-named features |
-| LTV cumulative and cohort reductions | `compile/shapes/ltv.py`, `cohorts.py` | Apply the practical arithmetic policy; preserve cumulative missingness/cohort grain; no source-window join required |
+| LTV cumulative and cohort reductions | `compile/shapes/ltv.py`, `cohorts.py` | Preserve specialized arithmetic safeguards, cumulative missingness and cohort grain; migrate their additive inputs. Broader policy relaxation awaits owner confirmation |
 | Binned state panel | `compile/shapes/state_panel.py` | Migrate state-period, endpoint, row and baseline compilations; no implicit cross-grain sharing |
 | Observed-state panel | `compile/shapes/_observations.py` | Migrate row/baseline additive leaves; preserve state observation/absorption logic |
 | Event sequence/session/funnel | `compile/shapes/event_sequence.py` | Migrate base additive features/outcomes/eligibility; sequence payload remains specialized |
@@ -135,6 +138,10 @@ Separate three contracts:
 
 Keep declaration identity separate from execution identity: `_bind_saved_plan` currently requires `plan.definition_hash == saved_plan.design_hash`; do not invalidate that equality by mixing a physical-plan revision into one side. The execution revision must also reach computational reuse decisions and artifact provenance. Old plans remain checksum-verified and inspectable, and their snapshot pins remain releasable through existing administrative operations; decoding an old plan does not authorize executing it. This preserves cleanup without retaining the prefix executor. No data deletion or automatic destructive migration is required. Generic/unverified backends remain read-only and statement-scoped; retained effects remain DuckDB-only.
 
+Persist execution identity in the existing immutable partition-schema metadata, using a dedicated runtime marker separate from Frame provenance. Every partition, including a typed empty result or plain Arrow output, must carry consistent evidence from the validated execution context before its generation can qualify for current-policy reuse. Unknown legacy evidence triggers full recomputation; inconsistent evidence cannot authorize reuse. Check the exact generation during planning, fenced reuse, replay and post-commit recovery; do not trust only the current manifest or a request-key match. This leaves runtime schema version 1 unchanged and avoids introducing an owner-wide database-upgrade protocol.
+
+Checksum/identity binding remains usable by historical status, event and cancellation operations as well as pin cleanup. Current-revision admission is a separate execution check: an old invocation at the same destination must not prevent authorization of a matching current run.
+
 ## Verification and acceptance
 
 This is one integrated compiler/runtime cutover, not a fixed-anchor-only release. Before declaring implementation complete:
@@ -155,3 +162,5 @@ New permanent tests must each catch a plausible consumer-visible regression and 
 This design chooses local aggregation rather than maintaining general cumulative and direct engines side by side. It preserves exact declarations, not historical computational machinery. It introduces no general optimizer, persistent summary cache, new public mode, new warehouse support or partial-bucket algorithm.
 
 The experiment does not warrant an exact-prefix exception. Truly uncompressible, irregular repeated-anchor workloads remain unmeasured; this is a stated performance limit of the evidence, not a reason to retain a second general engine. New contrary evidence can motivate a separate, narrow optimization proposal. Removing `exact=True` or changing Catalog defaults remains a separate decision and is not part of this cutover.
+
+Relaxing specialized cumulative/cohort arithmetic safeguards is also a separate, unconfirmed decision. The implementation plan preserves them while applying the shared source-window improvement to every existing additive consumer.
