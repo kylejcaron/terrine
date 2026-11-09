@@ -295,7 +295,8 @@ def _quotient(
     if numerator.native or denominator.native:
         n_float = exact_to_float(n, numerator.scale)[0]
         d_float = exact_to_float(d, denominator.scale)[0]
-        divisor = builder.col(denominator.known_zero).ifelse(ibis.null(dt.float64), d_float)
+        # Withheld exact state may be physically zero without being a known zero.
+        divisor = d_float.nullif(ibis.literal(0.0))
         quotient = n_float / divisor
     else:
         quotient = float_ratio(n, numerator.scale, d, denominator.scale)

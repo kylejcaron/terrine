@@ -411,9 +411,9 @@ def test_timestamp_parts_and_comparisons_match_the_reference(snowflake_scratch):
 
 def test_float_windows_match_duckdb_within_tolerance(snowflake_scratch, tmp_path):  # noqa: F811
     _load_windows(snowflake_scratch)
-    # History holds 1e15: a binary64 running sum would lose the window's small
-    # values, while exact state cancels the history and rounds the decimal sum once.
+    # Large and nonfinite excluded history must not enter selected exact windows.
     rows = (
+        ("2024-12-19 00:00:00", "'NaN'::FLOAT"),
         ("2024-12-20 00:00:00", "1e15"),
         ("2024-12-31 12:00:00", "0.1"),
         ("2025-01-01 06:00:00", "0.2"),
@@ -452,9 +452,9 @@ def test_float_windows_match_duckdb_within_tolerance(snowflake_scratch, tmp_path
 @pytest.mark.parametrize(
     ("rows", "metric", "failure"),
     [
-        # Non-finite history before a non-empty window refuses, as on DuckDB.
+        # Selected nonfinite input refuses; excluded history is covered above.
         (
-            (("2024-12-20 00:00:00", "'NaN'::FLOAT"), ("2025-01-01 12:00:00", "1.0")),
+            (("2024-12-31 00:00:00", "'NaN'::FLOAT"), ("2025-01-01 12:00:00", "1.0")),
             "weight",
             "nonfinite_input",
         ),

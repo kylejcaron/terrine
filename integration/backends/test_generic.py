@@ -389,6 +389,7 @@ _CATALOG = {
         "amount_average": {"event": "amount", "aggregation": "avg_event"},
         "weight_total": {"event": "weight", "aggregation": "sum"},
         "weight_average": {"event": "weight", "aggregation": "avg_event"},
+        "native_weight_total": {"event": "weight", "aggregation": "sum", "exact": False},
     },
     "metrics": {
         "orders": {"kind": "mean", "unit": "user", "measure": "order_count"},
@@ -413,6 +414,12 @@ _CATALOG = {
             "unit": "user",
             "numerator": "weight_average",
             "denominator": "quantity_average",
+        },
+        "native_weight_per_spend": {
+            "kind": "ratio",
+            "unit": "user",
+            "numerator": "native_weight_total",
+            "denominator": "amount_total",
         },
     },
 }
@@ -636,6 +643,13 @@ _SAME_DAY_HUGE_AMOUNTS = [
         # the exact output: the average's quotient and a ratio's numerator.
         (_SAME_DAY_HUGE_AMOUNTS, "average_spend", "terrine.temporal.exact_overflow", None),
         (_SAME_DAY_HUGE_AMOUNTS, "spend_per_order", "terrine.temporal.exact_overflow", None),
+        # Invalid exact denominator state must not become native division by zero.
+        (
+            _SAME_DAY_HUGE_AMOUNTS,
+            "native_weight_per_spend",
+            "terrine.temporal.exact_overflow",
+            None,
+        ),
     ],
 )
 def test_accumulated_state_overflow_is_a_coded_refusal(connection, events, metric, code, failure):

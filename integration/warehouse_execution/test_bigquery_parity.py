@@ -223,23 +223,40 @@ def test_timestamp_parts_and_comparisons_match_the_reference(bigquery_scratch): 
 
 def test_float_windows_match_duckdb_within_tolerance(bigquery_scratch, tmp_path):  # noqa: F811
     _load_windows(bigquery_scratch)
+    rows = (
+        ("2024-12-20 00:00:00", "CAST('nan' AS FLOAT64)"),
+        ("2025-01-01 12:00:00", "1.0"),
+    )
+    bigquery_scratch.sql(
+        "INSERT events VALUES "
+        + ", ".join(f"('d', TIMESTAMP '{at}+00', 1, 10, {weight}, NULL)" for at, weight in rows)
+    )
+    duckdb = _duckdb_windows()
+    duckdb.raw_sql(
+        "INSERT INTO events VALUES "
+        "('d', TIMESTAMPTZ '2024-12-20 00:00:00+00', 1, 10, 'NaN'::DOUBLE, NULL),"
+        "('d', TIMESTAMPTZ '2025-01-01 12:00:00+00', 1, 10, 1.0, NULL)"
+    )
     design = windows._design(
         outcomes={"weight_after": tr.agg("weight", window=("0s", "1d"))},
         weight_before=tr.agg("weight", window=("-1d", "0s")),
         weight_week=tr.agg("weight", window=("-7d", "0s")),
         spend_per_weight=tr.agg("spend_per_weight", window=("-7d", "0s")),
     )
-    expected = windows._rows(windows._model(_duckdb_windows(), tmp_path, "duckdb"), design)
+    expected = windows._rows(windows._model(duckdb, tmp_path, "duckdb"), design)
     actual = windows._rows(windows._model(bigquery_scratch.con, tmp_path, "bigquery"), design)
     windows._assert_close(actual, expected)
+    by_unit = {row["unit"]: row for row in actual}
+    assert by_unit["d"]["weight_week"] == 1.0
+    assert by_unit["d"]["weight_week__reason"] is None
 
 
 @pytest.mark.parametrize(
     ("rows", "metric", "failure"),
     [
-        # Non-finite history before a non-empty window refuses, as on DuckDB.
+        # Selected nonfinite input refuses; excluded history is covered above.
         (
-            (("2024-12-20 00:00:00", "CAST('nan' AS FLOAT64)"), ("2025-01-01 12:00:00", "1.0")),
+            (("2024-12-31 00:00:00", "CAST('nan' AS FLOAT64)"), ("2025-01-01 12:00:00", "1.0")),
             "weight",
             "nonfinite_input",
         ),
