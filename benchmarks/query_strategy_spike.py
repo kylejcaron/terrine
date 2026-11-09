@@ -17,6 +17,7 @@ import statistics
 import tempfile
 import time
 import uuid
+from collections import Counter
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -364,6 +365,15 @@ def measure_case(con, config, mode, anchor_count, backend, repeats, out, full, v
     return row
 
 
+def assert_support(table, expected):
+    """Verify the full origin multiset and unique anchor identities, including ties."""
+    origins = table.select(["unit", "t0", "anchor_id"]).to_pylist()
+    assert Counter((row["unit"], row["t0"]) for row in origins) == expected
+    identities = {(row["unit"], json.dumps(row["anchor_id"], sort_keys=True)) for row in origins}
+    assert len(identities) == len(origins)
+    return len(origins)
+
+
 def measure_frame_case(
     con, config, mode, anchor_count, repeats, out, *, irregular=False, retained=False
 ):
@@ -389,6 +399,18 @@ def measure_frame_case(
     pretty = str(ibis.to_sql(expression, dialect="duckdb", pretty=True))  # noqa: TID251
     compact = str(ibis.to_sql(expression, dialect="duckdb", pretty=False))  # noqa: TID251
     (out / f"{label}.sql").write_text(sql)
+    units = set(con.table("users").to_pyarrow()["unit_id"].to_pylist())
+    if irregular:
+        origin_rows = con.table("events").select("unit_id", "event_time").to_pyarrow().to_pylist()
+        expected_support = Counter(
+            (row["unit_id"], row["event_time"]) for row in origin_rows if row["unit_id"] in units
+        )
+    else:
+        expected_support = Counter(
+            (unit, EPOCH + timedelta(days=14 + index))
+            for unit in units
+            for index in range(anchor_count)
+        )
     times = []
     checks = 0
     result = None
@@ -397,6 +419,7 @@ def measure_frame_case(
         begin = time.perf_counter()
         result = frame.materialize(budget=budget).table
         times.append(time.perf_counter() - begin)
+        assert_support(result, expected_support)
         selected = {"unit": result["unit"], "t0": result["t0"]}
         for metric in METRICS:
             for days in windows:
@@ -418,6 +441,8 @@ def measure_frame_case(
     row = {
         "case": label,
         "units": config.units,
+        "expected_output_rows": sum(expected_support.values()),
+        "all_samples_support_verified": True,
         "events": config.units * config.events_per_unit,
         "distinct_unit_day_buckets": int(bucket_count),
         "outputs": len(METRICS) * len(windows),
@@ -440,6 +465,7 @@ def measure_frame_case(
             staged = frame.stage(f"{label.replace('-', '_')}_{sample}", budget=budget)
             stage_seconds = time.perf_counter() - begin
             old_table = staged.to_pyarrow()
+            assert_support(old_table, expected_support)
             relation = "events_native" if mode == "native" else "events"
             begin = time.perf_counter()
             con.raw_sql(f'UPDATE "{relation}" SET value=value+1 WHERE value IS NOT NULL')
@@ -450,6 +476,8 @@ def measure_frame_case(
             refresh_seconds = time.perf_counter() - begin
             actual = refreshed.to_pyarrow()
             expected = frame.materialize(budget=budget).table
+            assert_support(actual, expected_support)
+            assert_support(expected, expected_support)
             assert actual.equals(expected), "retained correction differs from full public rebuild"
             assert staged.to_pyarrow().equals(old_table), "old generation changed after correction"
             selected = {"unit": actual["unit"], "t0": actual["t0"]}
@@ -467,6 +495,7 @@ def measure_frame_case(
                     "source_correction_seconds": correction_seconds,
                     "refresh_seconds": refresh_seconds,
                     "output_rows": len(actual),
+                    "support_verified": True,
                     "oracle_values_checked": assert_values(
                         con, pa.table(selected), mode, model.readiness.for_fact("events")
                     ),
@@ -521,7 +550,8 @@ def run(con, args, out):
     print(json.dumps({"progress": "loaded", "seconds": time.perf_counter() - start}), flush=True)
     results = []
     for mode in args.modes.split(","):
-        for anchors in [int(x) for x in args.anchors.split(",")]:
+        anchor_counts = (1,) if args.irregular else [int(x) for x in args.anchors.split(",")]
+        for anchors in anchor_counts:
             if args.frame_only:
                 results.append(
                     measure_frame_case(

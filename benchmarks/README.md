@@ -42,7 +42,9 @@ uv run python -m benchmarks.query_strategy_spike --frame-only --poor-compression
 
 Each timed sample includes validation and full Arrow materialization; its
 values, reasons, completeness and observation bounds are checked afterward
-against independent Python arithmetic. Records separate build/compile times,
+against independent Python arithmetic. Every sample also verifies the complete
+declared unit/origin multiset and unique anchor IDs, allowing tied timestamps
+without allowing omitted or duplicate origins. Records separate build/compile times,
 raw/formatted SQL bytes, all materialization samples, medians, output rows/bytes
 and distinct unit/day buckets. SQL and an additional, untimed `EXPLAIN ANALYZE`
 are stored separately. Source scan bytes remain unmeasured.
@@ -50,7 +52,8 @@ are stored separately. Source scan bytes remain unmeasured.
 The poor-compression fixture has one event per unit/day and varying intraday
 times. Event-relative repeated anchors force the general path; its bucket count
 can be compared directly with its event count. `--anchors` controls only the
-fixed/scheduled cases, not the number of event-relative origins.
+fixed/scheduled cases, not the number of event-relative origins. Each irregular
+mode runs once even when multiple `--anchors` counts are supplied.
 
 Add `--retained` to measure stage, a source correction and refresh in a
 disposable owner database, including capture/validation/publication. Corrected
