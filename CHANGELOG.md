@@ -64,6 +64,9 @@
   and ordinary retryable failures retain their input snapshots.
   Cleanup ignores unpinned failed history and shares one invocation-local
   stored-identity pass with startup recovery.
+  Opaque or malformed active references are not decoded as run owners, and
+  ambiguous bare/fenced references remain pinned while any owner can still run
+  or retry. Exact historical run IDs remain supported even when they are JSON.
 - Python 3.12 is the minimum supported version; CPython 3.12, 3.13 and 3.14
   are supported.
 - Float sums and means use native arithmetic unless `exact=True`.

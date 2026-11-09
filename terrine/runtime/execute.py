@@ -786,17 +786,10 @@ def _decode(payload: bytes) -> pa.Table | ArrowOutput:
 def _release_run_snapshot_refs(store: RuntimeStore, snapshot_id: str, run_id: str) -> None:
     for attempt in range(5):
         try:
-            for kind, reference in store.snapshot_references(snapshot_id):
-                if kind != "active_run":
-                    continue
-                try:
-                    owner, _fence = json.loads(reference)
-                except (TypeError, ValueError):
-                    if reference == run_id:
-                        store.unpin_snapshot(snapshot_id, kind=kind, reference=reference)
-                    continue
-                if owner == run_id:
-                    store.unpin_snapshot(snapshot_id, kind=kind, reference=reference)
+            for pinned_snapshot, reference in store._releasable_run_snapshot_references(
+                run_id=run_id, snapshot_id=snapshot_id
+            ):
+                store.unpin_snapshot(pinned_snapshot, kind="active_run", reference=reference)
             return
         except Exception as exc:
             if type(exc).__name__ != "TransactionException":

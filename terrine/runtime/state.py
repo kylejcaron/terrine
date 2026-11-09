@@ -346,18 +346,35 @@ class RuntimeStore:
         ).fetchall()
         return tuple((kind, reference) for kind, reference in rows)
 
-    def _snapshot_pinned_runs(self) -> dict[str, tuple[str, str, list[tuple[str, str]]]]:
+    def _snapshot_pinned_runs(
+        self, *, snapshot_id: str | None = None
+    ) -> dict[str, tuple[str, str, list[tuple[str, str]]]]:
         references = {}
-        for snapshot_id, reference in self.con.execute(
+        query = (
             f"SELECT snapshot_id,reference FROM {self._schema}.runtime_snapshot_references "
             "WHERE kind='active_run'"
+        )
+        for pinned_snapshot, reference in self.con.execute(
+            query + (" AND snapshot_id=?" if snapshot_id is not None else ""),
+            [snapshot_id] if snapshot_id is not None else [],
         ).fetchall():
+            owners = {reference}
             try:
-                run_id, _fence = json.loads(reference)
+                attempt = json.loads(reference)
             except (TypeError, ValueError):
-                run_id = reference
-            if isinstance(run_id, str):
-                references.setdefault(run_id, []).append((snapshot_id, reference))
+                attempt = None
+            if (
+                isinstance(attempt, list)
+                and len(attempt) == 2
+                and isinstance(attempt[0], str)
+                and attempt[0]
+                and type(attempt[1]) is int
+                and attempt[1] > 0
+            ):
+                owners.add(attempt[0])
+            # A fenced encoding can also be another run's exact historical bare ID.
+            for run_id in owners:
+                references.setdefault(run_id, []).append((pinned_snapshot, reference))
         if not references:
             return {}
         parameters = ",".join("?" for _ in references)
@@ -377,9 +394,30 @@ class RuntimeStore:
         _plan_identities: Mapping[str, tuple[RefreshPlan, int | None]] | None = None,
     ) -> None:
         """Release terminal pins, retaining failures unless exact identity forbids retry."""
-        pinned = self._snapshot_pinned_runs()
+        for snapshot_id, reference in self._releasable_run_snapshot_references(
+            _plan_identities=_plan_identities
+        ):
+            try:
+                self.unpin_snapshot(
+                    snapshot_id,
+                    kind="active_run",
+                    reference=reference,
+                    _in_transaction=_in_transaction,
+                )
+            except Exception as exc:
+                if _in_transaction or type(exc).__name__ != "TransactionException":
+                    raise
+
+    def _releasable_run_snapshot_references(
+        self,
+        *,
+        run_id: str | None = None,
+        snapshot_id: str | None = None,
+        _plan_identities: Mapping[str, tuple[RefreshPlan, int | None]] | None = None,
+    ) -> list[tuple[str, str]]:
+        pinned = self._snapshot_pinned_runs(snapshot_id=snapshot_id)
         if not pinned:
-            return
+            return []
         from terrine.errors import TerrineError
         from terrine.runtime.planner import admit_execution
         from terrine.runtime.saved_plan import _stored_plan_identities
@@ -398,7 +436,11 @@ class RuntimeStore:
             if _plan_identities is None
             else _plan_identities
         )
-        for state, fingerprint, references in pinned.values():
+        terminal = set()
+        reference_owners = {}
+        for owner, (state, fingerprint, references) in pinned.items():
+            for reference in references:
+                reference_owners.setdefault(reference, set()).add(owner)
             if state == "failed":
                 identity = identities.get(fingerprint)
                 if identity is None:
@@ -417,17 +459,12 @@ class RuntimeStore:
                     continue
             elif state not in {"succeeded", "cancelled"}:
                 continue
-            for snapshot_id, reference in references:
-                try:
-                    self.unpin_snapshot(
-                        snapshot_id,
-                        kind="active_run",
-                        reference=reference,
-                        _in_transaction=_in_transaction,
-                    )
-                except Exception as exc:
-                    if _in_transaction or type(exc).__name__ != "TransactionException":
-                        raise
+            terminal.add(owner)
+        return [
+            (pinned_snapshot, reference)
+            for (pinned_snapshot, reference), owners in reference_owners.items()
+            if owners <= terminal and (run_id is None or run_id in owners)
+        ]
 
     def replace_published_snapshot(
         self,

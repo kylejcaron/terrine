@@ -249,6 +249,12 @@ still protect the inputs until separately released or superseded.
 Only runs still owning active snapshot references need cleanup identity checks;
 each recovery or collection invocation resolves its required fingerprints in a
 single stored-plan pass, without retaining an identity cache between invocations.
+Active references recognize exact historical bare run IDs, including JSON-text
+IDs, and two-item fenced lists with a nonempty run ID and a positive integer
+fence. If both conventions name existing runs, every owner must be terminal
+and nonretryable before cleanup can release the reference. Opaque, malformed
+or unrecognized references remain protected unless their exact bare owner is
+established; interpreting JSON alone never proves run ownership.
 
 Run-state transitions distinguish recoverable failure from terminal results. A `failed` run may retry only after acquiring a newer lease fencing token; an expired writer cannot resume or publish. `succeeded` and `cancelled` runs are terminal and never regress.
 

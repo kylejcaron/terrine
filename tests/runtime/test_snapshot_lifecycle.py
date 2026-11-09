@@ -39,6 +39,73 @@ def test_snapshot_reference_identity_is_validated():
         store.pin_snapshot("snapshot", kind="", reference="run")
 
 
+@pytest.mark.parametrize(
+    ("reference", "bare_state", "fenced_state", "released"),
+    [
+        ('{"s":1,"other":2}', None, "obsolete", False),
+        ('"st"', None, "obsolete", False),
+        ('["s",true]', None, "obsolete", False),
+        ('["s",1.0]', None, "obsolete", False),
+        ('["s",0]', None, "obsolete", False),
+        ('["s",-1]', None, "obsolete", False),
+        ('["s",1,2]', None, "obsolete", False),
+        ("s", "obsolete", None, True),
+        ('["s",1]', None, "obsolete", True),
+        ('["s",1]', "running", "obsolete", False),
+        ('["s",1]', "retryable", "obsolete", False),
+        ('["s",1]', "obsolete", "running", False),
+        ('["s",1]', "obsolete", "retryable", False),
+        ('["s",1]', "obsolete", "obsolete", True),
+        ('["s",1]', "obsolete", None, True),
+        ('{"s":1,"other":2}', "obsolete", None, True),
+        ('"st"', "obsolete", None, True),
+    ],
+)
+def test_snapshot_cleanup_requires_every_recognized_owner_to_be_terminal(
+    reference, bare_state, fenced_state, released
+):
+    from pathlib import Path
+
+    from terrine.runtime.saved_plan import SavedPlan, _bind_saved_plan
+
+    con = duckdb.connect()
+    store = RuntimeStore(con, namespace="owner")
+    store.initialize()
+    saved = SavedPlan.from_json(
+        (Path(__file__).parents[1] / "fixtures/retained_plan_v1.json").read_text()
+    )
+    obsolete = _bind_saved_plan(saved, namespace="owner")
+    con.execute("INSERT INTO owner.runtime_dataset_requests VALUES (?,?)", ["old", saved.to_json()])
+    current = plan_refresh(
+        namespace="owner",
+        dataset="orders",
+        definition_hash="def",
+        snapshot_id="snapshot",
+        graph=dependency_graph(sources=("events",)),
+    )
+    con.execute(
+        "INSERT INTO owner.runtime_plan_invocations VALUES (?,?,?,?)",
+        ["current", current.definition.fingerprint, "snapshot", current.serialize().decode()],
+    )
+    for run_id, owner_state in ((reference, bare_state), ("s", fenced_state)):
+        if owner_state is not None:
+            con.execute(
+                "INSERT INTO owner.runtime_runs "
+                "(run_id,dataset,fingerprint,state,attempt_fence) VALUES (?,'orders',?,?,1)",
+                [
+                    run_id,
+                    (obsolete if owner_state == "obsolete" else current).definition.fingerprint,
+                    "running" if owner_state == "running" else "failed",
+                ],
+            )
+    store.pin_snapshot("snapshot", kind="active_run", reference=reference)
+    store.release_terminal_run_snapshot_references()
+    assert store.snapshot_references("snapshot") == (
+        () if released else (("active_run", reference),)
+    )
+    assert store.mark_snapshot_for_gc("snapshot") is released
+
+
 def test_publication_reference_replacement_requires_current_lease():
     con = duckdb.connect(":memory:")
     store = RuntimeStore(con, namespace="owner")
@@ -90,6 +157,28 @@ def test_execution_pins_snapshot_for_active_run_and_published_manifest():
         publish=publish,
     )
     assert store.snapshot_references("snapshot") == (("published_manifest", '["orders","g1"]'),)
+    ambiguous = '["run-1",1]'
+    opaque = '{"run-1":1,"other":2}'
+    con.execute(
+        "INSERT INTO owner.runtime_runs (run_id,dataset,fingerprint,state,attempt_fence) "
+        "VALUES (?,'orders',?,'failed',1)",
+        [ambiguous, plan.definition.fingerprint],
+    )
+    for reference in (ambiguous, opaque):
+        store.pin_snapshot("snapshot", kind="active_run", reference=reference)
+    execute_plan(
+        plan,
+        con=con,
+        namespace="owner",
+        run_id="run-1",
+        run_task=lambda task, dependencies: pa.table({"task": [task.task_id]}),
+        publish=publish,
+    )
+    assert store.snapshot_references("snapshot") == (
+        ("active_run", ambiguous),
+        ("active_run", opaque),
+        ("published_manifest", '["orders","g1"]'),
+    )
 
 
 def test_terminal_snapshot_cleanup_retries_transaction_conflict(monkeypatch):
