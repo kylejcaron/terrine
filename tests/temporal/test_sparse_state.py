@@ -10,6 +10,7 @@ import pyarrow as pa
 import pytest
 
 from terrine.backends.numeric import is_exact_type
+from terrine.backends.timestamps import local_day
 from terrine.errors import TerrineError
 from terrine.semantic.bind import normalize_events
 from terrine.semantic.models import (
@@ -21,8 +22,16 @@ from terrine.semantic.models import (
     SqlQuery,
     TableRef,
 )
+from terrine.semantic.time import boundary_timezone
+from terrine.temporal.aggregate import narrow_exact
 from terrine.temporal.attributes import enrich_events
-from terrine.temporal.daily import _UNKNOWN_FIELDS, _sparse_group, resolve_measure, sparse_daily
+from terrine.temporal.daily import (
+    _UNKNOWN_FIELDS,
+    contributions,
+    native_arithmetic,
+    reduce_payload,
+    resolve_measure,
+)
 
 
 @pytest.fixture
@@ -88,12 +97,30 @@ def _rows(connection, table):
     return result.to_pylist()
 
 
+def _day_payload(events, measure, boundary, *, source):
+    """Reduce real per-event contributions into fixed-offset buckets."""
+    measure = resolve_measure(events, measure, source=source)
+    projected, fields = contributions(events, measure, source=source)
+    offset = boundary_timezone(boundary).utcoffset(None)
+    minutes = (offset.days * 86400 + offset.seconds) // 60
+    day, bucket = local_day(projected._timestamp, minutes)
+    leaf = projected.select("_unit", local_day=day, _timestamp=bucket, **fields)
+    native = native_arithmetic(measure)
+    grouped, _ = reduce_payload(
+        leaf,
+        ["_unit", "local_day", "_timestamp"],
+        native_values=["sum_value"] if native else [],
+        exact_values=[] if native else ["sum_value"],
+    )
+    return grouped
+
+
 def _daily(connection, amounts, *, dtype="float64", times=None, units=None, exact=True):
     source = _source()
     raw = _events(connection, amounts, dtype=dtype, times=times, units=units)
     events = normalize_events(raw, source, "user_id")
     measure = resolve_measure(events, _measure(exact=exact), source=source)
-    return sparse_daily(events, measure, "UTC", "user_id", source=source), measure
+    return _day_payload(events, measure, "UTC", source=source), measure
 
 
 @pytest.mark.parametrize("aggregation", ["min", "max", "count_distinct"])
@@ -112,7 +139,7 @@ def test_sparse_days_keep_multiplicity_nulls_and_selected_unit(connection):
     assert len(rows) == 2
     assert [row["event_count"] for row in rows] == ["2", "1"]
     assert [row["nonnull_count"] for row in rows] == ["1", "1"]
-    assert [row["observed_null_count"] for row in rows] == ["1", "0"]
+    assert [int(row["event_count"]) - int(row["nonnull_count"]) for row in rows] == [1, 0]
     assert [row["sum_value"] for row in rows] == [str(2**53 + 1), "7"]
     assert measure.value_type == "int64"
     null_daily, _ = _daily(connection, [None], dtype="int64")
@@ -135,7 +162,7 @@ def test_day_bucket_preserves_same_named_event_and_filter_columns(connection):
     raw = _events(connection, [2, 3, 100], dtype="int64").rename(local_day="amount")
     events = normalize_events(raw, source, "user_id")
     measure = _measure(filters=(BoundFilter("score", "between", (1, 10)),))
-    (row,) = _rows(connection, sparse_daily(events, measure, "UTC", "user_id", source=source))
+    (row,) = _rows(connection, _day_payload(events, measure, "UTC", source=source))
     assert (row["local_day"], row["event_count"], row["sum_value"]) == (
         date(2025, 3, 1),
         "2",
@@ -155,7 +182,7 @@ def test_fixed_offset_day_state_is_independent_of_session_timezone(connection):
         ],
     )
     events = normalize_events(raw, source, "user_id")
-    daily = sparse_daily(events, _measure(), source.day_boundary, "user_id", source=source)
+    daily = _day_payload(events, _measure(), source.day_boundary, source=source)
     expected = [
         (date(2025, 2, 28), datetime(2025, 2, 28, 5, tzinfo=UTC)),
         (date(2025, 3, 1), datetime(2025, 3, 1, 5, tzinfo=UTC)),
@@ -171,10 +198,10 @@ def test_exact_decimal_groups_cross_hugeint_without_losing_units(connection):
     values = [Decimal("99999999999999999999999999999999.999999")] * 2
     values += [Decimal("-99999999999999999999999999999999.999999"), Decimal("0.000001")]
     times = [datetime(2025, 3, day, tzinfo=UTC) for day in (1, 1, 2, 3)]
-    daily, _ = _daily(connection, values, dtype="decimal(38,6)", times=times)
+    daily, measure = _daily(connection, values, dtype="decimal(38,6)", times=times)
     rows = _rows(connection, daily.order_by("local_day"))
     assert [row["sum_value"] for row in rows] == [str(2 * maximum), str(-maximum), "1"]
-    assert all(row["value_scale"] == 6 and row["numeric_policy"] == "exact" for row in rows)
+    assert measure.value_type == "decimal(38, 6)"
     ordinary, _ = _daily(
         connection,
         [Decimal("12345678901234567890.123400"), Decimal("-12345678901234567890.123399")],
@@ -205,20 +232,18 @@ def test_filters_retain_unknown_provenance_and_false_overrides_unknown(connectio
             BoundFilter("active", "equals", ("yes",)),
         )
     )
-    row = _rows(connection, sparse_daily(enriched, measure, "UTC", "user_id", source=source))[0]
+    row = _rows(connection, _day_payload(enriched, measure, "UTC", source=source))[0]
     assert (row["event_count"], row["sum_value"], row["unknown_filter_count"]) == ("1", "1", "2")
     assert (row["unknown_filter_null_count"], row["unknown_filter_missing_count"]) == ("2", "1")
     null_literal = _measure(filters=(BoundFilter("active", "equals", (None,)),))
-    row = _rows(connection, sparse_daily(enriched, null_literal, "UTC", "user_id", source=source))[
-        0
-    ]
+    row = _rows(connection, _day_payload(enriched, null_literal, "UTC", source=source))[0]
     assert (
         row["event_count"],
         row["unknown_filter_count"],
         row["unknown_filter_literal_count"],
     ) == ("0", "5", "5")
     in_literal = replace(null_literal, filters=(BoundFilter("active", "in", ("yes", None)),))
-    row = _rows(connection, sparse_daily(enriched, in_literal, "UTC", "user_id", source=source))[0]
+    row = _rows(connection, _day_payload(enriched, in_literal, "UTC", source=source))[0]
     assert (row["event_count"], row["unknown_filter_count"]) == ("3", "2")
 
 
@@ -233,11 +258,13 @@ def test_event_grouping_uses_same_filters_and_exact_original_counts(connection):
     raw = _events(connection, [None, None, None])
     events = normalize_events(raw, source, "user_id")
     measure = _measure(aggregation="count")
-    state = _sparse_group(
-        events, measure, {"_timestamp": events._timestamp}, "user_id", source=source
+    projected, fields = contributions(
+        events, resolve_measure(events, measure, source=source), source=source, counting=True
     )
-    row = _rows(connection, state)[0]
-    assert (row["event_count"], row["nonnull_count"], row["sum_value"]) == ("3", "3", "3")
+    leaf = projected.select("_unit", "_timestamp", **fields)
+    grouped, _ = reduce_payload(leaf, ["_unit", "_timestamp"], native_values=[], exact_values=[])
+    row = _rows(connection, grouped)[0]
+    assert row["event_count"] == "3"
 
 
 @pytest.mark.parametrize(
@@ -265,12 +292,11 @@ def test_float_day_groups_meet_per_input_quantized_bound(connection, values):
                     x for x, day in zip(order, days, strict=True) if day == row["local_day"].day
                 ]
                 exact = sum(map(Fraction, leaves), Fraction())
-                assert row["value_scale"] == 9
+                assert is_exact_type(daily.schema()["sum_value"])
                 assert abs(Fraction(int(row["sum_value"]), 10**9) - exact) <= window_sum_bound(
                     leaves
                 )
                 assert int(row["nonnull_count"]) == len(leaves)
-                assert row["numeric_policy"] == "exact"
 
 
 def test_nonfinite_float_leaves_are_counted_not_summed(connection):
@@ -278,9 +304,8 @@ def test_nonfinite_float_leaves_are_counted_not_summed(connection):
     daily, _ = _daily(connection, [math.inf, 2.5, math.nan], times=times)
     rows = _rows(connection, daily.order_by("local_day"))
     assert [
-        (row["sum_value"], row["value_scale"], row["float64_nonfinite_count"], row["nonnull_count"])
-        for row in rows
-    ] == [(None, 9, "1", "1"), ("2500000000", 9, "0", "1"), (None, 9, "1", "1")]
+        (row["sum_value"], row["float64_nonfinite_count"], row["nonnull_count"]) for row in rows
+    ] == [(None, "1", "1"), ("2500000000", "0", "1"), (None, "1", "1")]
     assert all(row["float64_unrepresentable_count"] == "0" for row in rows)
 
 
@@ -299,17 +324,18 @@ def test_native_float_day_groups_keep_finite_values_and_nonfinite_counts(connect
         assert row["sum_value"] == pytest.approx(expected[row["local_day"].day], rel=1e-15, abs=0)
         assert row["float64_nonfinite_count"] == str(sum(not math.isfinite(x) for x in leaves))
         assert row["nonnull_count"] == str(len(leaves))
-        assert row["numeric_policy"] == "native"
 
 
 def test_only_exact_grouping_requires_backend_exact_capability(connection, monkeypatch):
     from terrine.backends.engines.duckdb import DuckDBDialect
+    from tests.temporal.test_window_aggregates import _anchors, _local, _result
+    from tests.temporal.test_window_aggregates import _rows as window_rows
 
     monkeypatch.setattr(DuckDBDialect, "supports_exact_prefix", lambda self, backend: False)
-    native_daily, _ = _daily(connection, [1.5], exact=False)
-    assert _rows(connection, native_daily)[0]["sum_value"] == 1.5
+    native = _result(_anchors(connection), [_local(connection, [1.5], exact=False)])
+    assert window_rows(connection, native)[0]["requested"] == 1.5
     with pytest.raises(TerrineError) as error:
-        _daily(connection, [1.5])
+        _result(_anchors(connection), [_local(connection, [1.5])])
     assert error.value.code == "terrine.temporal.exact_unsupported"
 
 
@@ -325,10 +351,10 @@ def test_construction_never_executes_queries(connection, monkeypatch):
     monkeypatch.setattr(connection, "execute", blocked)
     monkeypatch.setattr(connection, "to_pyarrow", blocked)
     measure = resolve_measure(events, _measure(), source=source)
-    daily = sparse_daily(events, measure, "UTC", "user_id", source=source)
+    daily = _day_payload(events, measure, "UTC", source=source)
     schema = daily.schema()
     assert is_exact_type(schema["sum_value"])
-    assert schema["value_scale"].is_integer()
+    assert is_exact_type(schema["event_count"])
 
 
 def test_numeric_filters_do_not_round_integer_properties_or_fractional_thresholds(connection):
@@ -337,12 +363,12 @@ def test_numeric_filters_do_not_round_integer_properties_or_fractional_threshold
     raw = _events(connection, [2**53, 2**53 + 1], dtype="int64")
     events = normalize_events(raw, source, "user_id")
     measure = _measure(filters=(BoundFilter("score", "equals", (2**53 + 1,)),))
-    row = _rows(connection, sparse_daily(events, measure, "UTC", "user_id", source=source))[0]
+    row = _rows(connection, _day_payload(events, measure, "UTC", source=source))[0]
     assert (row["event_count"], row["sum_value"]) == ("1", str(2**53 + 1))
     raw = _events(connection, [1, 2, None], dtype="int64")
     events = normalize_events(raw, source, "user_id")
     measure = _measure(filters=(BoundFilter("score", "gt", (1.5,)),))
-    row = _rows(connection, sparse_daily(events, measure, "UTC", "user_id", source=source))[0]
+    row = _rows(connection, _day_payload(events, measure, "UTC", source=source))[0]
     assert (row["event_count"], row["sum_value"], row["unknown_filter_count"]) == ("1", "2", "1")
 
 
@@ -352,8 +378,13 @@ def test_high_scale_decimal_keeps_its_coefficient_and_scale(connection):
         [Decimal("0.123456789012345678901234567890"), Decimal("-0.123456789012345678901234567889")],
         dtype="decimal(38,30)",
     )
-    row = _rows(connection, daily)[0]
-    assert (row["sum_value"], row["value_scale"], row["nonnull_count"]) == ("1", 30, "2")
+    published = daily.mutate(published=narrow_exact(daily.sum_value, 30, "decimal(38,30)"))
+    row = _rows(connection, published)[0]
+    assert (row["sum_value"], row["published"], row["nonnull_count"]) == (
+        "1",
+        Decimal("1e-30"),
+        "2",
+    )
 
 
 @pytest.mark.parametrize(
@@ -383,9 +414,9 @@ def test_quoted_decimal_thresholds_are_exact_for_every_comparator(connection, op
     )
     events = normalize_events(raw, source, "user_id")
     measure = _measure(filters=(BoundFilter("price", op, values),))
-    daily = sparse_daily(events, measure, "UTC", "user_id", source=source)
+    daily = _day_payload(events, measure, "UTC", source=source)
     rows = _rows(connection, daily.order_by("local_day"))
-    # Known false rows are absent; NULL membership retains an unknown row.
+    # Known-false rows contribute zero; NULL membership retains unknown provenance.
     counts = {row["local_day"].day: row["event_count"] for row in rows}
     assert [counts.get(day, "0") for day in (1, 2)] == expected
     if op == "in":
@@ -403,7 +434,7 @@ def test_numeric_strings_require_strict_json_number_grammar(connection, spelling
     events = normalize_events(raw, source, "user_id")
     measure = _measure(filters=(BoundFilter("price", "equals", (spelling,)),))
     with pytest.raises(TerrineError) as caught:
-        sparse_daily(events, measure, "UTC", "user_id", source=source)
+        _day_payload(events, measure, "UTC", source=source)
     assert caught.value.code == "terrine.semantic.schema_mismatch"
 
 
@@ -421,7 +452,7 @@ def test_decimal_exponents_lower_without_constructing_huge_integers(connection):
         ("0e999999999999999999999999999", "equals", "1"),
     ):
         measure = _measure(filters=(BoundFilter("score", op, (spelling,)),))
-        row = _rows(connection, sparse_daily(events, measure, "UTC", "user_id", source=source))[0]
+        row = _rows(connection, _day_payload(events, measure, "UTC", source=source))[0]
         assert row["event_count"] == expected
 
 
@@ -432,18 +463,18 @@ def test_numeric_looking_strings_on_string_properties_remain_strings(connection)
     raw = _events(connection, [1, 2], dtype="int64", tag=["01", "1"])
     events = normalize_events(raw, source, "user_id")
     measure = _measure(filters=(BoundFilter("tag", "equals", ("01",)),))
-    row = _rows(connection, sparse_daily(events, measure, "UTC", "user_id", source=source))[0]
+    row = _rows(connection, _day_payload(events, measure, "UTC", source=source))[0]
     assert (row["event_count"], row["sum_value"]) == ("1", "1")
 
 
 @pytest.mark.parametrize("unit_column", ("value_type", "event_count", "sum_value"))
-def test_state_metadata_cannot_merge_distinct_physical_units(connection, unit_column):
+def test_payload_names_cannot_merge_distinct_physical_units(connection, unit_column):
     raw = _events(connection, [1, 2], dtype="int64", units=["a", "b"])
     raw = raw.rename({unit_column: "user_id"})
     source = replace(_source(), units={"user": unit_column, "account": "account_id"})
     events = normalize_events(raw, source, unit_column)
     measure = resolve_measure(events, _measure(), source=source)
-    daily = sparse_daily(events, measure, "UTC", unit_column, source=source)
+    daily = _day_payload(events, measure, "UTC", source=source)
     rows = _rows(connection, daily.order_by("_unit"))
     assert [(row["_unit"], row["sum_value"], row["event_count"]) for row in rows] == [
         ("a", "1", "1"),
@@ -474,7 +505,7 @@ def test_native_integer_alias_filter_does_not_trust_decimal38_range(
     )
     events = normalize_events(raw, source, "user_id")
     measure = _measure(filters=(BoundFilter("score", "between", (lower, upper)),))
-    rows = _rows(connection, sparse_daily(events, measure, "UTC", "user_id", source=source))
+    rows = _rows(connection, _day_payload(events, measure, "UTC", source=source))
     assert [(row["_unit"], row["event_count"], row["sum_value"]) for row in rows] == [
         ("u", "1", value)
     ]
@@ -515,7 +546,7 @@ def test_sparse_day_floors_negative_nanosecond_instants(connection, boundary, of
     )
     source = _source(boundary=boundary)
     events = normalize_events(raw, source, "user_id")
-    rows = _rows(connection, sparse_daily(events, _measure(), boundary, "user_id", source=source))
+    rows = _rows(connection, _day_payload(events, _measure(), boundary, source=source))
     epoch = datetime(1970, 1, 1, tzinfo=UTC)
     for row in rows:
         instant = nanoseconds[int(row["_unit"])]
@@ -558,9 +589,28 @@ def test_nonfinite_filter_properties_remain_unknown_without_poisoning_other_days
     measure = _measure(
         filters=(BoundFilter("score", op, values), BoundFilter("gate", "equals", (True,)))
     )
-    daily = sparse_daily(events, measure, "UTC", "user_id", source=source)
+    daily = _day_payload(events, measure, "UTC", source=source)
     rows = _rows(connection, daily.order_by("local_day"))
     assert [row["unknown_filter_count"] for row in rows] == ["4", "0"]
     assert [row["unknown_filter_nonfinite_count"] for row in rows] == ["3", "0"]
     assert [row["unknown_filter_null_count"] for row in rows] == ["1", "0"]
     assert [row["sum_value"] for row in rows] == ["7", "11"]
+
+
+def test_exact_grouping_refusal_names_minimum_version(monkeypatch):
+    from terrine.backends.dialect import dialect_scope
+    from terrine.backends.engines import duckdb as duckdb_engine
+    from terrine.temporal.daily import _require_backend
+
+    table = ibis.table({"value": "int64"})
+
+    class Backend:
+        name = "duckdb"
+
+    monkeypatch.setattr(ibis.Table, "_find_backend", lambda *args, **kwargs: Backend())
+    monkeypatch.setattr(duckdb_engine, "version", lambda _: "1.4.0")
+
+    with dialect_scope("duckdb"), pytest.raises(TerrineError) as caught:
+        _require_backend(table)
+
+    assert caught.value.context["minimum"] == "1.5"

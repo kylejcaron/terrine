@@ -628,3 +628,30 @@ def test_union_unit_keys_preserve_integer_domains(left_type, right_type, expecte
     if expected.is_integer():
         assert expected.bounds.lower <= min(left_type.bounds.lower, right_type.bounds.lower)
         assert expected.bounds.upper >= max(left_type.bounds.upper, right_type.bounds.upper)
+
+
+@pytest.mark.parametrize("left_dtype,right_dtype", [("int64", "float64"), ("string", "int64")])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_incompatible_unit_keys_raise_portable_coded_refusal(left_dtype, right_dtype, reverse):
+    from terrine.backends.joins import union_unit_keys
+
+    if reverse:
+        left_dtype, right_dtype = right_dtype, left_dtype
+    left = ibis.table({"unit": left_dtype}, name="left").unit
+    right = ibis.table({"unit": right_dtype}, name="right").unit
+    with pytest.raises(TerrineError) as caught:
+        union_unit_keys(left, right)
+    error = caught.value
+    assert error.code == "terrine.compile.incompatible_unit_keys"
+    assert dict(error.context) == {
+        "left_type": left_dtype,
+        "right_type": right_dtype,
+        "route": "Align the source key types before building the dataset.",
+    }
+    assert error.context["route"] in str(error)
+    for restored in (copy.deepcopy(error), pickle.loads(pickle.dumps(error))):
+        assert (restored.code, restored.context, str(restored)) == (
+            error.code,
+            error.context,
+            str(error),
+        )

@@ -666,7 +666,7 @@ def _finalized_counts(con, counts, *, kind="mean"):
     from terrine.temporal.aggregate import _Builder, _finalize_window, _local_component
 
     anchors = _anchors(con)
-    builder = _Builder(anchors.mutate(count=exact_literal(counts)), "requested", practical=True)
+    builder = _Builder(anchors.mutate(count=exact_literal(counts)), "requested")
     measure = BoundMeasure("revenue", "postings", "count", (), None, None)
     available = builder.put("available", ibis.literal(True))
     unavailable = builder.put("unavailable", ibis.null("string"))

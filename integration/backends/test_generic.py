@@ -43,7 +43,7 @@ from terrine.semantic.models import (
     TableRef,
 )
 from terrine.temporal.aggregate import narrow_exact
-from terrine.temporal.daily import sparse_daily
+from terrine.temporal.daily import contributions, reduce_payload, resolve_measure
 from tests._float_bound import window_sum_bound
 
 _WIDE = dt.Decimal(38, 0)
@@ -334,7 +334,10 @@ def test_filtered_source_decimal_keeps_wide_coefficient_domain(connection):
         None,
         None,
     )
-    daily = sparse_daily(events, measure, "UTC", "user_id", source=source)
+    measure = resolve_measure(events, measure, source=source)
+    projected, fields = contributions(events, measure, source=source)
+    leaf = projected.select("_unit", **fields)
+    daily, _ = reduce_payload(leaf, ["_unit"], native_values=[], exact_values=["sum_value"])
     schema = daily.schema()
     assert schema["sum_value"] == _WIDE
     assert schema["event_count"] == _WIDE

@@ -1,8 +1,8 @@
-"""Sparse local-day sufficient states over normalized, optionally enriched events."""
+"""Selected per-event contributions and shared exact or native payload reduction."""
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import replace
 from typing import Any, cast
 
@@ -18,13 +18,11 @@ from terrine.backends.numeric import (
     below_resolution,
     count_literal,
     decimal_coefficient,
-    exact_subtract,
     exact_sum,
     float_is_finite,
     guard_accumulation,
     quantized_float,
 )
-from terrine.backends.timestamps import local_day
 from terrine.errors import RefusalSpec
 from terrine.semantic.bind import _MISSING, _SCHEMA
 from terrine.semantic.models import BoundMeasure, BoundSource, Filter
@@ -33,10 +31,9 @@ from terrine.semantic.rules import (
     UNSUPPORTED_TEMPORAL_AGGREGATION,
     supports_temporal_aggregation,
 )
-from terrine.semantic.time import boundary_timezone
 from terrine.temporal.attributes import _enriched_property_columns
 
-__all__ = ["native_arithmetic", "sparse_daily"]
+__all__ = ["contributions", "native_arithmetic", "reduce_payload", "resolve_measure"]
 
 _EXACT_UNSUPPORTED = RefusalSpec(
     "terrine.temporal.exact_unsupported",
@@ -50,12 +47,6 @@ _UNKNOWN_FIELDS = (
     "unknown_filter_literal_count",
     "unknown_filter_nonfinite_count",
 )
-_EXACT_FLOAT_COUNTS = (
-    "float64_nonfinite_count",
-    "float64_unrepresentable_count",
-    "float64_below_resolution_count",
-)
-_NATIVE_FLOAT_COUNTS = ("float64_nonfinite_count",)
 
 
 def _require_backend(table: ibis.Table) -> None:
@@ -307,11 +298,9 @@ def contributions(
     if counting:
         return table, fields
     column = source.events[measure.event]
-    value = ibis.literal(1) if column is None else table[column]
+    assert column is not None  # Non-count measures require a resolved value column.
+    value = table[column]
     fields["nonnull_count"] = (selected & value.notnull()).ifelse(one, zero)
-    if measure.aggregation == "count":
-        fields["sum_value"] = fields["event_count"]
-        return table, fields
     assert measure.value_type is not None
     dtype = dt.dtype(measure.value_type)
     if dtype.is_floating():
@@ -374,98 +363,3 @@ def reduce_payload(
         for name in payload
     }
     return table.group_by(*keys).aggregate(**aggregates), withheld
-
-
-def _sparse_group(
-    events: ibis.Table,
-    measure: BoundMeasure,
-    keys: Mapping[str, Any],
-    unit_column: str,
-    *,
-    source: BoundSource,
-) -> ibis.Table:
-    """Shared filter/arithmetic grouping for local days and equal event timestamps.
-
-    Event-resolution callers pass {"_timestamp": events._timestamp}. This groups
-    duplicates before prefix accumulation, without mixing another entity key
-    into the selected analysis unit. No exposure is inferred from Property.as_of.
-    A native measure sums its finite float values in binary64 and counts the
-    non-finite ones; other measures accumulate exact coefficients.
-    """
-    measure = resolve_measure(events, measure, source=source)
-    if unit_column not in source.units.values() and unit_column != "_unit":
-        raise _MISSING.error(reference=f"selected unit column {unit_column}")
-    if unit_column not in events.columns:
-        raise _SCHEMA.error(field="selected unit", column=unit_column)
-    assert measure.value_type is not None  # resolve_measure always binds it
-    dtype = dt.dtype(measure.value_type)
-    native = native_arithmetic(measure)
-    # Exact floats quantize once at scale 9, then share declared-decimal coefficients.
-    exact_floats = dtype.is_floating() and measure.aggregation != "count" and not native
-    if not native:
-        _require_backend(events)
-    if measure.filters:
-        predicate = _predicate(events, measure, source)[0]
-        events = events.filter(predicate.fill_null(True))
-    events, fields = contributions(events, measure, source=source)
-    leaf = events.select(**{"_unit": events[unit_column], **keys, **fields})
-    value = leaf.sum_value
-    if measure.aggregation == "count":
-        admitted = None
-    else:
-        leaf, value, admitted = guard_accumulation(leaf, value, partition=["_unit", *keys])
-    aggregates = {name: exact_sum(leaf[name]) for name in fields if name != "sum_value"}
-    aggregates["sum_value"] = (
-        cast(ir.FloatingColumn, value).sum()
-        if native
-        else exact_sum(value, admitted=admitted is not None)
-    )
-    if admitted is not None:
-        policy = current_dialect(value)
-        magnitude = policy.float_magnitude if native else policy.magnitude
-        aggregates["sum_bound"] = magnitude(value).sum()
-        aggregates["sum_withheld"] = exact_sum(
-            (~admitted).ifelse(count_literal(1), count_literal(0))
-        )
-    grouped = leaf.group_by("_unit", *keys).aggregate(**aggregates)
-    return grouped.mutate(
-        value_type=ibis.literal(measure.value_type),
-        value_scale=ibis.literal(
-            9
-            if exact_floats
-            else (
-                dtype.scale
-                if isinstance(dtype, dt.Decimal) and measure.aggregation != "count"
-                else 0
-            )
-        ),
-        numeric_policy=ibis.literal("native" if native else "exact"),
-        observed_null_count=exact_subtract(grouped.event_count, grouped.nonnull_count),
-    )
-
-
-def sparse_daily(
-    events: ibis.Table,
-    measure: BoundMeasure,
-    boundary: str,
-    unit_column: str,
-    *,
-    source: BoundSource,
-) -> ibis.Table:
-    """Group observed events by selected unit and fixed-offset local day, lazily.
-
-    _timestamp is the local bucket's start expressed as an aware UTC instant.
-    Daily prefixes are for aligned endpoints only; arbitrary endpoints require
-    equal-timestamp states. Naive source timestamps denote UTC, not session time.
-    """
-    if "_timestamp" not in events.columns:
-        raise _SCHEMA.error(field="normalized event", column="_timestamp")
-    offset = boundary_timezone(boundary).utcoffset(None)
-    minutes = (offset.days * 86400 + offset.seconds) // 60
-    timestamp = events._timestamp
-    if not timestamp.type().is_timestamp():
-        raise _SCHEMA.error(field="normalized event", column="_timestamp")
-    day, bucket = local_day(cast(ir.TimestampValue, timestamp), minutes)
-    return _sparse_group(
-        events, measure, {"local_day": day, "_timestamp": bucket}, unit_column, source=source
-    )
