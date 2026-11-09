@@ -1,0 +1,143 @@
+{
+  "design.json": [
+    {
+      "name": "unit",
+      "type": "string",
+      "role": "unit"
+    },
+    {
+      "name": "anchor_id",
+      "type": "struct<event_id: string, period: int8>",
+      "role": "anchor"
+    },
+    {
+      "name": "t0",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "t0"
+    },
+    {
+      "name": "parent_event_id",
+      "type": "string",
+      "role": "output"
+    },
+    {
+      "name": "parent_t0",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "output"
+    },
+    {
+      "name": "event_period",
+      "type": "int8",
+      "role": "output"
+    },
+    {
+      "name": "orders_30d",
+      "type": "int64",
+      "role": "feature"
+    },
+    {
+      "name": "orders_30d__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "orders_30d__reason",
+      "type": "string",
+      "role": "output"
+    }
+  ],
+  "design.yaml": [
+    {
+      "name": "unit",
+      "type": "string",
+      "role": "unit"
+    },
+    {
+      "name": "anchor_id",
+      "type": "struct<event_id: string, period: int8>",
+      "role": "anchor"
+    },
+    {
+      "name": "t0",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "t0"
+    },
+    {
+      "name": "parent_event_id",
+      "type": "string",
+      "role": "output"
+    },
+    {
+      "name": "parent_t0",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "output"
+    },
+    {
+      "name": "event_period",
+      "type": "int8",
+      "role": "output"
+    },
+    {
+      "name": "orders_30d",
+      "type": "int64",
+      "role": "feature"
+    },
+    {
+      "name": "orders_30d__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "orders_30d__reason",
+      "type": "string",
+      "role": "output"
+    }
+  ],
+  "definition.json": [
+    {
+      "name": "unit",
+      "type": "string",
+      "role": "unit"
+    },
+    {
+      "name": "anchor_id",
+      "type": "struct<event_id: string, period: int8>",
+      "role": "anchor"
+    },
+    {
+      "name": "t0",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "t0"
+    },
+    {
+      "name": "parent_event_id",
+      "type": "string",
+      "role": "output"
+    },
+    {
+      "name": "parent_t0",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "output"
+    },
+    {
+      "name": "event_period",
+      "type": "int8",
+      "role": "output"
+    },
+    {
+      "name": "orders_30d",
+      "type": "int64",
+      "role": "feature"
+    },
+    {
+      "name": "orders_30d__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "orders_30d__reason",
+      "type": "string",
+      "role": "output"
+    }
+  ]
+}

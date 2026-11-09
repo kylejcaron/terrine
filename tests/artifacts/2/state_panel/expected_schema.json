@@ -1,0 +1,278 @@
+{
+  "design.json": [
+    {
+      "name": "unit",
+      "type": "string",
+      "role": "unit"
+    },
+    {
+      "name": "anchor_id",
+      "type": "string",
+      "role": "anchor"
+    },
+    {
+      "name": "t0",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "t0"
+    },
+    {
+      "name": "from_time",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "output"
+    },
+    {
+      "name": "to_time",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "output"
+    },
+    {
+      "name": "scheduled_to",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "output"
+    },
+    {
+      "name": "period_index",
+      "type": "int64",
+      "role": "output"
+    },
+    {
+      "name": "gap",
+      "type": "duration[us]",
+      "role": "output"
+    },
+    {
+      "name": "from_state",
+      "type": "string",
+      "role": "prior_state"
+    },
+    {
+      "name": "from_state__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "from_state__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
+      "name": "to_state",
+      "type": "string",
+      "role": "outcome"
+    },
+    {
+      "name": "to_state__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "to_state__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
+      "name": "terminal",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "orders_30d",
+      "type": "int64",
+      "role": "feature"
+    },
+    {
+      "name": "orders_30d__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "orders_30d__reason",
+      "type": "string",
+      "role": "output"
+    }
+  ],
+  "design.yaml": [
+    {
+      "name": "unit",
+      "type": "string",
+      "role": "unit"
+    },
+    {
+      "name": "anchor_id",
+      "type": "string",
+      "role": "anchor"
+    },
+    {
+      "name": "t0",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "t0"
+    },
+    {
+      "name": "from_time",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "output"
+    },
+    {
+      "name": "to_time",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "output"
+    },
+    {
+      "name": "scheduled_to",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "output"
+    },
+    {
+      "name": "period_index",
+      "type": "int64",
+      "role": "output"
+    },
+    {
+      "name": "gap",
+      "type": "duration[us]",
+      "role": "output"
+    },
+    {
+      "name": "from_state",
+      "type": "string",
+      "role": "prior_state"
+    },
+    {
+      "name": "from_state__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "from_state__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
+      "name": "to_state",
+      "type": "string",
+      "role": "outcome"
+    },
+    {
+      "name": "to_state__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "to_state__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
+      "name": "terminal",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "orders_30d",
+      "type": "int64",
+      "role": "feature"
+    },
+    {
+      "name": "orders_30d__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "orders_30d__reason",
+      "type": "string",
+      "role": "output"
+    }
+  ],
+  "definition.json": [
+    {
+      "name": "unit",
+      "type": "string",
+      "role": "unit"
+    },
+    {
+      "name": "anchor_id",
+      "type": "string",
+      "role": "anchor"
+    },
+    {
+      "name": "t0",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "t0"
+    },
+    {
+      "name": "from_time",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "output"
+    },
+    {
+      "name": "to_time",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "output"
+    },
+    {
+      "name": "scheduled_to",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "output"
+    },
+    {
+      "name": "period_index",
+      "type": "int64",
+      "role": "output"
+    },
+    {
+      "name": "gap",
+      "type": "duration[us]",
+      "role": "output"
+    },
+    {
+      "name": "from_state",
+      "type": "string",
+      "role": "prior_state"
+    },
+    {
+      "name": "from_state__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "from_state__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
+      "name": "to_state",
+      "type": "string",
+      "role": "outcome"
+    },
+    {
+      "name": "to_state__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "to_state__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
+      "name": "terminal",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "orders_30d",
+      "type": "int64",
+      "role": "feature"
+    },
+    {
+      "name": "orders_30d__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "orders_30d__reason",
+      "type": "string",
+      "role": "output"
+    }
+  ]
+}
