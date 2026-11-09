@@ -124,7 +124,7 @@ The reviewed spec also covers bare `RefreshPlan` execution, not merely `SavedPla
 
 ## Reproduce the representative experiments
 
-Use the isolated environment with DuckDB/PostgreSQL extras; offline BigQuery compilation additionally needs the BigQuery extra. Each command requires a new output directory so earlier evidence cannot be overwritten. Actual run configurations are captured in each directory's `environment.json`.
+Use the isolated environment with DuckDB/PostgreSQL extras; offline BigQuery compilation additionally needs the BigQuery extra. Each command requires a new output directory so earlier evidence cannot be overwritten. Actual run configurations are captured in each directory's `environment.json`. The harness omits connection URLs from new metadata, including credential-bearing query parameters; the historical records here used passwordless local scratch endpoints.
 
 ```sh
 python -m benchmarks.query_strategy_spike --units 10000 --anchors 1 --repeats 3 --full --output /tmp/query-fixed-new

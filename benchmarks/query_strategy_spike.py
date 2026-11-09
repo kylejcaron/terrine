@@ -412,7 +412,7 @@ def main():
         "platform": platform.platform(),
         "ibis": ibis.__version__,
         "pyarrow": pa.__version__,
-        "args": vars(args),
+        "args": {key: value for key, value in vars(args).items() if key != "postgres_url"},
     }
     (args.output / "environment.json").write_text(json.dumps(environment, default=str, indent=2))
     if args.backend == "duckdb":
