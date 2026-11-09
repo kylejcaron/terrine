@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import Any, Literal, cast
 
@@ -20,17 +20,22 @@ from terrine.backends.numeric import (
     EXACT_OVERFLOW as _EXACT_OVERFLOW,
 )
 from terrine.backends.numeric import (
+    FLOAT64_PRECISION,
+    Float64Failure,
+    count_literal,
     exact_literal,
     exact_subtract,
+    exact_sum,
     exact_to_float,
     float_is_finite,
     float_ratio,
+    guard_accumulation,
 )
-from terrine.backends.timestamps import day_start
+from terrine.backends.timestamps import compare_timestamps, day_start
 from terrine.data import ColumnMeta, RowCheck
 from terrine.errors import RefusalSpec
 from terrine.semantic.bind import _SCHEMA
-from terrine.semantic.models import BoundMeasure, BoundMetric
+from terrine.semantic.models import BoundMeasure, BoundMetric, BoundSource
 from terrine.semantic.rules import (
     UNALIGNED_CALENDAR_AVERAGE,
     UNKNOWN_FILTER,
@@ -41,15 +46,16 @@ from terrine.semantic.rules import (
     supports_temporal_aggregation,
 )
 from terrine.semantic.time import boundary_timezone
-from terrine.temporal.lookup import lookup_prefix
-from terrine.temporal.prefix import (
+from terrine.temporal.daily import (
     _EXACT_FLOAT_COUNTS,
     _NATIVE_FLOAT_COUNTS,
     _UNKNOWN_FIELDS,
-    FLOAT64_PRECISION,
-    Float64Failure,
+    _require_backend,
+    contributions,
     native_arithmetic,
+    resolve_measure,
 )
+from terrine.temporal.lookup import lookup_prefix
 from terrine.temporal.readiness import Readiness
 from terrine.windows import Window
 
@@ -168,12 +174,13 @@ class _Builder:
     keep SQL compilation time from growing superlinearly with intermediate count.
     """
 
-    def __init__(self, table: ibis.Table, output: str) -> None:
+    def __init__(self, table: ibis.Table, output: str, *, practical: bool = False) -> None:
         self._table = table
         self._staged: dict[str, ir.Value] = {}
         self.used = {name.casefold() for name in (*table.columns, output)}
         self.counter = 0
         self.numeric: list[tuple[str, RefusalSpec, Mapping[str, Any]]] = []
+        self.practical = practical
 
     @property
     def table(self) -> ibis.Table:
@@ -287,7 +294,14 @@ def _quotient(
         builder.col(numerator.known_zero) & ~builder.col(denominator.known_zero),
     )
     n, d = builder.col(numerator.value), builder.col(denominator.value)
-    value = builder.put("quotient", float_ratio(n, numerator.scale, d, denominator.scale))
+    if builder.practical and (numerator.native or denominator.native):
+        n_float = exact_to_float(n, numerator.scale)[0]
+        d_float = exact_to_float(d, denominator.scale)[0]
+        divisor = builder.col(denominator.known_zero).ifelse(ibis.null(dt.float64), d_float)
+        quotient = n_float / divisor
+    else:
+        quotient = float_ratio(n, numerator.scale, d, denominator.scale)
+    value = builder.put("quotient", quotient)
     # Only a zero denominator or missing operand may yield NULL.
     builder.flag(
         builder.col(value).isnull()
@@ -303,7 +317,14 @@ def _quotient(
         context,
     )
     note = _merged_note(builder, numerator, denominator)
-    return _Quantity(value, reason, known_zero, binary64=True, note=note)
+    return _Quantity(
+        value,
+        reason,
+        known_zero,
+        binary64=True,
+        note=note,
+        native=builder.practical and (numerator.native or denominator.native),
+    )
 
 
 def _state_fields(measure: BoundMeasure, state: ibis.Table, *, counting: bool) -> tuple[str, ...]:
@@ -583,73 +604,13 @@ def aggregate_window(
             dtype = anchors[name].type()
             if not dtype.is_timestamp() or dtype.timezone != "UTC":
                 raise _SCHEMA.error(field="UTC-aware observation", column=name)
-    offset = boundary_timezone(boundary).utcoffset(None)
-    minutes = (offset.days * 86400 + offset.seconds) // 60
-    calendars = [m for m in metric.measures if m.aggregation == "avg_calendar_day"]
-    domain_context = {
-        "metric": metric.name,
-        "output": output,
-        "window_start": window.start.seconds,
-        "window_end": window.end.seconds,
-        "boundary": boundary,
-        "phase": "pre_output",
-    }
-    for measure in calendars:
-        if calendar_average_alignment(window, anchor=None, day_boundary=boundary) == "unaligned":
-            raise UNALIGNED_CALENDAR_AVERAGE.error(measure=measure.event, **domain_context)
     builder = _Builder(anchors, output)
+    context = _window_context(builder, metric, window, readiness, boundary, output, resolution)
+    start, end = context.start, context.end
+    available, unavailable = context.available, context.unavailable
+    observed_from, observed_until = context.observed_from, context.observed_until
+    row_checks = list(context.row_checks)
 
-    def shifted(seconds: int):
-        t0 = builder.table.t0
-        return t0 + ibis.interval(seconds=seconds) if seconds else t0
-
-    start = builder.put("start", shifted(window.start.seconds))
-    end = builder.put("end", shifted(window.end.seconds))
-    row_checks: list[RowCheck] = []
-    if calendars or resolution == "day":
-        invalid = builder.put(
-            "unaligned",
-            builder.table.t0.notnull()
-            & ~(_aligned(builder.col(start), minutes) & _aligned(builder.col(end), minutes)),
-        )
-        refusal = UNALIGNED_CALENDAR_AVERAGE if calendars else _DAY_ALIGNMENT
-        context = {**domain_context, "measure": calendars[0].event} if calendars else domain_context
-        row_checks.extend(builder.check([(invalid, refusal, context)]))
-    coverages = [readiness.for_fact(measure.source_name) for measure in metric.measures]
-    source_start = max(coverage.start for coverage in coverages)
-    source_end = min(coverage.end_exclusive for coverage in coverages)
-    source_complete = builder.put(
-        "source_complete",
-        (builder.col(start) >= ibis.literal(source_start))
-        & (builder.col(end) <= ibis.literal(source_end)),
-    )
-    observed_from = ibis.literal(source_start)
-    observed_until = ibis.literal(source_end)
-    bounds = []
-    if "_observed_from" in anchors.columns:
-        bound = builder.table._observed_from
-        observed_from = greatest(observed_from, bound.fill_null(observed_from))
-        bounds.append(bound.isnull() | (builder.col(start) >= bound))
-    if "_observed_until" in anchors.columns:
-        bound = builder.table._observed_until
-        observed_until = least(observed_until, bound.fill_null(observed_until))
-        bounds.append(bound.isnull() | (builder.col(end) <= bound))
-    observed_from = builder.put("observed_from", observed_from)
-    observed_until = builder.put("observed_until", observed_until)
-    observation_complete = cast(ir.BooleanValue, ibis.literal(True))
-    if bounds:
-        conjunction = bounds[0] if len(bounds) == 1 else bounds[0] & bounds[1]
-        observation_complete = builder.col(builder.put("observed", conjunction))
-    available = builder.put("complete", builder.col(source_complete) & observation_complete)
-    unavailable = builder.put(
-        "unavailable_reason",
-        (~builder.col(source_complete)).ifelse(
-            reason_codes.INCOMPLETE_COVERAGE,
-            (~observation_complete).ifelse(
-                ibis.literal(reason_codes.INCOMPLETE_OBSERVATION), ibis.null().cast("string")
-            ),
-        ),
-    )
     # Windows over the same anchors, bounds and coverage read one relation of
     # request points; each lookup chain starts from its own reference to it.
     builder.table = builder.table.view()
@@ -708,6 +669,38 @@ def aggregate_window(
                 context=context,
             )
         )
+    return _finalize_window(
+        builder,
+        anchors,
+        metric,
+        window,
+        output,
+        role,
+        quantities,
+        available,
+        unavailable,
+        observed_from,
+        observed_until,
+        row_checks,
+        unknown_flags,
+    )
+
+
+def _finalize_window(
+    builder: _Builder,
+    anchors: ibis.Table,
+    metric: BoundMetric,
+    window: Window,
+    output: str,
+    role: str,
+    quantities: Sequence[_Quantity],
+    available: str,
+    unavailable: str,
+    observed_from: str,
+    observed_until: str,
+    row_checks: list[RowCheck],
+    unknown_flags,
+) -> TemporalResult:
     if metric.kind == "ratio":
         numerator, denominator = quantities
         reason = builder.put(
@@ -806,14 +799,18 @@ def aggregate_window(
     public_value = builder.col(evaluated).ifelse(
         builder.col(value), ibis.null().cast(builder.col(value).type())
     )
-    result = builder.table.select(
-        *anchors.columns,
-        public_value.name(output),
-        observed_from,
-        observed_until,
-        available,
-        final_reason,
-        *(check.column for check in row_checks),
+    result = builder.table.mutate(**{output: public_value}).select(
+        *dict.fromkeys(
+            [
+                *anchors.columns,
+                output,
+                observed_from,
+                observed_until,
+                available,
+                final_reason,
+                *(check.column for check in row_checks),
+            ]
+        )
     )
     meta = ColumnMeta(
         window=window,
@@ -826,3 +823,432 @@ def aggregate_window(
         arithmetic="native" if any(native_arithmetic(m) for m in metric.measures) else "exact",
     )
     return TemporalResult(result, {output: meta}, row_checks=tuple(row_checks))
+
+
+@dataclass(frozen=True, slots=True)
+class AggregateRequest:
+    metric: BoundMetric
+    window: Window
+    output: str
+    role: str
+
+
+@dataclass(frozen=True, slots=True)
+class _WindowContext:
+    start: str
+    end: str
+    available: str
+    unavailable: str
+    observed_from: str
+    observed_until: str
+    row_checks: tuple[RowCheck, ...]
+
+
+def _window_context(
+    builder: _Builder,
+    metric: BoundMetric,
+    window: Window,
+    readiness: Readiness,
+    boundary: str,
+    output: str,
+    resolution: Literal["event", "day"] = "event",
+) -> _WindowContext:
+    anchors = builder.table
+    offset = boundary_timezone(boundary).utcoffset(None)
+    minutes = (offset.days * 86400 + offset.seconds) // 60
+    calendars = [m for m in metric.measures if m.aggregation == "avg_calendar_day"]
+    domain_context = {
+        "metric": metric.name,
+        "output": output,
+        "window_start": window.start.seconds,
+        "window_end": window.end.seconds,
+        "boundary": boundary,
+        "phase": "pre_output",
+    }
+    for measure in calendars:
+        if calendar_average_alignment(window, anchor=None, day_boundary=boundary) == "unaligned":
+            raise UNALIGNED_CALENDAR_AVERAGE.error(measure=measure.event, **domain_context)
+
+    def shifted(seconds: int):
+        t0 = builder.table.t0
+        return t0 + ibis.interval(seconds=seconds) if seconds else t0
+
+    start = builder.put("start", shifted(window.start.seconds))
+    end = builder.put("end", shifted(window.end.seconds))
+    row_checks: list[RowCheck] = []
+    if calendars or resolution == "day":
+        invalid = builder.put(
+            "unaligned",
+            builder.table.t0.notnull()
+            & ~(_aligned(builder.col(start), minutes) & _aligned(builder.col(end), minutes)),
+        )
+        refusal = UNALIGNED_CALENDAR_AVERAGE if calendars else _DAY_ALIGNMENT
+        context = {**domain_context, "measure": calendars[0].event} if calendars else domain_context
+        row_checks.extend(builder.check([(invalid, refusal, context)]))
+    coverages = [readiness.for_fact(measure.source_name) for measure in metric.measures]
+    source_start = max(coverage.start for coverage in coverages)
+    source_end = min(coverage.end_exclusive for coverage in coverages)
+    source_complete = builder.put(
+        "source_complete",
+        (builder.col(start) >= ibis.literal(source_start))
+        & (builder.col(end) <= ibis.literal(source_end)),
+    )
+    observed_from = ibis.literal(source_start)
+    observed_until = ibis.literal(source_end)
+    bounds = []
+    if "_observed_from" in anchors.columns:
+        bound = builder.table._observed_from
+        observed_from = greatest(observed_from, bound.fill_null(observed_from))
+        bounds.append(bound.isnull() | (builder.col(start) >= bound))
+    if "_observed_until" in anchors.columns:
+        bound = builder.table._observed_until
+        observed_until = least(observed_until, bound.fill_null(observed_until))
+        bounds.append(bound.isnull() | (builder.col(end) <= bound))
+    observed_from = builder.put("observed_from", observed_from)
+    observed_until = builder.put("observed_until", observed_until)
+    observation_complete = cast(ir.BooleanValue, ibis.literal(True))
+    if bounds:
+        conjunction = bounds[0] if len(bounds) == 1 else bounds[0] & bounds[1]
+        observation_complete = builder.col(builder.put("observed", conjunction))
+    available = builder.put("complete", builder.col(source_complete) & observation_complete)
+    unavailable = builder.put(
+        "unavailable_reason",
+        (~builder.col(source_complete)).ifelse(
+            reason_codes.INCOMPLETE_COVERAGE,
+            (~observation_complete).ifelse(
+                ibis.literal(reason_codes.INCOMPLETE_OBSERVATION), ibis.null().cast("string")
+            ),
+        ),
+    )
+    return _WindowContext(
+        start, end, available, unavailable, observed_from, observed_until, tuple(row_checks)
+    )
+
+
+def _local_component(
+    builder: _Builder,
+    measure: BoundMeasure,
+    fields: Mapping[str, str],
+    *,
+    days: int,
+    conversion: bool,
+    context: Mapping[str, Any],
+) -> _Quantity:
+    """Finalize one reduced primitive without reading any cumulative state."""
+    events = builder.col(fields["event_count"])
+    zero = exact_literal(0, events)
+    empty = builder.put("empty", events == zero)
+    no_reason = ibis.null(dt.string)
+    if conversion:
+        value = builder.put("converted", events > zero)
+        return _Quantity(value, builder.put("reason", no_reason), empty)
+    if measure.aggregation == "count":
+        return _Quantity(fields["event_count"], builder.put("reason", no_reason), empty, count=True)
+    nonnull = builder.col(fields["nonnull_count"])
+    all_null = (events > zero) & (nonnull == exact_literal(0, nonnull))
+    reason = builder.put(
+        "reason",
+        all_null.ifelse(
+            reason_codes.ALL_VALUES_NULL,
+            builder.col(empty).ifelse(reason_codes.NO_OBSERVATIONS, no_reason)
+            if measure.aggregation == "avg_event"
+            else no_reason,
+        ),
+    )
+    value = builder.col(fields["sum_value"])
+    invalid = cast(ir.BooleanValue, ibis.literal(False))
+    if "sum_withheld" in fields:
+        count = builder.col(fields["sum_withheld"])
+        withheld = builder.put("sum_withheld", count > exact_literal(0, count))
+        builder.numeric.append((withheld, _EXACT_OVERFLOW, context))
+        invalid |= builder.col(withheld)
+    for name, failure in (
+        ("float64_nonfinite_count", "nonfinite_input"),
+        ("float64_unrepresentable_count", "out_of_range"),
+    ):
+        if name in fields:
+            count = builder.col(fields[name])
+            flag = count > exact_literal(0, count)
+            builder.flag(flag, failure, context)
+            invalid |= flag
+    native = native_arithmetic(measure)
+    if native:
+        builder.flag(~float_is_finite(value), "bound_overflow", context)
+        value_zero = ibis.literal(0.0)
+    else:
+        value_zero = exact_literal(0, value)
+    known_zero = builder.put("sum_zero", (value == value_zero) & ~invalid)
+    note = None
+    if "float64_below_resolution_count" in fields:
+        count = builder.col(fields["float64_below_resolution_count"])
+        note = builder.put(
+            "note",
+            (count > exact_literal(0, count)).ifelse(reason_codes.BELOW_RESOLUTION, no_reason),
+        )
+    assert measure.value_type is not None
+    dtype = dt.dtype(measure.value_type)
+    scale = (
+        9
+        if dtype.is_floating() and not native
+        else ((dtype.scale or 0) if isinstance(dtype, dt.Decimal) else 0)
+    )
+    quantity = _Quantity(
+        fields["sum_value"],
+        reason,
+        known_zero,
+        scale=scale,
+        binary64=dtype.is_floating(),
+        native=native,
+        note=note,
+    )
+    if measure.aggregation in {"avg_event", "avg_calendar_day"}:
+        divisor = (
+            fields["nonnull_count"]
+            if measure.aggregation == "avg_event"
+            else builder.put("days", exact_literal(days, events))
+        )
+        divisor_zero = builder.put(
+            "divisor_zero", builder.col(divisor) == exact_literal(0, builder.col(divisor))
+        )
+        denominator = _Quantity(divisor, reason, divisor_zero, count=True)
+        quantity = _quotient(builder, quantity, denominator, reason, context)
+    return quantity
+
+
+@dataclass(frozen=True, slots=True)
+class _Primitive:
+    measure: BoundMeasure
+    window: Window
+    counting: bool
+
+
+def _interval(timestamp, t0, window: Window):
+    return compare_timestamps(timestamp, t0, "ge", right_offset_seconds=window.start.seconds) & (
+        compare_timestamps(timestamp, t0, "lt", right_offset_seconds=window.end.seconds)
+    )
+
+
+def _reduce_source(
+    builder: _Builder,
+    events: ibis.Table,
+    source: BoundSource,
+    primitives: Mapping[_Primitive, Sequence[_WindowContext]],
+) -> tuple[ibis.Table, dict[_Primitive, dict[str, str]], tuple[str, str]]:
+    """Join one bounded event source and reduce each selected primitive at anchor grain."""
+    unit, anchor_id, t0 = (builder.name(name) for name in ("unit", "anchor_id", "t0"))
+    available = dict.fromkeys(
+        context.available for contexts in primitives.values() for context in contexts
+    )
+    table = builder.table
+    points = table.select(
+        table.unit.name(unit), table.anchor_id.name(anchor_id), table.t0.name(t0), *available
+    )
+    matched = ibis.literal(False)
+    for primitive, contexts in primitives.items():
+        active = ibis.literal(False)
+        for context in contexts:
+            active |= points[context.available]
+        matched |= active & _interval(events._timestamp, points[t0], primitive.window)
+    joined = events.inner_join(points, (events._unit == points[unit]) & matched)
+    aliases: dict[_Primitive, dict[str, str]] = {}
+    payload = {}
+    for primitive, contexts in primitives.items():
+        active = ibis.literal(False)
+        for context in contexts:
+            active |= joined[context.available]
+        consumed = active & _interval(joined._timestamp, joined[t0], primitive.window)
+        joined, fields = contributions(
+            joined,
+            primitive.measure,
+            source=source,
+            consumed=consumed,
+            counting=primitive.counting,
+        )
+        names = {name: builder.name(name) for name in fields}
+        aliases[primitive] = names
+        payload.update({names[name]: expression for name, expression in fields.items()})
+    leaf = joined.select(unit, anchor_id, **payload)
+    bounded = set()
+    for primitive, names in aliases.items():
+        if primitive.counting or native_arithmetic(primitive.measure):
+            continue
+        name = names["sum_value"]
+        leaf, value, admitted = guard_accumulation(leaf, leaf[name], partition=[unit, anchor_id])
+        if admitted is not None:
+            withheld = builder.name("sum_withheld")
+            leaf = leaf.mutate(
+                **{name: value, withheld: (~admitted).ifelse(count_literal(1), count_literal(0))}
+            )
+            names["sum_withheld"] = withheld
+            bounded.add(name)
+    aggregates = {}
+    for primitive, names in aliases.items():
+        for field_name, name in names.items():
+            value = leaf[name]
+            aggregates[name] = (
+                cast(ir.FloatingColumn, value).sum()
+                if field_name == "sum_value" and native_arithmetic(primitive.measure)
+                else exact_sum(value, admitted=name in bounded)
+            )
+    return leaf.group_by(unit, anchor_id).aggregate(**aggregates), aliases, (unit, anchor_id)
+
+
+def aggregate_windows(
+    anchors: ibis.Table,
+    requests: Sequence[AggregateRequest],
+    sources: Mapping[str, tuple[ibis.Table, BoundSource]],
+    readiness: Readiness,
+    *,
+    boundary: str,
+) -> TemporalResult:
+    """Reduce selected raw contributions for multiple half-open windows.
+
+    Availability masks arithmetic per output. Independent sources are reduced
+    before joining, preserving full anchor identity and avoiding event fan-out.
+    Call ``validate`` before exporting the result under the same snapshot.
+    """
+    for name in ("unit", "anchor_id", "t0"):
+        if name not in anchors.columns:
+            raise _SCHEMA.error(field="anchor", column=name)
+    for name in ("t0", "_observed_from", "_observed_until"):
+        if name in anchors.columns:
+            dtype = anchors[name].type()
+            if not dtype.is_timestamp() or dtype.timezone != "UTC":
+                raise _SCHEMA.error(field="UTC-aware anchor or observation", column=name)
+    builder = _Builder(anchors, "", practical=True)
+    builder.used.update(
+        name.casefold() for events, _ in sources.values() for name in events.columns
+    )
+    contexts = []
+    primitives: dict[str, dict[_Primitive, list[_WindowContext]]] = {}
+    components = []
+    outputs = {name.casefold() for name in anchors.columns}
+    for request in requests:
+        metric, window, output = request.metric, request.window, request.output
+        if not isinstance(window, Window):
+            raise TypeError("window must be a Window")
+        if (
+            not output
+            or not isinstance(output, str)
+            or not request.role
+            or not isinstance(request.role, str)
+        ):
+            raise ValueError("output and role must be nonempty names")
+        if output.casefold() in outputs:
+            raise ValueError("outputs must be unique and not replace anchor fields")
+        outputs.add(output.casefold())
+        builder.used.add(output.casefold())
+        if metric.kind not in {"mean", "conversion", "ratio"}:
+            raise UNSUPPORTED_TEMPORAL_KIND.error(kind=metric.kind)
+        if metric.transforms:
+            raise UNSUPPORTED_TRANSFORM.error(transform=type(metric.transforms[0]).__name__)
+        if len(metric.measures) != (2 if metric.kind == "ratio" else 1):
+            raise ValueError("metric kind has an invalid number of measures")
+        context = _window_context(builder, metric, window, readiness, boundary, output)
+        contexts.append(context)
+        keys = []
+        for measure in metric.measures:
+            if measure.value_type is None:
+                raise ValueError("aggregate_windows requires resolved measure descriptors")
+            if measure.source_name not in sources:
+                raise ValueError("a resolved metric measure has no supplied event source")
+            events, source = sources[measure.source_name]
+            resolve_measure(events, measure, source=source)
+            counting = metric.kind == "conversion" or measure.aggregation == "count"
+            if counting or not native_arithmetic(measure):
+                _require_backend(events)
+            canonical = replace(
+                measure,
+                aggregation="count" if counting else "sum",
+                exact=not native_arithmetic(measure) if not counting else True,
+            )
+            key = _Primitive(canonical, window, counting)
+            primitives.setdefault(measure.source_name, {}).setdefault(key, []).append(context)
+            keys.append(key)
+        components.append(keys)
+    reductions = [
+        _reduce_source(builder, *sources[name], source_primitives)
+        for name, source_primitives in primitives.items()
+    ]
+    reduced_fields = {}
+    for reduced, aliases, (unit, anchor_id) in reductions:
+        table = builder.table
+        joined = table.left_join(
+            reduced, [table.unit == reduced[unit], table.anchor_id == reduced[anchor_id]]
+        ).drop(unit, anchor_id)
+        fields = [field_name for names in aliases.values() for field_name in names.values()]
+        builder.table = joined.mutate(
+            **{
+                name: joined[name].fill_null(
+                    ibis.literal(0.0)
+                    if joined[name].type().is_floating()
+                    else exact_literal(0, joined[name])
+                )
+                for name in fields
+            }
+        )
+        reduced_fields.update(aliases)
+    columns = {}
+    row_checks = []
+    for request, context, keys in zip(requests, contexts, components, strict=True):
+        retained = builder.table
+        quantities, unknown_flags = [], []
+        builder.numeric = []
+        for measure, key in zip(request.metric.measures, keys, strict=True):
+            fields = reduced_fields[key]
+            numeric_context = {
+                "source": measure.source_name,
+                "measure": measure.event,
+                "output": request.output,
+            }
+            if measure.filters:
+                count = builder.col(fields["unknown_filter_count"])
+                flag = builder.put("unknown_filter", count > exact_literal(0, count))
+                unknown_flags.append((flag, UNKNOWN_FILTER, numeric_context))
+            quantities.append(
+                _local_component(
+                    builder,
+                    measure,
+                    fields,
+                    days=(request.window.end.seconds - request.window.start.seconds) // 86400,
+                    conversion=request.metric.kind == "conversion",
+                    context=numeric_context,
+                )
+            )
+        result = _finalize_window(
+            builder,
+            retained,
+            request.metric,
+            request.window,
+            request.output,
+            request.role,
+            quantities,
+            context.available,
+            context.unavailable,
+            context.observed_from,
+            context.observed_until,
+            list(context.row_checks),
+            unknown_flags,
+        )
+        builder.table = result.table
+        columns.update(result.columns)
+        row_checks.extend(result.row_checks)
+    public = [*anchors.columns]
+    for output, meta in columns.items():
+        assert meta.observed_from_column is not None
+        assert meta.observed_until_column is not None
+        assert meta.complete_column is not None
+        assert meta.reason_column is not None
+        public.extend(
+            [
+                output,
+                meta.observed_from_column,
+                meta.observed_until_column,
+                meta.complete_column,
+                meta.reason_column,
+            ]
+        )
+    public.extend(check.column for check in row_checks)
+    return TemporalResult(
+        builder.table.select(*dict.fromkeys(public)), columns, row_checks=tuple(row_checks)
+    )

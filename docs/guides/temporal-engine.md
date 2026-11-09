@@ -504,6 +504,37 @@ Use a supported read-only built-in or an owner-reviewed named source relation.
 This static gate does not replace least-privilege credentials or a trusted backend
 catalog; it is not a sandbox for hostile database functions.
 
+## Local batched window reduction
+
+The internal `terrine.temporal.aggregate.aggregate_windows` builder accepts
+resolved `AggregateRequest` records over normalized event sources. It reduces
+all requested raw windows locally; it does not read lifetime cumulative state.
+This boundary is internal, not a new user-authored execution mode. The ordinary
+compiler still uses the sparse-state path described below until its migration.
+
+Each primitive selects its own half-open interval and available candidate
+anchors before arithmetic. Compatible requests share source access without
+sharing incompatible predicates, denominators or availability. Each source is
+reduced at `(unit, anchor_id)` before independent sources are joined, so a ratio
+cannot multiply raw event rows. Duplicate anchor instances with distinct
+anchor IDs remain separate.
+
+Event counts include selected null values; event means divide by the selected
+nonnull count. For values `2, NULL, 3`, the count is `3`, sum is `5`, and event
+mean is `2.5`. Complete empty sums/counts are zero, complete empty conversions
+are false, and empty event means carry `no_observations`. Nonempty all-null
+sums/means remain unavailable with `all_values_null`. Coverage and unit
+observation bounds are output-specific; a ratio intersects both operands'
+source availability. An available zero divisor retains `zero_denominator`.
+Unknown filter candidates retain their provenance and refuse an available
+output instead of disappearing through a filter.
+
+The builder returns one multi-output `TemporalResult`. Its deferred validation
+must execute before export under the same snapshot. Integer and declared-decimal
+domains, per-input exact-float quantization and `below_resolution` notes remain
+intact. Native selected sums and divisions follow the backend's ordinary binary64
+arithmetic, without a lifetime-history error certificate.
+
 ## Sparse sufficient state
 
 The internal temporal builders consume normalized events and the existing

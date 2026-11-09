@@ -20,7 +20,9 @@ from tests._float_bound import window_sum_bound
 from tests.temporal.test_window_aggregates import (
     _anchors,
     _assert_quotient,
+    _batch,
     _exact_sum,
+    _local,
     _result,
     _rows,
     _state,
@@ -34,6 +36,70 @@ def con():
         yield connection
     finally:
         connection.disconnect()
+
+
+def test_local_batch_reduces_sources_before_joining_and_keeps_output_availability(con):
+    # Catches source fan-out and batch-wide availability replacing per-output bounds.
+    numerator = _local(
+        con,
+        [2, None, 3, 7, None, 2],
+        dtype="int64",
+        name="numerator",
+        units=["a", "a", "a", "a", "null", "zero"],
+        times=[datetime(2025, 1, d, 12, tzinfo=UTC) for d in (2, 2, 2, 3, 2, 2)],
+    )
+    denominator = _local(
+        con,
+        [1, 1, 1, 0],
+        dtype="int64",
+        name="denominator",
+        units=["a", "a", "null", "zero"],
+    )
+    start = datetime(2025, 1, 1, tzinfo=UTC)
+    end = datetime(2025, 1, 4, tzinfo=UTC)
+    readiness = Readiness(
+        {
+            "numerator": BoundCoverage(start, end),
+            "denominator": BoundCoverage(start, end - timedelta(days=1)),
+        }
+    )
+    anchors = _anchors(
+        con,
+        units=("a", "a", "null", "zero"),
+        extra=", TIMESTAMPTZ '2025-01-03 12:00:00+00' AS _observed_until",
+    )
+    result = _batch(
+        anchors,
+        [
+            ("ratio", [numerator, denominator], Window(0, "1d"), "ratio"),
+            ("wide_ratio", [numerator, denominator], Window(0, "2d"), "ratio"),
+            ("total", [numerator], Window(0, "1d"), "mean"),
+            ("wide_total", [numerator], Window(0, "2d"), "mean"),
+        ],
+        readiness=readiness,
+    )
+    rows = sorted(_rows(con, result), key=lambda row: row["anchor_id"])
+    assert [(r["total"], r["ratio"]) for r in rows] == [
+        (Decimal(5), 2.5),
+        (Decimal(5), 2.5),
+        (None, None),
+        (Decimal(2), None),
+    ]
+    assert [r[result.columns["ratio"].reason_column] for r in rows] == [
+        None,
+        None,
+        "all_values_null",
+        "zero_denominator",
+    ]
+    assert all(r[result.columns["wide_ratio"].reason_column] == "incomplete_coverage" for r in rows)
+    assert all(
+        r[result.columns["wide_total"].reason_column] == "incomplete_observation" for r in rows
+    )
+    row = rows[0]
+    assert row[result.columns["total"].observed_until_column] == datetime(
+        2025, 1, 3, 12, tzinfo=UTC
+    )
+    assert row[result.columns["ratio"].observed_until_column] == datetime(2025, 1, 3, tzinfo=UTC)
 
 
 # These exercise native quotient/calendar compilation through DuckDB execution.

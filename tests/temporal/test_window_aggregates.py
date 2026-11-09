@@ -57,6 +57,7 @@ def _state(
     boundary="UTC",
     active=None,
     exact=True,
+    local=False,
 ):
     n = len(values)
     fields = {"user_id": "string", "occurred_at": "timestamp('UTC')", "amount": dtype}
@@ -91,6 +92,8 @@ def _state(
         BoundMeasure("revenue", name, aggregation, filters, None, None, exact=exact),
         source=source,
     )
+    if local:
+        return measure, (events, source)
     grouped = (
         sparse_daily(events, measure, boundary, "user_id", source=source)
         if resolution == "day"
@@ -124,6 +127,11 @@ def _result(
 ):
     from terrine.temporal.aggregate import aggregate_window
 
+    if isinstance(pairs[0][1], tuple):
+        return _batch(
+            anchors, [(output, pairs, window, kind)], readiness=readiness, boundary=boundary
+        )
+
     measures = tuple(pair[0] for pair in pairs)
     metric = BoundMetric(
         "revenue",
@@ -155,6 +163,137 @@ def _result(
         resolution=resolution,
         strategy=strategy,
     )
+
+
+def _local(con, values, **kwargs):
+    return _state(con, values, local=True, **kwargs)
+
+
+def _batch(anchors, specifications, *, readiness=None, boundary="UTC"):
+    from terrine.temporal.aggregate import AggregateRequest, aggregate_windows
+
+    requests, sources = [], {}
+    for output, pairs, window, kind in specifications:
+        measures = tuple(pair[0] for pair in pairs)
+        metric = BoundMetric(
+            output,
+            "user",
+            {m.source_name: "user_id" for m in measures},
+            kind,
+            measures,
+            tuple(m.source_name for m in measures),
+            (),
+        )
+        requests.append(AggregateRequest(metric, window, output, "outcome"))
+        sources.update({m.source_name: source for m, source in pairs})
+    if readiness is None:
+        readiness = Readiness(
+            {
+                name: BoundCoverage(
+                    datetime(2025, 1, 1, tzinfo=UTC), datetime(2025, 1, 5, tzinfo=UTC)
+                )
+                for name in sources
+            }
+        )
+    return aggregate_windows(anchors, requests, sources, readiness, boundary=boundary)
+
+
+def test_batch_keeps_nonnull_denominators_half_open_bounds_and_anchor_instances(con):
+    # Catches count reuse as a nullable mean's denominator and inclusive end bounds.
+    t0 = datetime(2025, 1, 2, tzinfo=UTC)
+    pair = _local(
+        con,
+        [100, 2, None, 3, 100],
+        dtype="int64",
+        times=[t0 - timedelta(microseconds=1), t0, t0, t0, t0 + timedelta(days=1)],
+    )
+    measure, source = pair
+    result = _batch(
+        _anchors(con, units=("a", "a", "empty")),
+        [
+            ("counted", [(replace(measure, aggregation="count"), source)], _DEFAULT_WINDOW, "mean"),
+            (
+                "average",
+                [(replace(measure, aggregation="avg_event"), source)],
+                _DEFAULT_WINDOW,
+                "mean",
+            ),
+            ("total", [pair], _DEFAULT_WINDOW, "mean"),
+        ],
+    )
+    rows = sorted(_rows(con, result), key=lambda row: row["anchor_id"])
+    assert [(r["counted"], r["average"], r["total"]) for r in rows] == [
+        (3, 2.5, Decimal(5)),
+        (3, 2.5, Decimal(5)),
+        (0, None, Decimal(0)),
+    ]
+    assert [r[result.columns["average"].reason_column] for r in rows] == [
+        None,
+        None,
+        "no_observations",
+    ]
+    assert all(r[result.columns["total"].reason_column] is None for r in rows)
+
+
+@pytest.mark.parametrize("exact", [False, True])
+def test_batch_masks_unavailable_outputs_and_count_only_inputs_before_arithmetic(con, exact):
+    # Catches a wide count or unavailable output poisoning a narrower sum.
+    pair = _local(
+        con,
+        [1e308, 2.0, float("nan"), 1e308],
+        times=[datetime(2025, 1, d, 12, tzinfo=UTC) for d in (1, 2, 3, 4)],
+        exact=exact,
+    )
+    measure, source = pair
+    anchors = _anchors(con, extra=", TIMESTAMPTZ '2025-01-04 00:00:00+00' AS _observed_until")
+    result = _batch(
+        anchors,
+        [
+            ("narrow", [pair], _DEFAULT_WINDOW, "mean"),
+            (
+                "wide_count",
+                [(replace(measure, aggregation="count"), source)],
+                Window(0, "2d"),
+                "mean",
+            ),
+            ("unavailable", [pair], Window(0, "3d"), "mean"),
+        ],
+    )
+    (row,) = _rows(con, result)
+    assert (row["narrow"], row["wide_count"], row["unavailable"]) == (2.0, 2, None)
+    assert row[result.columns["narrow"].reason_column] is None
+    assert row[result.columns["unavailable"].reason_column] == "incomplete_observation"
+    assert row[result.columns["narrow"].observed_until_column] == datetime(2025, 1, 4, tzinfo=UTC)
+
+
+@pytest.mark.parametrize("exact", [False, True])
+def test_batch_selected_invalid_and_unknown_filter_candidates_still_refuse(con, exact):
+    # Catches dropping unknown predicates or hiding invalid available candidates.
+    pair = _local(con, [float("nan")], exact=exact)
+    result = _batch(_anchors(con), [("bad", [pair], _DEFAULT_WINDOW, "mean")])
+    with pytest.raises(TerrineError) as error:
+        _rows(con, result)
+    assert error.value.code == "terrine.temporal.float64_precision"
+    assert error.value.context["reason"] == "nonfinite_input"
+    pair = _local(con, [1], dtype="int64", active=[None])
+    result = _batch(_anchors(con), [("unknown", [pair], _DEFAULT_WINDOW, "mean")])
+    with pytest.raises(TerrineError) as error:
+        _rows(con, result)
+    assert error.value.code == "terrine.filter.unknown"
+
+
+def test_batch_quantizes_each_input_and_preserves_exact_output_domain(con):
+    # Catches quantizing after reduction and narrowing exact integer sums to int64.
+    small = _local(con, [4e-10, 4e-10], name="small")
+    wide = _local(con, [2**63 - 1, 2**63 - 1], dtype="int64", name="wide")
+    result = _batch(
+        _anchors(con),
+        [("small", [small], _DEFAULT_WINDOW, "mean"), ("wide", [wide], _DEFAULT_WINDOW, "mean")],
+    )
+    (row,) = _rows(con, result)
+    assert row["small"] == 0.0
+    assert row[result.columns["small"].reason_column] == "below_resolution"
+    assert row["wide"] == Decimal(2**64 - 2)
 
 
 def _rows(con, result):
@@ -387,7 +526,7 @@ def test_row_check_columns_are_true_only_on_failing_rows(con):
 def test_complete_empty_and_all_null_remain_distinct(
     con, aggregation, kind, expected, reasons, exact
 ):
-    pair = _state(
+    pair = _local(
         con, [None], dtype="float64", aggregation=aggregation, units=["null"], exact=exact
     )
     result = _result(_anchors(con, units=("empty", "null")), [pair], kind=kind)
@@ -571,7 +710,7 @@ def test_aggregate_string_counts_fail_closed(con, bad):
 
 
 def test_integer_sum_widens_without_losing_units_above_binary64_precision(con):
-    pair = _state(con, [2**63 - 1, 2**63 - 1], dtype="int64")
+    pair = _local(con, [2**63 - 1, 2**63 - 1], dtype="int64")
     result = _result(_anchors(con), [pair])
     row = _rows(con, result)[0]
     assert row["requested"] == Decimal(2**64 - 2)
@@ -676,7 +815,7 @@ def test_quantization_rounds_to_nearest_nano_unit(con, value, expected):
 def test_exact_sum_notes_discarded_sub_resolution_contributions(
     con, values, aggregation, expected, reason
 ):
-    pair = _state(con, values, aggregation=aggregation, exact=True)
+    pair = _local(con, values, aggregation=aggregation, exact=True)
     result = _result(_anchors(con), [pair])
     (row,) = _rows(con, result)
     meta = result.columns["requested"]
@@ -798,8 +937,8 @@ def test_bounded_float_denominator_overflow_refuses_instead_of_publishing(con):
     from terrine.backends.dialect import dialect_scope
 
     with dialect_scope("generic"):
-        numerator = _state(con, [1.0], name="numerator")
-        denominator = _state(con, [9e28, 9e28], name="denominator")
+        numerator = _local(con, [1.0], name="numerator")
+        denominator = _local(con, [9e28, 9e28], name="denominator")
         result = _result(_anchors(con), [numerator, denominator], kind="ratio")
         with pytest.raises(TerrineError) as error:
             _rows(con, result)

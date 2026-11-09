@@ -19,8 +19,7 @@ from terrine.errors import RefusalSpec
 from terrine.semantic.models import BoundMeasure, BoundSource
 from terrine.semantic.rules import UNKNOWN_FILTER
 from terrine.temporal.aggregate import TemporalResult, _Check
-from terrine.temporal.daily import _predicate
-from terrine.temporal.prefix import native_arithmetic
+from terrine.temporal.daily import _predicate, native_arithmetic
 from terrine.temporal.ranges import RangePlan, blocked_range_join
 from terrine.temporal.readiness import Readiness
 from terrine.windows import Window

@@ -2,6 +2,15 @@
 
 ## 0.1.0a1
 
+### Internal aggregation
+
+- Add a raw multi-output window reducer with output-specific availability,
+  half-open selection, nonnull event-mean denominators and source-local
+  reduction before cross-source ratios. Native arithmetic is window-local;
+  exact coefficient domains, per-input float quantization and discarded-term
+  notes are preserved. The ordinary compiler remains on its existing path
+  until the coordinated compiler migration.
+
 ### Breaking changes
 
 - Python 3.12 is the minimum supported version; CPython 3.12, 3.13 and 3.14

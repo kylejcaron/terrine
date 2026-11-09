@@ -219,6 +219,32 @@ Float32 widens to Float64 first. NULL stays NULL. There is no bitwise or
 order-independence promise in either mode. Row predicates compare original
 values; output thresholds compare published results.
 
+#### Local selected-input reducer
+
+The internal raw `aggregate_windows` reducer uses selected source-window
+contributions rather than lifetime prefix differences. Its native sums and
+divisions use ordinary backend binary64 arithmetic: normal order dependence,
+rounding and underflow are permitted, without a universal relative-error bound
+or a magnitude-history certificate. Selected nonfinite inputs and nonfinite
+published results still refuse. A wider count or an unavailable output does not
+make otherwise unconsumed inputs relevant to another sum's arithmetic.
+
+Exact inputs retain the backend's existing coefficient domains and final output
+narrowing. Exact floating inputs are selection-masked and quantized individually
+before reduction; discarded nonzero terms retain `below_resolution`. Native
+wide integers that Ibis describes as decimals convert losslessly to the exact
+coefficient domain before nullable selection, avoiding an unintended narrowing
+to the declared decimal alias. Fixed-domain accumulation guards apply to each
+consumed primitive/window, not the union of all source access.
+
+An explicitly identified exact-type overflow retains
+`terrine.temporal.exact_overflow`; native or ambiguous engine arithmetic errors
+preserve their original cause rather than being relabeled as exact overflow.
+This is an error-boundary distinction, not new live-warehouse conformance
+evidence. The ordinary compiler still uses the prefix policy below pending
+its migration; specialized cumulative-trajectory and cohort arithmetic guards
+are unchanged.
+
 #### Native float arithmetic (default)
 
 Finite values are summed in binary64 by the engine; the persisted prefix is

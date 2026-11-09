@@ -22,8 +22,8 @@ from terrine.semantic.models import (
     TableRef,
 )
 from terrine.temporal.attributes import enrich_events
-from terrine.temporal.daily import _sparse_group, resolve_measure, sparse_daily
-from terrine.temporal.prefix import _UNKNOWN_FIELDS, sparse_prefix
+from terrine.temporal.daily import _UNKNOWN_FIELDS, _sparse_group, resolve_measure, sparse_daily
+from terrine.temporal.prefix import sparse_prefix
 
 
 @pytest.fixture

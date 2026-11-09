@@ -8,7 +8,7 @@ BIGNUMERIC and Snowflake NUMBER(38, 0). Counts retain their native exact domains
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import cast
+from typing import Literal, cast
 
 import ibis
 import ibis.expr.datatypes as dt
@@ -21,6 +21,7 @@ from terrine.errors import RefusalSpec
 
 __all__ = [
     "EXACT_OVERFLOW",
+    "FLOAT64_PRECISION",
     "below_resolution",
     "coefficient_bounds",
     "count_literal",
@@ -44,6 +45,13 @@ EXACT_OVERFLOW = RefusalSpec(
     "The requested exact result cannot be represented by the native output type. "
     "Use a supported exact representation or a semantically sufficient window.",
 )
+
+FLOAT64_PRECISION = RefusalSpec(
+    "terrine.temporal.float64_precision",
+    "Float64 result unavailable ({reason}). Use finite inputs with magnitude below "
+    "10**29 whose quantized result fits binary64, or declared integer/decimal values.",
+)
+type Float64Failure = Literal["nonfinite_input", "out_of_range", "bound_overflow"]
 
 
 def exact_type(*like: ir.Value) -> dt.DataType:

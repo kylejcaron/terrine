@@ -5,7 +5,7 @@ import pytest
 
 from terrine.backends.dialect import dialect_scope
 from terrine.errors import TerrineError
-from terrine.temporal.prefix import _require_backend
+from terrine.temporal.daily import _require_backend
 
 
 def test_exact_prefix_refusal_names_minimum_version(monkeypatch):

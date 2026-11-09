@@ -9,6 +9,7 @@ from typing import Any, cast
 import ibis
 import ibis.expr.datatypes as dt
 import ibis.expr.types as ir
+from ibis.common.exceptions import IbisError
 
 from terrine.backends.dialect import current_dialect
 from terrine.backends.numeric import (
@@ -22,6 +23,7 @@ from terrine.backends.numeric import (
     quantized_float,
 )
 from terrine.backends.timestamps import local_day
+from terrine.errors import RefusalSpec
 from terrine.semantic.bind import _MISSING, _SCHEMA
 from terrine.semantic.models import BoundMeasure, BoundSource, Filter
 from terrine.semantic.predicates import lower_predicate
@@ -31,9 +33,48 @@ from terrine.semantic.rules import (
 )
 from terrine.semantic.time import boundary_timezone
 from terrine.temporal.attributes import _enriched_property_columns
-from terrine.temporal.prefix import _UNKNOWN_FIELDS, _require_backend, native_arithmetic
 
-__all__ = ["sparse_daily"]
+__all__ = ["native_arithmetic", "sparse_daily"]
+
+_EXACT_UNSUPPORTED = RefusalSpec(
+    "terrine.temporal.exact_unsupported",
+    "Backend {backend!r} lacks exact sparse BIGNUM state (minimum DuckDB {minimum}). "
+    "Use DuckDB 1.5 or later.",
+)
+_UNKNOWN_FIELDS = (
+    "unknown_filter_count",
+    "unknown_filter_null_count",
+    "unknown_filter_missing_count",
+    "unknown_filter_literal_count",
+    "unknown_filter_nonfinite_count",
+)
+_EXACT_FLOAT_COUNTS = (
+    "float64_nonfinite_count",
+    "float64_unrepresentable_count",
+    "float64_below_resolution_count",
+)
+_NATIVE_FLOAT_COUNTS = ("float64_nonfinite_count",)
+
+
+def _require_backend(table: ibis.Table) -> None:
+    """Check static backend/build metadata without running a capability query."""
+    try:
+        backend = table._find_backend(use_default=False).name
+    except IbisError:
+        backend = "unbound"
+    policy = current_dialect(*(table[name] for name in table.columns))
+    if not policy.supports_exact_prefix(backend):
+        raise _EXACT_UNSUPPORTED.error(backend=backend, minimum="1.5")
+
+
+def native_arithmetic(measure: BoundMeasure) -> bool:
+    """Whether a resolved non-count measure uses native binary64 arithmetic."""
+    return (
+        not measure.exact
+        and measure.aggregation != "count"
+        and measure.value_type is not None
+        and dt.dtype(measure.value_type).is_floating()
+    )
 
 
 def resolve_measure(
@@ -156,6 +197,98 @@ def _predicate(events: ibis.Table, measure: BoundMeasure, source: BoundSource):
     return predicate, observed_null, missing, literal_null, nonfinite
 
 
+def contributions(
+    events: ibis.Table,
+    measure: BoundMeasure,
+    *,
+    source: BoundSource,
+    consumed: ir.BooleanValue | None = None,
+    counting: bool = False,
+) -> tuple[ibis.Table, dict[str, ir.Value]]:
+    """Per-event sufficient primitives, selected before accumulation.
+
+    Unknown predicates contribute provenance, not values. Exact floating inputs
+    quantize individually; native inputs have no magnitude certificate.
+    """
+    table = events
+    used = {name.casefold() for name in events.columns}
+
+    def project(label: str, expression: ir.Value) -> ir.Value:
+        nonlocal table
+        name = f"__terrine_contribution_{label}"
+        while name.casefold() in used:
+            name += "_"
+        used.add(name.casefold())
+        table = table.mutate(**{name: expression})
+        return table[name]
+
+    predicate, observed_null, missing, literal_null, nonfinite = _predicate(events, measure, source)
+    predicate = cast(ir.BooleanValue, project("predicate", predicate))
+    active = cast(
+        ir.BooleanValue,
+        project(
+            "consumed",
+            ibis.literal(True) if consumed is None else consumed.fill_null(ibis.literal(False)),
+        ),
+    )
+    selected = cast(
+        ir.BooleanValue, project("selected", active & predicate.fill_null(ibis.literal(False)))
+    )
+    unknown = active & predicate.isnull()
+    one, zero = count_literal(1), count_literal(0)
+    fields: dict[str, ir.Value] = {"event_count": selected.ifelse(one, zero)}
+    if measure.filters:
+        fields.update(
+            zip(
+                _UNKNOWN_FIELDS,
+                (
+                    unknown.ifelse(one, zero),
+                    (unknown & observed_null).ifelse(one, zero),
+                    (unknown & missing).ifelse(one, zero),
+                    (unknown & literal_null).ifelse(one, zero),
+                    (unknown & nonfinite).ifelse(one, zero),
+                ),
+                strict=True,
+            )
+        )
+    if counting:
+        return table, fields
+    column = source.events[measure.event]
+    value = ibis.literal(1) if column is None else table[column]
+    fields["nonnull_count"] = (selected & value.notnull()).ifelse(one, zero)
+    if measure.aggregation == "count":
+        fields["sum_value"] = fields["event_count"]
+        return table, fields
+    assert measure.value_type is not None
+    dtype = dt.dtype(measure.value_type)
+    if dtype.is_floating():
+        value = project("value", selected.ifelse(value, ibis.null(value.type())))
+    if native_arithmetic(measure):
+        floating = value.cast(dt.float64)
+        finite = float_is_finite(floating)
+        fields["float64_nonfinite_count"] = (floating.notnull() & ~finite).ifelse(one, zero)
+        fields["sum_value"] = finite.ifelse(floating, ibis.null(dt.float64))
+    elif dtype.is_floating():
+        floating = cast(ir.FloatingValue, value)
+        quantized, invalid, unrepresentable = quantized_float(floating)
+        coefficient = project("coefficient", decimal_coefficient(quantized, 9))
+        fields.update(
+            sum_value=coefficient,
+            float64_nonfinite_count=invalid.ifelse(one, zero),
+            float64_unrepresentable_count=unrepresentable.ifelse(one, zero),
+            float64_below_resolution_count=below_resolution(floating, coefficient).ifelse(
+                one, zero
+            ),
+        )
+    else:
+        scale = dtype.scale if isinstance(dtype, dt.Decimal) else 0
+        # A native integer may have a narrower declared decimal alias. Convert
+        # directly to its exact coefficient before a typed NULL can narrow it.
+        coefficient = decimal_coefficient(value, scale or 0)
+        fields["sum_value"] = selected.ifelse(coefficient, ibis.null(coefficient.type()))
+    return table, fields
+
+
 def _sparse_group(
     events: ibis.Table,
     measure: BoundMeasure,
@@ -184,113 +317,32 @@ def _sparse_group(
     exact_floats = dtype.is_floating() and measure.aggregation != "count" and not native
     if not native:
         _require_backend(events)
-    predicate, observed_null, missing, literal_null, nonfinite = _predicate(events, measure, source)
-    filtered = bool(measure.filters)
-    selected = predicate.fill_null(False)
-    unknown = predicate.isnull()
-    column = source.events[measure.event]
-    value = ibis.literal(1) if column is None else events[column]
-    one, zero = count_literal(1), count_literal(0)
-    # An unfiltered measure selects every event: its predicate is the literal TRUE.
-    fields = {
-        "event_count": selected.ifelse(one, zero) if filtered else one,
-        "nonnull_count": (
-            (selected & value.notnull()).ifelse(one, zero)
-            if filtered
-            else one
-            if column is None
-            else value.notnull().ifelse(one, zero)
-        ),
-    }
-    if filtered:
-        fields.update(
-            zip(
-                _UNKNOWN_FIELDS,
-                (
-                    unknown.ifelse(one, zero),
-                    (unknown & observed_null).ifelse(one, zero),
-                    (unknown & missing).ifelse(one, zero),
-                    (unknown & literal_null).ifelse(one, zero),
-                    (unknown & nonfinite).ifelse(one, zero),
-                ),
-                strict=True,
-            )
-        )
-    # A single projection shares predicates and original leaves across all reductions.
-    leaf = events.select(
-        **{"_unit": events[unit_column], **keys, **fields},
-        **(
-            {"__terrine_selected": selected, "__terrine_possible": predicate.fill_null(True)}
-            if filtered
-            else {}
-        ),
-        __terrine_value=value,
-    )
-    if filtered:
-        leaf = leaf.filter(leaf.__terrine_possible)
-
-    def chosen(condition: ir.BooleanValue) -> ir.BooleanValue:
-        return leaf.__terrine_selected & condition if filtered else condition
-
-    aggregates = {name: exact_sum(leaf[name]) for name in fields}
+    events = events.mutate(**keys)
+    keys = {name: events[name] for name in keys}
+    if measure.filters:
+        predicate = _predicate(events, measure, source)[0]
+        events = events.filter(predicate.fill_null(True))
+        keys = {name: events[name] for name in keys}
+    events, fields = contributions(events, measure, source=source)
+    leaf = events.select(**{"_unit": events[unit_column], **keys, **fields})
+    value = leaf.sum_value
     if measure.aggregation == "count":
-        aggregates["sum_value"] = exact_sum(leaf.event_count)
-    elif native:
-        floating = leaf.__terrine_value.cast(dt.float64)
-        finite = float_is_finite(floating)
-        selected_value = chosen(floating.notnull())
-        aggregates["float64_nonfinite_count"] = exact_sum(
-            (selected_value & ~finite).ifelse(one, zero)
-        )
-        value = (selected_value & finite).ifelse(floating, ibis.null(dt.float64))
-        # A policy whose float arithmetic raises outside the range withholds a
-        # group's values before the backend adds them when their magnitudes may
-        # leave half of it, and reports the withheld rows so later prefixes
-        # refuse instead of reading an incomplete state.
-        leaf, value, admitted = guard_accumulation(leaf, value, partition=["_unit", *keys])
-        aggregates["sum_value"] = cast(ir.FloatingColumn, value).sum()
-        if admitted is not None:
-            aggregates["sum_bound"] = current_dialect(value).float_magnitude(value).sum()
-            aggregates["sum_withheld"] = exact_sum((~admitted).ifelse(one, zero))
+        admitted = None
     else:
-        source_value = leaf.__terrine_value
-        if exact_floats:
-            floating = cast(ir.FloatingValue, source_value)
-            quantized, nonfinite_value, unrepresentable = quantized_float(floating)
-            exact = decimal_coefficient(quantized, 9)
-            selected_value = chosen(source_value.notnull())
-            # A nonzero value the quantization rounds to zero leaves the sum
-            # silently; its count lets the window say so.
-            aggregates.update(
-                float64_nonfinite_count=exact_sum(
-                    (selected_value & nonfinite_value).ifelse(one, zero)
-                ),
-                float64_unrepresentable_count=exact_sum(
-                    (selected_value & unrepresentable).ifelse(one, zero)
-                ),
-                float64_below_resolution_count=exact_sum(
-                    (selected_value & below_resolution(floating, exact)).ifelse(one, zero)
-                ),
-            )
-        else:
-            scale = dtype.scale if isinstance(dtype, dt.Decimal) else 0
-            exact = decimal_coefficient(source_value, scale or 0)
-        coefficient = (
-            leaf.__terrine_selected.ifelse(exact, ibis.null().cast(exact.type()))
-            if filtered
-            else exact
+        leaf, value, admitted = guard_accumulation(leaf, value, partition=["_unit", *keys])
+    aggregates = {name: exact_sum(leaf[name]) for name in fields if name != "sum_value"}
+    aggregates["sum_value"] = (
+        cast(ir.FloatingColumn, value).sum()
+        if native
+        else exact_sum(value, admitted=admitted is not None)
+    )
+    if admitted is not None:
+        policy = current_dialect(value)
+        magnitude = policy.float_magnitude if native else policy.magnitude
+        aggregates["sum_bound"] = magnitude(value).sum()
+        aggregates["sum_withheld"] = exact_sum(
+            (~admitted).ifelse(count_literal(1), count_literal(0))
         )
-        # A fixed-precision policy withholds a group's coefficients before the
-        # backend adds them when their magnitudes may leave the domain, and
-        # reports the withheld rows so later prefixes refuse instead of
-        # reading an incomplete state.
-        leaf, coefficient, admitted = guard_accumulation(
-            leaf, coefficient, partition=["_unit", *keys]
-        )
-        aggregates["sum_value"] = exact_sum(coefficient, admitted=admitted is not None)
-        if admitted is not None:
-            aggregates["sum_bound"] = current_dialect(coefficient).magnitude(coefficient).sum()
-            aggregates["sum_withheld"] = exact_sum((~admitted).ifelse(one, zero))
     grouped = leaf.group_by("_unit", *keys).aggregate(**aggregates)
     return grouped.mutate(
         value_type=ibis.literal(measure.value_type),

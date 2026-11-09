@@ -13,8 +13,7 @@ from terrine.compile.layers import build_measure_layer, measure_identity
 from terrine.semantic.models import BoundMeasure, BoundMetric
 from terrine.semantic.rules import calendar_average_alignment
 from terrine.temporal.aggregate import TemporalResult, aggregate_window
-from terrine.temporal.daily import resolve_measure
-from terrine.temporal.prefix import native_arithmetic
+from terrine.temporal.daily import native_arithmetic, resolve_measure
 from terrine.windows import Window
 
 if TYPE_CHECKING:

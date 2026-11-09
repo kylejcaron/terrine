@@ -11,6 +11,7 @@ import terrine.reasons as reason_codes
 from terrine.backends.dialect import current_dialect, dialect_scope
 from terrine.backends.numeric import (
     EXACT_OVERFLOW,
+    FLOAT64_PRECISION,
     _scaled_text,
     exact_literal,
     exact_sum,
@@ -25,7 +26,6 @@ from terrine.temporal.aggregate import (
     _Check,
     narrow_exact,
 )
-from terrine.temporal.prefix import FLOAT64_PRECISION
 
 __all__ = ["compile_cohorts"]
 

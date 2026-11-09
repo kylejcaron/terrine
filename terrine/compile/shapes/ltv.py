@@ -12,6 +12,7 @@ import ibis.expr.types as ir
 import terrine.reasons as reason_codes
 from terrine.backends.numeric import (
     EXACT_OVERFLOW,
+    FLOAT64_PRECISION,
     exact_literal,
     exact_sum,
     float_is_finite,
@@ -25,7 +26,6 @@ from terrine.spec.design import Design
 from terrine.spec.expressions import MetricAgg
 from terrine.spec.trajectory import CohortSpec
 from terrine.temporal.aggregate import _Check, narrow_exact
-from terrine.temporal.prefix import FLOAT64_PRECISION
 from terrine.windows import Window, _elapsed
 
 _INVALID = RefusalSpec(

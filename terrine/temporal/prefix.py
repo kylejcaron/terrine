@@ -7,80 +7,24 @@ from typing import Literal, cast
 import ibis
 import ibis.expr.datatypes as dt
 import ibis.expr.types as ir
-from ibis.common.exceptions import IbisError
 from ibis.expr.builders import WindowBuilder
 
 from terrine.backends.dialect import current_dialect
 from terrine.backends.numeric import count_literal, exact_literal, exact_subtract, exact_sum
-from terrine.errors import RefusalSpec
 from terrine.semantic.bind import _SCHEMA
 from terrine.semantic.models import BoundMeasure
-
-__all__ = ["native_arithmetic", "sparse_prefix"]
-
-FLOAT64_PRECISION = RefusalSpec(
-    "terrine.temporal.float64_precision",
-    "Float64 result unavailable ({reason}). Use finite inputs with magnitude below "
-    "10**29 whose quantized result fits binary64, or declared integer/decimal values.",
+from terrine.temporal.daily import (
+    _EXACT_FLOAT_COUNTS,
+    _NATIVE_FLOAT_COUNTS,
+    _UNKNOWN_FIELDS,
+    _require_backend,
+    native_arithmetic,
 )
-_EXACT_UNSUPPORTED = RefusalSpec(
-    "terrine.temporal.exact_unsupported",
-    "Backend {backend!r} lacks exact sparse BIGNUM state (minimum DuckDB {minimum}). "
-    "Use DuckDB 1.5 or later.",
-)
-# Invalid float inputs or a published result beyond binary64's range.
-type Float64Failure = Literal["nonfinite_input", "out_of_range", "bound_overflow"]
 
-
-def _require_backend(table: ibis.Table) -> None:
-    """Check static backend/build metadata; never run a capability query here.
-
-    The policy in effect (the admitted scope, else the table's own backend)
-    decides whether it can hold this backend's exact prefix state.
-    """
-    try:
-        backend = table._find_backend(use_default=False).name
-    except IbisError:
-        backend = "unbound"
-    policy = current_dialect(*(table[name] for name in table.columns))
-    if not policy.supports_exact_prefix(backend):
-        raise _EXACT_UNSUPPORTED.error(backend=backend, minimum="1.5")
+__all__ = ["sparse_prefix"]
 
 
 _COUNT_FIELDS = ("event_count", "nonnull_count")
-# Provenance of events whose filter predicate is unknown; only a filtered
-# measure's state holds them, since an unfiltered predicate is the literal
-# TRUE and every such count would be zero.
-_UNKNOWN_FIELDS = (
-    "unknown_filter_count",
-    "unknown_filter_null_count",
-    "unknown_filter_missing_count",
-    "unknown_filter_literal_count",
-    "unknown_filter_nonfinite_count",
-)
-# Invalid inputs refused before quantized decimal accumulation, and nonzero
-# inputs the quantization discarded, which the window reports as a reason.
-_EXACT_FLOAT_COUNTS = (
-    "float64_nonfinite_count",
-    "float64_unrepresentable_count",
-    "float64_below_resolution_count",
-)
-# Non-finite inputs a native binary64 sum counts instead of adding.
-_NATIVE_FLOAT_COUNTS = ("float64_nonfinite_count",)
-
-
-def native_arithmetic(measure: BoundMeasure) -> bool:
-    """Whether a resolved measure accumulates its float values in native binary64.
-
-    Only a float sum or average declared ``exact=False`` does; counts and
-    integer or decimal values keep exact state.
-    """
-    return (
-        not measure.exact
-        and measure.aggregation != "count"
-        and measure.value_type is not None
-        and dt.dtype(measure.value_type).is_floating()
-    )
 
 
 def _running_sum(value: ir.Value, window: WindowBuilder, *, admitted: bool = False) -> ir.Value:
