@@ -146,12 +146,16 @@ From `0.1.0a1`:
 | Design and definition JSON/YAML, Catalog YAML | Every 1.x release reads every 1.x document version |
 | Manifests, Arrow/Parquet metadata, and durable reopen records: `ReopenableSnapshot` and the snapshot references a published dataset needs to reopen | Readable throughout 1.x |
 | Runtime owner database | A recorded schema version, currently 1. A namespace from before 1.0, or from a newer release, refuses with `terrine.runtime.schema_unsupported` before any write; a later version migrates through the owner (see [runtime schema](materialization-runtime.md#build-and-plan-from-a-model-and-design)) |
-| Ephemeral execution records: saved plans, run requests, plan invocations and run receipts | Same format version only; another version refuses with its existing code, such as `terrine.runtime.saved_plan_mismatch`, and is planned again from the Model and Design |
+| Saved execution plans | Execution and replay require the current envelope, plan definition and execution revision. Version-1 saved plans remain checksum-verifiable for inspection, status/events/cancellation and snapshot-pin release; replan obsolete execution from the saved Design or dataset definition and the current Model. |
+| Other ephemeral execution records: run requests, plan invocations and run receipts | Same format version only; another version refuses with its existing code and is planned again from the Model and Design. |
 
 Design and dataset-definition documents are version 4, with fields equal to
 their defaults omitted ([design specifications](design-specs.md)); Catalog
 documents are version 3 and version 2 Catalog documents still load with every
-measure exact; manifest and saved-plan envelopes are version 1.
+measure exact. Dataset manifests use envelope version 1; saved plans use
+envelope version 2 and runtime plan definitions use version 3. Historical
+administrative compatibility does not permit obsolete execution or replay
+([retained execution](materialization-runtime.md)).
 
 ### Identity rules
 

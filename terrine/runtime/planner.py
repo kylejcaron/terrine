@@ -523,7 +523,7 @@ def admit_execution(
             reason="execution_revision_mismatch",
             execution_revision=plan.definition.execution_revision,
             required_revision=EXECUTION_REVISION,
-            route="Rebuild the plan from its dataset definition and refresh.",
+            route="Rebuild from the saved Design or dataset definition and the current Model.",
         )
     if (not plan.tasks and plan.definition.reuse_base_generation is None) or (
         plan.definition.reuse_base_generation is not None
