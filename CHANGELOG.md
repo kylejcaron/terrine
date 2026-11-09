@@ -29,6 +29,9 @@
 - Keep DuckDB mixed naive/aware comparisons within their original timestamp
   domains using exact timestamp parts, so unused finite endpoint events do not
   overflow UTC attachment during raw-window selection.
+- Extract DuckDB microsecond timestamp parts from native epoch ticks rather than
+  calendar differences, preserving equal and adjacent naive/aware instants at
+  finite timestamp endpoints.
 
 ### Breaking changes
 

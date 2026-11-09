@@ -565,6 +565,8 @@ while deciding whether a distant requested window consumes it.
 DuckDB compares mixed naive/aware timestamps through exact timestamp parts,
 without attaching a zone to wide naive source instants. This preserves raw
 selection over valid finite endpoints even when the session is not UTC.
+Microsecond parts use native epoch ticks rather than a calendar difference,
+preserving equality and adjacent representable ticks near the finite endpoints.
 
 The internal `compile.numeric.lower_aggregates` chooses raw input for a single
 distinct fixed origin, relative windows, partial days or unproven alignment.

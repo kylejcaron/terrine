@@ -100,6 +100,12 @@ def _utc_aware(zone, timestamp):
     """Attach UTC explicitly to a naive UTC wall-clock value."""
 
 
+@ibis.udf.scalar.builtin(name="epoch_us")
+def _epoch_microseconds(value) -> int:
+    """Read exact native microseconds without calendar or zone conversion."""
+    raise NotImplementedError
+
+
 @ibis.udf.scalar.builtin(name="isfinite")
 def _timestamp_isfinite(value) -> bool:
     """Native timestamp finiteness predicate."""
@@ -259,7 +265,11 @@ class DuckDBDialect(Dialect):
         finite = self.timestamp_is_finite(value)
         epoch = _epoch(dtype)
         instant = cast(ir.TimestampValue, finite.ifelse(value, epoch))
-        coefficient = instant.delta(epoch, unit=unit)
+        coefficient = (
+            cast(ir.IntegerValue, _epoch_microseconds(instant))
+            if scale == 6
+            else instant.delta(epoch, unit=unit)
+        )
         seconds = self.truncating_quotient(coefficient, divisor)
         # Ibis renders a nanosecond delta as a bare subtraction, so `delta % n` would
         # bind as `a - (b % n)`; the remainder is taken by subtraction instead.

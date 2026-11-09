@@ -191,17 +191,38 @@ def test_duckdb_mixed_utc_comparisons_preserve_finite_timestamp_endpoints():
     """Naive UTC clocks keep their full domain when compared to aware instants."""
     anchor = datetime(2025, 1, 2, tzinfo=UTC)
     anchor_us = (anchor - datetime(1970, 1, 1, tzinfo=UTC)) // timedelta(microseconds=1)
+    minimum, maximum = -9_223_372_022_400_000_000, 2**63 - 2
     coordinates = [
-        -9_223_372_022_400_000_000,
+        minimum,
         -1,
         0,
         1,
         anchor_us - 1,
         anchor_us,
         anchor_us + 1,
-        2**63 - 2,
+        maximum,
         None,
     ]
+    pairs: list[tuple[int | None, int | None]] = [(value, anchor_us) for value in coordinates]
+    pairs.extend(
+        (edge + left, edge + right)
+        for edge, step in ((minimum, 1), (maximum, -1))
+        for left, right in ((0, 0), (0, step), (step, step))
+    )
+    pairs.append((0, None))
+
+    @ibis.udf.scalar.builtin(
+        name="make_timestamptz", signature=((dt.int64,), dt.Timestamp(timezone="UTC", scale=6))
+    )
+    def aware_from_microseconds(value):
+        """Construct an aware instant directly from native microsecond ticks."""
+
+    @ibis.udf.scalar.builtin(
+        name="epoch_us", signature=((dt.Timestamp(timezone="UTC", scale=6),), dt.int64)
+    )
+    def epoch_microseconds(value):
+        """Read native ticks without formatting an out-of-Python-range datetime."""
+
     con, _ = _new_york_session()
     operations = ("lt", "le", "gt", "ge", "eq")
     try:
@@ -209,27 +230,32 @@ def test_duckdb_mixed_utc_comparisons_preserve_finite_timestamp_endpoints():
             "finite_endpoints",
             pa.table(
                 {
-                    "i": list(range(len(coordinates))),
-                    "at": pa.array(coordinates, pa.int64()).cast(pa.timestamp("us")),
+                    "i": list(range(len(pairs))),
+                    "at": pa.array([left for left, _ in pairs], pa.int64()).cast(
+                        pa.timestamp("us")
+                    ),
+                    "aware_us": pa.array([right for _, right in pairs], pa.int64()),
                 }
             ),
         )
-        point = cast(ir.TimestampValue, ibis.literal(anchor))
+        point = cast(ir.TimestampValue, aware_from_microseconds(table.aware_us))
         rows = con.to_pyarrow(
             table.select(
                 "i",
+                aware_ticks=epoch_microseconds(point),
                 **{op: compare_timestamps(table.at, point, op) for op in operations},
                 **{f"reverse_{op}": compare_timestamps(point, table.at, op) for op in operations},
             )
         ).to_pylist()
     finally:
         con.disconnect()
-    assert len(rows) == len(coordinates)
+    assert len(rows) == len(pairs)
     for row in rows:
-        coordinate = coordinates[row["i"]]
+        coordinate, point_us = pairs[row["i"]]
+        assert row["aware_ticks"] == point_us
         for prefix, left, right in (
-            ("", coordinate, anchor_us),
-            ("reverse_", anchor_us, coordinate),
+            ("", coordinate, point_us),
+            ("reverse_", point_us, coordinate),
         ):
             expected = (
                 dict.fromkeys(operations)
@@ -242,7 +268,7 @@ def test_duckdb_mixed_utc_comparisons_preserve_finite_timestamp_endpoints():
                     "eq": left == right,
                 }
             )
-            assert {op: row[prefix + op] for op in operations} == expected
+            assert {op: row[prefix + op] for op in operations} == expected, (prefix, left, right)
 
 
 @pytest.mark.parametrize(
