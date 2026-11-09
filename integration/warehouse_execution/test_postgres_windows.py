@@ -433,9 +433,14 @@ def test_selected_native_arithmetic_preserves_backend_numeric_errors(
     design = _design(value=tr.agg(metric, window=("-1d", "0s")))
     with pytest.raises(Exception) as error:
         _rows(_native_model(con), design)
-    assert not isinstance(error.value, TerrineError)
-    # SQLSTATE numeric_value_out_of_range, independent of driver type or wording.
-    assert getattr(error.value, "sqlstate", None) == "22003"
+    cause: BaseException | None = error.value
+    while cause is not None:
+        assert getattr(cause, "code", None) != "terrine.temporal.exact_overflow"
+        if getattr(cause, "sqlstate", None) == "22003":
+            break
+        cause = cause.__cause__ or cause.__context__
+    # SQLSTATE numeric_value_out_of_range survives a permitted execution wrapper.
+    assert cause is not None
     before = _design(value=tr.agg("weight", window=("-10d", "-5d")))
     assert {row["unit"]: row["value"] for row in _rows(_native_model(con), before)}["d"] == 0.0
 
