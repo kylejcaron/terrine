@@ -1,0 +1,18 @@
+{
+  "python": "3.12.11",
+  "platform": "macOS-15.7.4-arm64-arm-64bit",
+  "ibis": "12.0.0",
+  "pyarrow": "23.0.1",
+  "args": {
+    "backend": "duckdb",
+    "postgres_url": null,
+    "units": 1000,
+    "events_per_unit": 300,
+    "modes": "integer",
+    "anchors": "21",
+    "repeats": 3,
+    "full": false,
+    "variants": "current,direct,bucketed",
+    "output": "benchmarks/results/query-spike-duckdb-exact-dense-20261108"
+  }
+}

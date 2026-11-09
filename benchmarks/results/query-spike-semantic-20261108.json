@@ -1,0 +1,23 @@
+{
+  "known_answers": {
+    "empty count and sum are zero": true,
+    "empty average is unavailable": true,
+    "zero denominator is unavailable": true,
+    "all null is not zero": true,
+    "half open bounds and selected rows": true,
+    "source completeness stays per window": true,
+    "observation boundary withdraws value": true,
+    "unknown predicate gates complete output": true,
+    "excluded nonfinite history does not poison window": true,
+    "selected nonfinite input gates output": true
+  },
+  "intentional_contract_changes": [
+    "excluded float history does not affect value",
+    "excluded nonfinite history does not refuse"
+  ],
+  "limits": [
+    "one source, UTC days, native float",
+    "no dimension-history unavailable-label distinction",
+    "not a full Frame execution or persisted implementation"
+  ]
+}
