@@ -129,7 +129,11 @@ def _result(
 
     if isinstance(pairs[0][1], tuple):
         return _batch(
-            anchors, [(output, pairs, window, kind)], readiness=readiness, boundary=boundary
+            anchors,
+            [(output, pairs, window, kind)],
+            readiness=readiness,
+            boundary=boundary,
+            resolution=resolution,
         )
 
     measures = tuple(pair[0] for pair in pairs)
@@ -169,7 +173,7 @@ def _local(con, values, **kwargs):
     return _state(con, values, local=True, **kwargs)
 
 
-def _batch(anchors, specifications, *, readiness=None, boundary="UTC"):
+def _batch(anchors, specifications, *, readiness=None, boundary="UTC", resolution="event"):
     from terrine.temporal.aggregate import AggregateRequest, aggregate_windows
 
     requests, sources = [], {}
@@ -195,12 +199,15 @@ def _batch(anchors, specifications, *, readiness=None, boundary="UTC"):
                 for name in sources
             }
         )
-    return aggregate_windows(anchors, requests, sources, readiness, boundary=boundary)
+    return aggregate_windows(
+        anchors, requests, sources, readiness, boundary=boundary, resolution=resolution
+    )
 
 
-def test_batch_keeps_nonnull_denominators_half_open_bounds_and_anchor_instances(con):
+@pytest.mark.parametrize("resolution", ["event", "day"])
+def test_batch_keeps_nonnull_denominators_half_open_bounds_and_anchor_instances(con, resolution):
     # Catches count reuse as a nullable mean's denominator and inclusive end bounds.
-    t0 = datetime(2025, 1, 2, tzinfo=UTC)
+    t0 = datetime(2025, 1, 1, 18, 30, tzinfo=UTC)
     pair = _local(
         con,
         [100, 2, None, 3, 100],
@@ -209,7 +216,7 @@ def test_batch_keeps_nonnull_denominators_half_open_bounds_and_anchor_instances(
     )
     measure, source = pair
     result = _batch(
-        _anchors(con, units=("a", "a", "empty")),
+        _anchors(con, time=t0.isoformat(), units=("a", "a", "empty")),
         [
             ("counted", [(replace(measure, aggregation="count"), source)], _DEFAULT_WINDOW, "mean"),
             (
@@ -219,7 +226,10 @@ def test_batch_keeps_nonnull_denominators_half_open_bounds_and_anchor_instances(
                 "mean",
             ),
             ("total", [pair], _DEFAULT_WINDOW, "mean"),
+            ("wide", [pair], Window(0, "2d"), "mean"),
         ],
+        boundary="UTC+05:30",
+        resolution=resolution,
     )
     rows = sorted(_rows(con, result), key=lambda row: row["anchor_id"])
     assert [(r["counted"], r["average"], r["total"]) for r in rows] == [
@@ -233,10 +243,14 @@ def test_batch_keeps_nonnull_denominators_half_open_bounds_and_anchor_instances(
         "no_observations",
     ]
     assert all(r[result.columns["total"].reason_column] is None for r in rows)
+    assert [row["wide"] for row in rows] == [Decimal(105), Decimal(105), Decimal(0)]
 
 
 @pytest.mark.parametrize("exact", [False, True])
-def test_batch_masks_unavailable_outputs_and_count_only_inputs_before_arithmetic(con, exact):
+@pytest.mark.parametrize("resolution", ["event", "day"])
+def test_batch_masks_unavailable_outputs_and_count_only_inputs_before_arithmetic(
+    con, exact, resolution
+):
     # Catches a wide count or unavailable output poisoning a narrower sum.
     pair = _local(
         con,
@@ -258,6 +272,7 @@ def test_batch_masks_unavailable_outputs_and_count_only_inputs_before_arithmetic
             ),
             ("unavailable", [pair], Window(0, "3d"), "mean"),
         ],
+        resolution=resolution,
     )
     (row,) = _rows(con, result)
     assert (row["narrow"], row["wide_count"], row["unavailable"]) == (2.0, 2, None)
@@ -267,33 +282,67 @@ def test_batch_masks_unavailable_outputs_and_count_only_inputs_before_arithmetic
 
 
 @pytest.mark.parametrize("exact", [False, True])
-def test_batch_selected_invalid_and_unknown_filter_candidates_still_refuse(con, exact):
+@pytest.mark.parametrize("resolution", ["event", "day"])
+def test_batch_selected_invalid_and_unknown_filter_candidates_still_refuse(con, exact, resolution):
     # Catches dropping unknown predicates or hiding invalid available candidates.
     pair = _local(con, [float("nan")], exact=exact)
-    result = _batch(_anchors(con), [("bad", [pair], _DEFAULT_WINDOW, "mean")])
+    result = _batch(
+        _anchors(con), [("bad", [pair], _DEFAULT_WINDOW, "mean")], resolution=resolution
+    )
     with pytest.raises(TerrineError) as error:
         _rows(con, result)
     assert error.value.code == "terrine.temporal.float64_precision"
     assert error.value.context["reason"] == "nonfinite_input"
     pair = _local(con, [1], dtype="int64", active=[None])
-    result = _batch(_anchors(con), [("unknown", [pair], _DEFAULT_WINDOW, "mean")])
+    result = _batch(
+        _anchors(con), [("unknown", [pair], _DEFAULT_WINDOW, "mean")], resolution=resolution
+    )
     with pytest.raises(TerrineError) as error:
         _rows(con, result)
     assert error.value.code == "terrine.filter.unknown"
 
 
-def test_batch_quantizes_each_input_and_preserves_exact_output_domain(con):
+@pytest.mark.parametrize("resolution", ["event", "day"])
+def test_batch_quantizes_each_input_and_preserves_exact_output_domain(con, resolution):
     # Catches quantizing after reduction and narrowing exact integer sums to int64.
     small = _local(con, [4e-10, 4e-10], name="small")
     wide = _local(con, [2**63 - 1, 2**63 - 1], dtype="int64", name="wide")
+    native = _local(con, [4e-10, 4e-10], name="native", exact=False)
     result = _batch(
         _anchors(con),
-        [("small", [small], _DEFAULT_WINDOW, "mean"), ("wide", [wide], _DEFAULT_WINDOW, "mean")],
+        [
+            ("small", [small], _DEFAULT_WINDOW, "mean"),
+            ("wide", [wide], _DEFAULT_WINDOW, "mean"),
+            ("native", [native], _DEFAULT_WINDOW, "mean"),
+        ],
+        resolution=resolution,
     )
     (row,) = _rows(con, result)
     assert row["small"] == 0.0
     assert row[result.columns["small"].reason_column] == "below_resolution"
     assert row["wide"] == Decimal(2**64 - 2)
+    assert row["native"] == pytest.approx(8e-10, rel=1e-15)
+    assert row[result.columns["native"].reason_column] is None
+
+
+def test_daily_scope_excludes_unused_days_and_units(con):
+    # An envelope or missing unit key would evaluate overflowing unused buckets.
+    pair = _local(
+        con,
+        [2.0, 1e308, 1e308, 3.0, float("nan")],
+        times=[datetime(2025, 1, day, 12, tzinfo=UTC) for day in (1, 2, 2, 3, 1)],
+        units=["a", "a", "a", "a", "unrelated"],
+        exact=False,
+    )
+    anchors = con.sql(
+        "SELECT 'a' AS unit, id AS anchor_id, t0 FROM (VALUES "
+        "('first', TIMESTAMPTZ '2025-01-01'), "
+        "('last', TIMESTAMPTZ '2025-01-03')) AS a(id, t0)"
+    )
+    result = _batch(anchors, [("value", [pair], _DEFAULT_WINDOW, "mean")], resolution="day")
+    rows = sorted(_rows(con, result), key=lambda row: row["anchor_id"])
+    assert [row["value"] for row in rows] == [2.0, 3.0]
+    assert all(row[result.columns["value"].reason_column] is None for row in rows)
 
 
 def _rows(con, result):
@@ -933,13 +982,28 @@ def test_wide_float_history_sums_exactly_on_duckdb(con, amount):
     assert abs(Fraction(value) - sum(map(Fraction, values))) <= window_sum_bound(values)
 
 
-def test_bounded_float_denominator_overflow_refuses_instead_of_publishing(con):
+@pytest.mark.parametrize("resolution", ["event", "day"])
+@pytest.mark.parametrize("same_bucket", [True, False])
+def test_bounded_float_denominator_overflow_refuses_instead_of_publishing(
+    con, resolution, same_bucket
+):
     from terrine.backends.dialect import dialect_scope
 
     with dialect_scope("generic"):
         numerator = _local(con, [1.0], name="numerator")
-        denominator = _local(con, [9e28, 9e28], name="denominator")
-        result = _result(_anchors(con), [numerator, denominator], kind="ratio")
+        denominator = _local(
+            con,
+            [9e28, 9e28],
+            name="denominator",
+            times=[datetime(2025, 1, day, 12, tzinfo=UTC) for day in (2, 2 if same_bucket else 3)],
+        )
+        result = _result(
+            _anchors(con),
+            [numerator, denominator],
+            kind="ratio",
+            window=Window(0, "2d"),
+            resolution=resolution,
+        )
         with pytest.raises(TerrineError) as error:
             _rows(con, result)
     assert error.value.code == "terrine.temporal.exact_overflow"

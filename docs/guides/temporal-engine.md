@@ -507,10 +507,11 @@ catalog; it is not a sandbox for hostile database functions.
 ## Local batched window reduction
 
 The internal `terrine.temporal.aggregate.aggregate_windows` builder accepts
-resolved `AggregateRequest` records over normalized event sources. It reduces
-all requested raw windows locally; it does not read lifetime cumulative state.
-This boundary is internal, not a new user-authored execution mode. The ordinary
-compiler still uses the sparse-state path described below until its migration.
+resolved `AggregateRequest` records over normalized event sources. Its `event`
+and `day` forms share contribution selection and publication; neither reads
+lifetime cumulative state. This boundary is internal, not a new user-authored
+execution mode. The ordinary compiler still uses the sparse-state path described
+below until its migration.
 
 Each primitive selects its own half-open interval and available candidate
 anchors before arithmetic. Compatible requests share source access without
@@ -534,6 +535,40 @@ must execute before export under the same snapshot. Integer and declared-decimal
 domains, per-input exact-float quantization and `below_resolution` notes remain
 intact. Native selected sums and divisions follow the backend's ordinary binary64
 arithmetic, without a lifetime-history error certificate.
+
+The daily form first derives distinct required `(unit, bucket)` identities from
+available requests. It does not summarize unused units or the days between
+disjoint requests. Each equivalent primitive has its own consumption flag within
+that shared scope: a bucket needed only by a count cannot enter a sum's float
+conversion, finite checks, exact quantization or arithmetic. Duplicate anchors
+and overlapping requests cannot multiply events within a primitive/bucket.
+Only wholly contained fixed-offset local days are usable, including offsets
+such as `UTC+05:30`; partial edge buckets are never reconstructed.
+
+The internal `compile.numeric.lower_aggregates` chooses raw input for a single
+distinct fixed origin, relative windows, partial days or unproven alignment.
+Repeated, statically aligned fixed/scheduled origins may share daily summaries.
+Mixed representations preserve requested output order and metadata. Strategy
+labels are `local_event/native_float`, `local_day/native_float` and
+`local_event/exact` or `local_day/exact`; the exact label includes counts,
+integer and declared-decimal domains. Selection reads declarations, not source
+row counts, and uses no density threshold or persisted summary cache.
+
+Exact floats quantize each input before grouping, not the daily sum: two
+`4e-10` values retain zero with `below_resolution`, while native arithmetic
+retains approximately `8e-10`. Daily grouping changes the order of native sums;
+raw/day bit identity is not promised for ill-conditioned values. Exact bounded
+accumulation guards both bucket formation and merging, carrying withheld flags
+only to consuming outputs. Only existing lossless integer/declared-decimal
+coefficient conversion precedes nullable selection; all guards and sums follow
+the primitive's mask.
+
+Daily scope has relational cost: deriving observed identities, reducing unique
+consumption flags, joining back to events, grouping buckets and merging them.
+An engine may share source scans with CTEs, but larger SQL/plans and compilation
+overhead remain possible even on tiny inputs. This is a declaration-based
+choice, not a guarantee that daily summaries are faster for every workload.
+
 
 ## Sparse sufficient state
 

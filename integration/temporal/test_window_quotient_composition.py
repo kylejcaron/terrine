@@ -38,7 +38,8 @@ def con():
         connection.disconnect()
 
 
-def test_local_batch_reduces_sources_before_joining_and_keeps_output_availability(con):
+@pytest.mark.parametrize("resolution", ["event", "day"])
+def test_local_batch_reduces_sources_before_joining_and_keeps_output_availability(con, resolution):
     # Catches source fan-out and batch-wide availability replacing per-output bounds.
     numerator = _local(
         con,
@@ -77,6 +78,7 @@ def test_local_batch_reduces_sources_before_joining_and_keeps_output_availabilit
             ("wide_total", [numerator], Window(0, "2d"), "mean"),
         ],
         readiness=readiness,
+        resolution=resolution,
     )
     rows = sorted(_rows(con, result), key=lambda row: row["anchor_id"])
     assert [(r["total"], r["ratio"]) for r in rows] == [

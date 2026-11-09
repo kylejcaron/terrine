@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from typing import Any, cast
 
@@ -287,6 +287,39 @@ def contributions(
         coefficient = decimal_coefficient(value, scale or 0)
         fields["sum_value"] = selected.ifelse(coefficient, ibis.null(coefficient.type()))
     return table, fields
+
+
+def reduce_payload(
+    table: ibis.Table,
+    keys: Sequence[str],
+    *,
+    native_values: Sequence[str],
+    exact_values: Sequence[str],
+) -> tuple[ibis.Table, dict[str, str]]:
+    """Accumulate a selected payload, withholding bounded exact sums before SUM."""
+    withheld = {}
+    bounded = set()
+    for name in exact_values:
+        table, value, admitted = guard_accumulation(table, table[name], partition=keys)
+        if admitted is not None:
+            flag = f"{name}_withheld"
+            while flag in table.columns:
+                flag += "_"
+            table = table.mutate(
+                **{name: value, flag: (~admitted).ifelse(count_literal(1), count_literal(0))}
+            )
+            withheld[name] = flag
+            bounded.add(name)
+    aggregates = {
+        name: (
+            cast(ir.FloatingColumn, table[name]).sum()
+            if name in native_values
+            else exact_sum(table[name], admitted=name in bounded)
+        )
+        for name in table.columns
+        if name not in keys
+    }
+    return table.group_by(*keys).aggregate(**aggregates), withheld
 
 
 def _sparse_group(

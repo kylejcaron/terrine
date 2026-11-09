@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import ibis
@@ -445,3 +446,64 @@ def test_native_float_window_failures_are_coded_refusals(
     # An empty window is still zero, even after a withheld or invalid history.
     before = _design(value=tr.agg("weight", window=("-10d", "-5d")))
     assert {row["unit"]: row["value"] for row in _rows(_native_model(con), before)}["d"] == 0.0
+
+
+def test_summary_masks_sum_buckets_consumed_only_by_count(postgres_scratch):  # noqa: F811
+    from terrine.backends.dialect import dialect_scope
+    from terrine.compile.numeric import CompileContext, lower_aggregates
+    from terrine.semantic.bind import normalize_events
+    from terrine.temporal.aggregate import AggregateRequest
+    from terrine.windows import Window
+
+    con = postgres_scratch.con
+    con.raw_sql("CREATE TABLE users(user_id TEXT)").close()
+    con.raw_sql("INSERT INTO users VALUES ('a')").close()
+    con.raw_sql(
+        "CREATE TABLE events(user_id TEXT, occurred_at TIMESTAMPTZ, weight DOUBLE PRECISION)"
+    ).close()
+    con.raw_sql(
+        "INSERT INTO events VALUES ('a', '2025-01-01 12:00:00+00', 1e308),"
+        "('a', '2025-01-01 12:00:00+00', 1e308),"
+        "('a', '2025-01-02 12:00:00+00', 1)"
+    ).close()
+    model = tr.Model.from_tables(
+        con,
+        units={"user": tr.UnitSource("users", "user_id")},
+        events={
+            "orders": tr.Events(
+                "events",
+                time="occurred_at",
+                key="user_id",
+                metrics={"count": tr.count(), "weight": tr.sum("weight")},
+                complete=("2024-12-01", "2025-02-01"),
+            )
+        },
+    )
+    source = model.sources["orders"]
+    events = normalize_events(con.table("events"), source, source.units["user"])
+    anchors = con.sql(
+        "SELECT 'a' AS unit, id AS anchor_id, t0 FROM (VALUES "
+        "('first', TIMESTAMPTZ '2025-01-03'), "
+        "('last', TIMESTAMPTZ '2025-01-04')) AS a(id, t0)"
+    )
+    fixed = [datetime(2025, 1, day, tzinfo=UTC) for day in (3, 4)]
+    with dialect_scope("postgres"):
+        lowered = lower_aggregates(
+            CompileContext(model, "user", fixed, lambda _: events, {}),
+            [
+                AggregateRequest(model.metrics["count"], Window("-3d", 0), "count", "feature"),
+                AggregateRequest(model.metrics["weight"], Window("-1d", 0), "weight", "feature"),
+            ],
+            anchors=anchors,
+            relative=False,
+        )
+    assert lowered.strategies == {
+        "count": "local_day/exact",
+        "weight": "local_day/native_float",
+    }
+    lowered.result.validate(con.to_pyarrow)
+    rows = sorted(con.to_pyarrow(lowered.result.table).to_pylist(), key=lambda r: r["anchor_id"])
+    assert [(row["count"], row["weight"]) for row in rows] == [(3, 1.0), (3, 0.0)]
+    assert all(
+        row[meta.reason_column] is None for row in rows for meta in lowered.result.columns.values()
+    )

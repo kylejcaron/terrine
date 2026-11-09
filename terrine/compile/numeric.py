@@ -1,10 +1,11 @@
-"""Lowering of additive metric windows onto shared sparse prefix states."""
+"""Lowering additive metric windows onto local reductions and sparse prefix states."""
 
 from __future__ import annotations
 
-from collections.abc import Callable, MutableMapping, Sequence
+from collections.abc import Callable, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal
 
 import ibis
@@ -12,7 +13,12 @@ import ibis
 from terrine.compile.layers import build_measure_layer, measure_identity
 from terrine.semantic.models import BoundMeasure, BoundMetric
 from terrine.semantic.rules import calendar_average_alignment
-from terrine.temporal.aggregate import TemporalResult, aggregate_window
+from terrine.temporal.aggregate import (
+    AggregateRequest,
+    TemporalResult,
+    aggregate_window,
+    aggregate_windows,
+)
 from terrine.temporal.daily import native_arithmetic, resolve_measure
 from terrine.windows import Window
 
@@ -116,4 +122,77 @@ def lower_aggregate(
     native = any(native_arithmetic(measure) for measure in resolved)
     return LoweredAggregate(
         result, f"sparse_{resolution}_prefix/{'native_float' if native else 'native'}"
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class LoweredAggregates:
+    """A batch of local additive windows and their declared physical strategies."""
+
+    result: TemporalResult
+    strategies: Mapping[str, str]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "strategies", MappingProxyType(dict(self.strategies)))
+
+
+def lower_aggregates(
+    ctx: CompileContext,
+    requests: Sequence[AggregateRequest],
+    *,
+    anchors: ibis.Table,
+    relative: bool,
+) -> LoweredAggregates:
+    """Resolve and batch compatible raw or aligned daily window reductions."""
+    sources = {}
+    groups: dict[Literal["event", "day"], list[AggregateRequest]] = {}
+    strategies = {}
+    repeated = ctx.fixed_anchors is not None and len(set(ctx.fixed_anchors)) > 1
+    for request in requests:
+        resolved = []
+        for measure in request.metric.measures:
+            if measure.source_name not in sources:
+                source = ctx.model.sources[measure.source_name]
+                sources[source.name] = (ctx.events_for(source.name), source)
+            events, source = sources[measure.source_name]
+            resolved.append(resolve_measure(events, measure, source=source))
+        resolution = _resolution(ctx, request.window, relative=relative) if repeated else "event"
+        groups.setdefault(resolution, []).append(
+            replace(request, metric=replace(request.metric, measures=tuple(resolved)))
+        )
+        native = any(native_arithmetic(measure) for measure in resolved)
+        strategies[request.output] = f"local_{resolution}/{'native_float' if native else 'exact'}"
+    table = anchors
+    columns = {}
+    checks = []
+    for resolution, group in groups.items():
+        result = aggregate_windows(
+            table,
+            group,
+            sources,
+            ctx.model.readiness,
+            boundary=ctx.model.catalog.day_boundary,
+            resolution=resolution,
+        )
+        table = result.table
+        columns.update(result.columns)
+        checks.extend(result.row_checks)
+    ordered = {request.output: columns[request.output] for request in requests}
+    public = list(anchors.columns)
+    for output, meta in ordered.items():
+        public.extend(
+            name
+            for name in (
+                output,
+                meta.observed_from_column,
+                meta.observed_until_column,
+                meta.complete_column,
+                meta.reason_column,
+            )
+            if name is not None
+        )
+    public.extend(check.column for check in checks)
+    return LoweredAggregates(
+        TemporalResult(table.select(*dict.fromkeys(public)), ordered, row_checks=tuple(checks)),
+        strategies,
     )

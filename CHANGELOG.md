@@ -12,6 +12,12 @@
   until the coordinated compiler migration.
 - Preserve physical event/filter values when a source column shares the daily
   bucket name `local_day`.
+- Add scoped daily inputs and declaration-derived batch lowering. Repeated
+  aligned fixed-offset origins can share unique unit/day payloads; partial-day,
+  relative and single-origin requests retain raw input. Primitive-specific
+  masks keep count-only buckets and unavailable requests out of numerical
+  conversion, checks and sums, without multiplying overlapping contributions.
+  Raw/day reduction shares finalization, exact domains and per-input quantization.
 
 ### Breaking changes
 

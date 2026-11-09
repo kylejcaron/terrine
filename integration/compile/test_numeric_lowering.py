@@ -147,3 +147,50 @@ def test_exact_opt_in_keeps_quantized_path(con):
     assert reasons == {True: ("below_resolution", True), False: (None, True)}
     total = sum(map(Fraction, amounts), Fraction())
     assert abs(Fraction(results[False]) - total) <= native_window_bound(amounts)
+
+
+@pytest.mark.parametrize(
+    ("origins", "relative", "expected"),
+    [
+        ([_T0], False, ("event", "event")),
+        ([_T0, _T0 + timedelta(days=1)], False, ("day", "event")),
+        ([_T0, _T0 + timedelta(days=1)], True, ("event", "event")),
+        (None, False, ("event", "event")),
+        ([_T0, _T0], False, ("event", "event")),
+    ],
+)
+def test_direct_batch_lowering_selects_declared_representation(con, origins, relative, expected):
+    from terrine.compile.numeric import CompileContext, lower_aggregates
+    from terrine.semantic.bind import normalize_events
+    from terrine.temporal.aggregate import AggregateRequest
+    from terrine.windows import Window
+
+    model = _model(
+        con, ["a", "a"], [_T0 - timedelta(hours=12), _T0 + timedelta(hours=12)], [2.0, 3.0]
+    )
+    source = model.sources["orders"]
+    events = normalize_events(con.table("orders"), source, source.units["customer"])
+    anchors = con.sql(
+        "SELECT 'a' AS unit, id AS anchor_id, t0 FROM (VALUES "
+        "('first', TIMESTAMPTZ '2025-01-25'), "
+        "('last', TIMESTAMPTZ '2025-01-26')) AS a(id, t0)"
+    )
+    ctx = CompileContext(model, "customer", origins, lambda _: events, {})
+    requests = [
+        AggregateRequest(model.metrics["spend"], Window("-1d", 0), "whole", "feature"),
+        AggregateRequest(model.metrics["mean_spend"], Window("-18h", 0), "partial", "feature"),
+        AggregateRequest(model.metrics["mean_spend"], Window("-1d", 0), "mean", "feature"),
+    ]
+    lowered = lower_aggregates(ctx, requests, anchors=anchors, relative=relative)
+    assert lowered.strategies == {
+        "whole": f"local_{expected[0]}/native_float",
+        "partial": f"local_{expected[1]}/native_float",
+        "mean": f"local_{expected[0]}/native_float",
+    }
+    assert list(lowered.result.columns) == ["whole", "partial", "mean"]
+    lowered.result.validate(con.to_pyarrow)
+    rows = con.to_pyarrow(lowered.result.table).to_pylist()
+    assert sorted((row["whole"], row["partial"], row["mean"]) for row in rows) == [
+        (2.0, 2.0, 2.0),
+        (3.0, 3.0, 3.0),
+    ]

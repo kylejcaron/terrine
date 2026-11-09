@@ -22,14 +22,11 @@ from terrine.backends.numeric import (
 from terrine.backends.numeric import (
     FLOAT64_PRECISION,
     Float64Failure,
-    count_literal,
     exact_literal,
     exact_subtract,
-    exact_sum,
     exact_to_float,
     float_is_finite,
     float_ratio,
-    guard_accumulation,
 )
 from terrine.backends.timestamps import compare_timestamps, day_start
 from terrine.data import ColumnMeta, RowCheck
@@ -53,6 +50,7 @@ from terrine.temporal.daily import (
     _require_backend,
     contributions,
     native_arithmetic,
+    reduce_payload,
     resolve_measure,
 )
 from terrine.temporal.lookup import lookup_prefix
@@ -1068,29 +1066,123 @@ def _reduce_source(
         aliases[primitive] = names
         payload.update({names[name]: expression for name, expression in fields.items()})
     leaf = joined.select(unit, anchor_id, **payload)
-    bounded = set()
+    reduced = _reduce_payload(leaf, aliases, [unit, anchor_id])
+    return reduced, aliases, (unit, anchor_id)
+
+
+def _reduce_payload(leaf, aliases, keys):
+    native, exact = [], []
     for primitive, names in aliases.items():
-        if primitive.counting or native_arithmetic(primitive.measure):
-            continue
-        name = names["sum_value"]
-        leaf, value, admitted = guard_accumulation(leaf, leaf[name], partition=[unit, anchor_id])
-        if admitted is not None:
-            withheld = builder.name("sum_withheld")
-            leaf = leaf.mutate(
-                **{name: value, withheld: (~admitted).ifelse(count_literal(1), count_literal(0))}
-            )
-            names["sum_withheld"] = withheld
-            bounded.add(name)
-    aggregates = {}
-    for primitive, names in aliases.items():
-        for field_name, name in names.items():
-            value = leaf[name]
-            aggregates[name] = (
-                cast(ir.FloatingColumn, value).sum()
-                if field_name == "sum_value" and native_arithmetic(primitive.measure)
-                else exact_sum(value, admitted=name in bounded)
-            )
-    return leaf.group_by(unit, anchor_id).aggregate(**aggregates), aliases, (unit, anchor_id)
+        if not primitive.counting:
+            (native if native_arithmetic(primitive.measure) else exact).append(names["sum_value"])
+    reduced, withheld = reduce_payload(leaf, keys, native_values=native, exact_values=exact)
+    for names in aliases.values():
+        name = names.get("sum_value")
+        if name in withheld:
+            flag = withheld[name]
+            if "sum_withheld" in names:
+                previous = names["sum_withheld"]
+                reduced = reduced.mutate(**{previous: reduced[previous] + reduced[flag]}).drop(flag)
+            else:
+                names["sum_withheld"] = flag
+    return reduced
+
+
+@dataclass(frozen=True, slots=True)
+class _BucketPrimitive:
+    measure: BoundMeasure
+    counting: bool
+
+
+def _day_consumed(bucket, points, contexts):
+    """An available request contains the entire fixed-offset bucket."""
+    consumed = ibis.literal(False)
+    end = bucket + ibis.interval(seconds=86400)
+    for context in contexts:
+        consumed |= (
+            points[context.available]
+            & (bucket >= points[context.start])
+            & (end <= points[context.end])
+        )
+    return consumed
+
+
+def _reduce_daily_source(
+    builder: _Builder,
+    events: ibis.Table,
+    source: BoundSource,
+    primitives: Mapping[_Primitive, Sequence[_WindowContext]],
+    boundary: str,
+) -> tuple[ibis.Table, dict[_Primitive, dict[str, str]], tuple[str, str]]:
+    """Scope unique unit/day identities before evaluating any numerical payload."""
+    offset = boundary_timezone(boundary).utcoffset(None)
+    minutes = (offset.days * 86400 + offset.seconds) // 60
+    bucket, scope_unit, scope_bucket, unit, anchor_id = (
+        builder.name(name) for name in ("bucket", "scope_unit", "scope_bucket", "unit", "anchor_id")
+    )
+    events = events.mutate(**{bucket: day_start(events._timestamp, minutes)})
+    identities = events.select(
+        events._unit.name(scope_unit), events[bucket].name(scope_bucket)
+    ).distinct()
+    bounds = dict.fromkeys(
+        name
+        for contexts in primitives.values()
+        for context in contexts
+        for name in (context.available, context.start, context.end)
+    )
+    table = builder.table
+    points = table.select(table.unit.name(unit), table.anchor_id.name(anchor_id), *bounds)
+    buckets: dict[_BucketPrimitive, str] = {}
+    membership = {}
+    matched = ibis.literal(False)
+    for primitive, contexts in primitives.items():
+        key = _BucketPrimitive(primitive.measure, primitive.counting)
+        if key not in buckets:
+            buckets[key] = builder.name("consumed")
+        consumed = _day_consumed(identities[scope_bucket], points, contexts)
+        membership[key] = membership.get(key, ibis.literal(False)) | consumed
+        matched |= consumed
+    required = identities.inner_join(points, (identities[scope_unit] == points[unit]) & matched)
+    required = required.select(
+        scope_unit,
+        scope_bucket,
+        **{buckets[key]: expression for key, expression in membership.items()},
+    )
+    scope = required.group_by(scope_unit, scope_bucket).aggregate(
+        **{name: required[name].any() for name in buckets.values()}
+    )
+    selected = events.inner_join(
+        scope,
+        (events._unit == scope[scope_unit]) & (events[bucket] == scope[scope_bucket]),
+    )
+    bucket_aliases = {}
+    payload = {}
+    for key, mask in buckets.items():
+        selected, fields = contributions(
+            selected, key.measure, source=source, consumed=selected[mask], counting=key.counting
+        )
+        names = {name: builder.name(name) for name in fields}
+        bucket_aliases[key] = names
+        payload.update({names[name]: expression for name, expression in fields.items()})
+    leaf = selected.select(scope_unit, scope_bucket, **payload)
+    daily = _reduce_payload(leaf, bucket_aliases, [scope_unit, scope_bucket])
+    matched = ibis.literal(False)
+    for contexts in primitives.values():
+        matched |= _day_consumed(daily[scope_bucket], points, contexts)
+    joined = daily.inner_join(points, (daily[scope_unit] == points[unit]) & matched)
+    aliases = {}
+    payload = {}
+    for primitive, contexts in primitives.items():
+        key = _BucketPrimitive(primitive.measure, primitive.counting)
+        consumed = _day_consumed(joined[scope_bucket], joined, contexts)
+        names = {name: builder.name(name) for name in bucket_aliases[key]}
+        aliases[primitive] = names
+        for name, original in bucket_aliases[key].items():
+            value = joined[original]
+            payload[names[name]] = consumed.ifelse(value, ibis.null(value.type()))
+    leaf = joined.select(unit, anchor_id, **payload)
+    reduced = _reduce_payload(leaf, aliases, [unit, anchor_id])
+    return reduced, aliases, (unit, anchor_id)
 
 
 def aggregate_windows(
@@ -1100,13 +1192,16 @@ def aggregate_windows(
     readiness: Readiness,
     *,
     boundary: str,
+    resolution: Literal["event", "day"] = "event",
 ) -> TemporalResult:
-    """Reduce selected raw contributions for multiple half-open windows.
+    """Reduce selected raw or scoped daily contributions for half-open windows.
 
     Availability masks arithmetic per output. Independent sources are reduced
     before joining, preserving full anchor identity and avoiding event fan-out.
     Call ``validate`` before exporting the result under the same snapshot.
     """
+    if resolution not in {"event", "day"}:
+        raise ValueError("resolution must be event or day")
     for name in ("unit", "anchor_id", "t0"):
         if name not in anchors.columns:
             raise _SCHEMA.error(field="anchor", column=name)
@@ -1144,7 +1239,7 @@ def aggregate_windows(
             raise UNSUPPORTED_TRANSFORM.error(transform=type(metric.transforms[0]).__name__)
         if len(metric.measures) != (2 if metric.kind == "ratio" else 1):
             raise ValueError("metric kind has an invalid number of measures")
-        context = _window_context(builder, metric, window, readiness, boundary, output)
+        context = _window_context(builder, metric, window, readiness, boundary, output, resolution)
         contexts.append(context)
         keys = []
         for measure in metric.measures:
@@ -1167,7 +1262,11 @@ def aggregate_windows(
             keys.append(key)
         components.append(keys)
     reductions = [
-        _reduce_source(builder, *sources[name], source_primitives)
+        (
+            _reduce_daily_source(builder, *sources[name], source_primitives, boundary)
+            if resolution == "day"
+            else _reduce_source(builder, *sources[name], source_primitives)
+        )
         for name, source_primitives in primitives.items()
     ]
     reduced_fields = {}
