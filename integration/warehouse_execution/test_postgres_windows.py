@@ -489,7 +489,7 @@ def test_summary_masks_sum_buckets_consumed_only_by_count(postgres_scratch):  # 
     fixed = [datetime(2025, 1, day, tzinfo=UTC) for day in (3, 4)]
     with dialect_scope("postgres"):
         lowered = lower_aggregates(
-            CompileContext(model, "user", fixed, lambda _: events, {}),
+            CompileContext(model, "user", fixed, lambda _: events),
             [
                 AggregateRequest(model.metrics["count"], Window("-3d", 0), "count", "feature"),
                 AggregateRequest(model.metrics["weight"], Window("-1d", 0), "weight", "feature"),

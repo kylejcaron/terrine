@@ -404,6 +404,124 @@ def test_since_timing_references_the_selected_instant(column_model):
     assert MaterializedFrame.from_json(json.dumps(metadata)).columns["recency"].measure is None
 
 
+def test_multisource_batch_preserves_selected_origins_and_full_anchor_support(column_model):
+    from terrine.compile.anchors import AnchorTable
+    from terrine.compile.columns import compile_columns
+    from terrine.spec import Schedule
+
+    con = column_model.con
+    con.raw_sql("""
+        DELETE FROM events;
+        INSERT INTO events VALUES
+            ('a', TIMESTAMPTZ '2025-01-02 11:59:57+00', 2, 'old'),
+            ('a', TIMESTAMPTZ '2025-01-02 11:59:58+00', 3, 'new');
+        CREATE TABLE second AS SELECT user_id, ts, amount FROM (VALUES
+            ('a', TIMESTAMPTZ '2025-01-02 11:59:57+00', 4),
+            ('a', TIMESTAMPTZ '2025-01-02 11:59:58+00', 6),
+            ('a', TIMESTAMPTZ '2025-01-02 11:59:59+00', 10)
+        ) AS b(user_id, ts, amount);
+    """)
+    definition = column_model.catalog.model_dump(mode="python")
+    definition["sources"]["second"] = {
+        **definition["sources"]["events"],
+        "relation": {"kind": "table", "name": "second"},
+        "events": ["second_amount"],
+        "properties": [],
+    }
+    definition["events"]["second_amount"] = {"source": "second", "column": "amount"}
+    definition["measures"].update(
+        {
+            "second_total": {"event": "second_amount", "aggregation": "sum"},
+            "count": {"event": "amount", "aggregation": "count"},
+            "mean": {"event": "amount", "aggregation": "avg_event"},
+            "filtered": {
+                "event": "amount",
+                "aggregation": "sum",
+                "filters": [{"property": "tier", "op": "equals", "values": ["new"]}],
+            },
+        }
+    )
+    definition["metrics"].update(
+        {
+            name: {"kind": "mean", "unit": "user", "measure": name}
+            for name in ("second_total", "count", "mean", "filtered")
+        }
+    )
+    definition["metrics"]["ratio"] = {
+        "kind": "ratio",
+        "unit": "user",
+        "numerator": "total",
+        "denominator": "second_total",
+    }
+    model = Model.from_catalog(
+        Catalog.model_validate(definition),
+        con=con,
+        units=column_model.units,
+        readiness={name: Coverage("2025-01-01", "2025-01-03") for name in ("events", "second")},
+    )
+    first = event_time("amount", window=("-3s", "-2s"))
+    second = event_time("amount", window=("1s", "2s"), relative_to=first)
+    count = agg("count", window=("-1d", 0))
+    design = Design(
+        "user",
+        Schedule(every="1d", start="2025-01-02", end="2025-01-03"),
+        features={
+            "sum_a": agg("total", window=("-1d", 0)),
+            "sum_b": agg("second_total", window=("-1d", 0)),
+            "ratio": agg("ratio", window=("-1d", 0)),
+            "count": count,
+            "mean": agg("mean", window=("-1d", 0)),
+            "filtered": agg("filtered", window=("-3s", 0)),
+            "relative": agg("total", window=("-1s", 0), relative_to=second),
+            "first": first,
+            "second": second,
+            "relative_count": agg("count", window=("-1s", 0), relative_to=second),
+        },
+        outcomes={
+            "future_count": agg("count", window=(0, "1d")),
+        },
+        eligibility={"present": gt(count, 0)},
+    )
+    anchors = con.sql("""
+        SELECT unit, anchor_id, TIMESTAMPTZ '2025-01-02 12:00:00+00' AS t0
+        FROM (VALUES ('a', 'first'), ('a', 'duplicate'), ('b', 'first')) AS a(unit, anchor_id)
+    """)
+    compiled = compile_columns(design, model, _anchor_table=AnchorTable(anchors, ()))
+    compiled.validate(execute=con.to_pyarrow)
+    rows = con.to_pyarrow(compiled.audit_table.order_by("unit", "anchor_id")).to_pylist()
+    assert [(row["unit"], row["anchor_id"]) for row in rows] == [
+        ("a", "duplicate"),
+        ("a", "first"),
+        ("b", "first"),
+    ]
+    for row in rows[:2]:
+        assert tuple(
+            row[name] for name in ("sum_a", "sum_b", "ratio", "count", "mean", "filtered")
+        ) == (
+            5,
+            20,
+            0.25,
+            2,
+            2.5,
+            3,
+        )
+        assert (row["relative"], row["relative_count"], row["future_count"]) == (2, 1, 0)
+        assert row["first"] == datetime(2025, 1, 2, 11, 59, 57, tzinfo=UTC)
+        assert row["second"] == datetime(2025, 1, 2, 11, 59, 58, tzinfo=UTC)
+        assert all(row[f"{name}__complete"] for name in (*design.features, *design.outcomes))
+        assert all(row[f"{name}__reason"] is None for name in (*design.features, *design.outcomes))
+    assert (rows[2]["relative"], rows[2]["relative__complete"], rows[2]["relative__reason"]) == (
+        None,
+        False,
+        "missing_selector_origin",
+    )
+    assert con.to_pyarrow(compiled.table).num_rows == 2
+    timing = compiled.expression_timings["relative"]
+    assert timing.support_seconds == (-3, 0)
+    assert compiled.roles.features == tuple(design.features)
+    assert compiled.roles.outcomes == tuple(design.outcomes)
+
+
 def test_approx_quantile_needs_no_sketch_settings():
     pytest.importorskip("datasketches")
     model = tr.Model.from_tables(

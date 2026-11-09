@@ -406,7 +406,7 @@ approximate quantiles; ordinary `Frame.materialize()` is the supported route.
 
 ### Bounded repeated windows
 
-Additive panel metrics retain sparse prefix lookups, including long and sparse
+Additive panel metrics use local batched reductions, including long and sparse
 windows. Exact min/max/distinct/quantile and approximate distinct use sparse
 time-bucket equality joins followed by the exact half-open timestamp predicates.
 Only occupied event buckets and at most two requests per anchor exist; there
@@ -428,7 +428,7 @@ The supported candidate multiplier is at most 128. Unknown per-unit event-anchor
 multiplicity (`EventAnchor(..., occurrence="each")`) and larger declared overlaps
 refuse before execution with `terrine.temporal.range_bound_unavailable`.
 Use first/nth event anchors, fewer event periods/anchors, a coarser schedule or
-narrower window, or an additive metric with sparse prefix lookups. Additive
+narrower window, or an additive metric with local reduction. Additive
 requests do not inherit this nonadditive overlap limit. This also applies to
 the raw values streamed by cross-section t-digest sidecars.
 
@@ -510,8 +510,8 @@ The internal `terrine.temporal.aggregate.aggregate_windows` builder accepts
 resolved `AggregateRequest` records over normalized event sources. Its `event`
 and `day` forms share contribution selection and publication; neither reads
 lifetime cumulative state. This boundary is internal, not a new user-authored
-execution mode. The ordinary compiler still uses the sparse-state path described
-below until its migration.
+execution mode. Ordinary and retained study compilation collect additive leaves
+from features, outcomes and eligibility before lowering a compatible group.
 
 Each primitive selects its own half-open interval and available candidate
 anchors before arithmetic. Compatible requests share source access without
@@ -519,6 +519,15 @@ sharing incompatible predicates, denominators or availability. Each source is
 reduced at `(unit, anchor_id)` before independent sources are joined, so a ratio
 cannot multiply raw event rows. Duplicate anchor instances with distinct
 anchor IDs remain separate.
+
+The collector resolves each logical event selector once against the invocation's
+common candidates, including nested selected origins. Requests share a group only
+at the same actual origin and anchor grain. Each group's relation and checks join
+back once by null-safe `(unit, anchor_id)`; public names, roles, timing support and
+per-output availability remain independent. Candidate validation precedes
+eligibility filtering, even when the published relation is empty. Selector and
+source memoization are local to one compiler invocation.
+
 Bounded exact reduction keeps numerical guard intermediates private to each
 source; joining three or more independent exact sources preserves the same
 public values, domains and anchor grain.
@@ -582,6 +591,10 @@ labels are `local_event/native_float`, `local_day/native_float` and
 integer and declared-decimal domains. Selection reads declarations, not source
 row counts, and uses no density threshold or persisted summary cache.
 
+Supplied/generated anchor relations do not inherit an outer schedule's alignment
+proof. Without declaration evidence about their actual clocks, they use raw
+input, as do event-relative origins.
+
 Exact floats quantize each input before grouping, not the daily sum: two
 `4e-10` values retain zero with `below_resolution`, while native arithmetic
 retains approximately `8e-10`. Daily grouping changes the order of native sums;
@@ -596,6 +609,19 @@ consumption flags, joining back to events, grouping buckets and merging them.
 An engine may share source scans with CTEs, but larger SQL/plans and compilation
 overhead remain possible even on tiny inputs. This is a declaration-based
 choice, not a guarantee that daily summaries are faster for every workload.
+
+An ordinary public five-metric, ten-window native smoke materializes all 50
+nonempty outputs and retains roster units without events at the default Python
+recursion limit. Its inspected DuckDB plan scans the event source once; generated
+SQL is still large, so this demonstrates shared lowering and correct execution,
+not an end-to-end speedup. Retained staging and correction use the same compiler;
+no-change refresh reuses only a verified current-revision generation.
+
+Execution revision 2 identifies this compiler. A checksummed revision-1 plan
+cannot execute or replay, and a no-change refresh from revision 1 recomputes.
+Explicit historical reads preserve the old generation's values and metadata.
+Exact declarations and specialized cumulative/cohort arithmetic safeguards are
+unchanged.
 
 
 ## Sparse sufficient state

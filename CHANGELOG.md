@@ -8,8 +8,7 @@
   half-open selection, nonnull event-mean denominators and source-local
   reduction before cross-source ratios. Native arithmetic is window-local;
   exact coefficient domains, per-input float quantization and discarded-term
-  notes are preserved. The ordinary compiler remains on its existing path
-  until the coordinated compiler migration.
+  notes are preserved.
 - Preserve physical event/filter values when a source column shares the daily
   bucket name `local_day`.
 - Add scoped daily inputs and declaration-derived batch lowering. Repeated
@@ -22,7 +21,7 @@
 - Stage independent local-window contexts, selected contributions and outputs
   at their named-column dependency depth, so wide batches compile without a
   projection chain that grows with output count. Existing masks, arithmetic
-  guards and metadata remain unchanged; the public compiler migration is later.
+  guards and metadata remain unchanged.
 - Preserve pre-epoch nanosecond event membership in local-day batches, including
   fixed offsets, and avoid timestamp overflow from unused final-day source events
   by comparing bucket starts against aligned half-open window bounds.
@@ -32,6 +31,13 @@
 - Extract DuckDB microsecond timestamp parts from native epoch ticks rather than
   calendar differences, preserving equal and adjacent naive/aware instants at
   finite timestamp endpoints.
+- Collect additive feature, outcome and eligibility leaves into dependency-ready
+  local batches. Resolve shared and nested event-selector origins once per
+  invocation, join each batch/check set once at full anchor identity, and preserve
+  independent completeness, reasons and timing metadata. Unproven supplied or
+  generated origin alignment uses raw input. Excluded large native history no
+  longer erases a small selected window. Nonadditive/selector algorithms and
+  specialized cumulative/cohort safeguards remain unchanged.
 - Mask unused source timestamps with typed NULLs before local-day conversion,
   using one available/aligned request envelope per unit while preserving exact
   gap-bucket and primitive consumption masks, event multiplicity and anchor grain.
@@ -40,9 +46,10 @@
 
 - Retained execution no longer produces or substitutes daily/prefix
   intermediates. New saved plans use envelope version 2, runtime plan
-  definition version 3 and execution revision 1; the ordinary inline compiler
-  remains in use. Historical plans retain original checksum verification for
-  inspection, status/events/cancellation and snapshot-pin cleanup, but refuse
+  definition version 3 and execution revision 2. Revision-1 plans cannot execute
+  or replay; even no-change refresh recomputes a revision-1 generation. Historical
+  plans retain original checksum verification for inspection,
+  status/events/cancellation and snapshot-pin cleanup, but refuse
   execution or request-key replay with `terrine.runtime.saved_plan_mismatch`.
 - Published partition schemas carry immutable execution-revision evidence,
   including plain Arrow and typed-empty output. Reduced/no-change refresh,

@@ -12,7 +12,6 @@ import pytest
 
 import terrine as tr
 from terrine.spec import Design, FixedDate, agg
-from tests._float_bound import native_window_bound
 
 _T0 = datetime(2025, 1, 25, tzinfo=UTC)
 
@@ -59,23 +58,19 @@ def _model(con, units, times, amounts, *, exact=False):
 
 
 def _hand_windows(con, start: timedelta):
-    """Each unit's window and history-prefix values, from a hand-written query."""
+    """Selected contributions from an independent half-open SQL query."""
     lower = (_T0 + start).isoformat(sep=" ")
     upper = _T0.isoformat(sep=" ")
     rows = con.sql(
         "SELECT customer_id,"
         f" list(amount) FILTER (WHERE ordered_at >= TIMESTAMPTZ '{lower}'"
-        f" AND ordered_at < TIMESTAMPTZ '{upper}') AS window_values,"
-        f" list(amount) FILTER (WHERE ordered_at < TIMESTAMPTZ '{upper}') AS prefix_values"
+        f" AND ordered_at < TIMESTAMPTZ '{upper}') AS window_values"
         " FROM orders GROUP BY customer_id"
     ).to_pyarrow()
-    return {
-        row["customer_id"]: (row["window_values"] or [], row["prefix_values"] or [])
-        for row in rows.to_pylist()
-    }
+    return {row["customer_id"]: row["window_values"] or [] for row in rows.to_pylist()}
 
 
-def test_native_sum_matches_hand_query_within_bound(con):
+def test_native_sum_matches_selected_hand_query(con):
     generator = random.Random(20261107)
     units = [f"u{generator.randrange(10)}" for _ in range(1000)]
     times = [
@@ -100,20 +95,38 @@ def test_native_sum_matches_hand_query_within_bound(con):
     assert len(rows) == 10
     for name, start in (*windows.items(), ("mean_week", windows["week"])):
         assert frame.columns[name].arithmetic == "native"
-        for unit, (window, prefix) in _hand_windows(con, start).items():
+        for unit, window in _hand_windows(con, start).items():
             exact = sum((Fraction(value) for value in window), Fraction())
+            bound = 2 * len(window) * Fraction(2**-53) * sum(map(abs, window))
             value = rows[unit][name]
             if name == "mean_week":
                 expected = exact / len(window)
-                bound = native_window_bound(prefix) / len(window) + 2**-52 * abs(float(expected))
+                bound = bound / len(window) + 2**-52 * abs(float(expected))
             else:
-                expected, bound = exact, native_window_bound(prefix)
+                expected = exact
             assert abs(Fraction(value) - expected) <= bound
-    assert tr.preview(design, model).strategy == {
-        "week": "sparse_day_prefix/native_float",
-        "hours": "sparse_event_prefix/native_float",
-        "mean_week": "sparse_day_prefix/native_float",
-    }
+
+
+def test_native_recent_window_ignores_excluded_large_history(con):
+    model = _model(
+        con,
+        ["a", "a"],
+        [_T0 - timedelta(days=10), _T0 - timedelta(hours=12)],
+        [1e16, 1.0],
+    )
+    result = (
+        Design(
+            "customer",
+            FixedDate(_T0),
+            features={"recent": agg("spend", window=("-1d", 0))},
+        )
+        .build(model)
+        .materialize()
+    )
+    row = result.table.to_pylist()[0]
+    assert row["recent"] == pytest.approx(1.0)
+    assert (row["recent__complete"], row["recent__reason"]) == (True, None)
+    assert result.columns["recent"].arithmetic == "native"
 
 
 def test_exact_opt_in_keeps_quantized_path(con):
@@ -138,15 +151,12 @@ def test_exact_opt_in_keeps_quantized_path(con):
             "spend": mode,
             "largest": mode,
         }
-        assert tr.preview(design, model).strategy["spend"] == (
-            "sparse_day_prefix/native" if exact else "sparse_day_prefix/native_float"
-        )
     # The exact path says where it discarded nonzero contributions; the native
     # path keeps them and has nothing to note. Neither makes the window incomplete.
     assert results[True] == 0.0
     assert reasons == {True: ("below_resolution", True), False: (None, True)}
     total = sum(map(Fraction, amounts), Fraction())
-    assert abs(Fraction(results[False]) - total) <= native_window_bound(amounts)
+    assert abs(Fraction(results[False]) - total) <= 2 * len(amounts) * 2**-53 * sum(amounts)
 
 
 @pytest.mark.parametrize(
@@ -175,7 +185,7 @@ def test_direct_batch_lowering_selects_declared_representation(con, origins, rel
         "('first', TIMESTAMPTZ '2025-01-25'), "
         "('last', TIMESTAMPTZ '2025-01-26')) AS a(id, t0)"
     )
-    ctx = CompileContext(model, "customer", origins, lambda _: events, {})
+    ctx = CompileContext(model, "customer", origins, lambda _: events)
     requests = [
         AggregateRequest(model.metrics["spend"], Window("-1d", 0), "whole", "feature"),
         AggregateRequest(model.metrics["mean_spend"], Window("-18h", 0), "partial", "feature"),
@@ -194,3 +204,184 @@ def test_direct_batch_lowering_selects_declared_representation(con, origins, rel
         (2.0, 2.0, 2.0),
         (3.0, 3.0, 3.0),
     ]
+
+
+def test_revision_one_replay_refuses_and_empty_change_refresh_recomputes(tmp_path):
+    import hashlib
+    import json
+    from dataclasses import replace
+
+    from terrine.data import Budget, MaterializedFrame
+    from terrine.errors import TerrineError
+    from terrine.runtime import (
+        DestinationRef,
+        ModelReference,
+        RuntimeOwner,
+        SavedPlan,
+        SnapshotAuthority,
+        dependency_graph,
+        open_published_frame,
+        plan_refresh,
+        run_serialized_plan,
+    )
+    from terrine.runtime.backends.base import StagedGeneration
+    from terrine.runtime.backends.duckdb import DuckDBBackend
+    from terrine.runtime.changes import ChangeSet
+    from terrine.runtime.leases import LeaseStore
+    from terrine.runtime.planner import RefreshPlan
+    from terrine.runtime.saved_plan import _bind_saved_plan
+    from terrine.runtime.state import RuntimeStore
+
+    state_path = tmp_path / "state.duckdb"
+    con = ibis.duckdb.connect(str(state_path))
+    try:
+        model = _model(
+            con,
+            ["a", "a"],
+            [_T0 - timedelta(days=10), _T0 - timedelta(hours=12)],
+            [1e16, 1.0],
+        )
+        design = Design(
+            "customer",
+            FixedDate(_T0),
+            features={"recent": agg("spend", window=("-1d", 0))},
+        )
+        authority = SnapshotAuthority(
+            RuntimeOwner(
+                state_path=state_path,
+                snapshot_root=tmp_path / "snapshots",
+            )
+        )
+        snapshot = authority.capture(
+            model,
+            design=design,
+            con=con,
+            namespace="owner",
+            run_id="capture",
+            budget=Budget(),
+        )
+        graph = dependency_graph(model, design, partitions=("all",))
+        plan = plan_refresh(
+            namespace="owner",
+            dataset="study",
+            definition_hash=design.spec_hash,
+            snapshot_id=snapshot.snapshot_id,
+            graph=graph,
+        )
+        # Reconstruct a valid revision-one identity, including its checksum.
+        old_document = json.loads(plan.serialize())
+        old_document["execution_revision"] = 1
+        del old_document["fingerprint"]
+        old_document["fingerprint"] = hashlib.sha256(
+            json.dumps(old_document, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        old_plan = RefreshPlan.deserialize(json.dumps(old_document))
+        destination = DestinationRef(str(state_path), "published", "study")
+        old_saved = SavedPlan.create(
+            plan_json=old_plan.serialize(),
+            design=design,
+            model=ModelReference.from_model(model, owner_key="model"),
+            destination=destination,
+            namespace="owner",
+            expected_base_manifest=None,
+        )
+        assert SavedPlan.from_json(old_saved.to_json()) == old_saved
+        frame = design.build(model).materialize()
+        # Binary64 lifetime subtraction previously published (1e16 + 1) - 1e16 = 0.
+        old_frame = replace(
+            frame,
+            table=frame.table.set_column(
+                frame.table.schema.get_field_index("recent"),
+                "recent",
+                pa.array([0.0]),
+            ),
+            provenance=replace(frame.provenance, execution_revision=1),
+        )
+        backend = DuckDBBackend(con.con, namespace="owner")
+        leases = LeaseStore(con.con, namespace="owner")
+        lease = leases.acquire(
+            "dataset:study",
+            "historical",
+            ttl=timedelta(minutes=5),
+            now=datetime.now(UTC),
+        )
+        historical = backend.publish_generation(
+            StagedGeneration(
+                "study",
+                "revision-one",
+                {"all": old_frame.to_pyarrow()},
+                snapshot_id=snapshot.snapshot_id,
+                execution_revision=1,
+            ),
+            expected_manifest=None,
+            lease=lease,
+        )
+        leases.release(lease)
+        con.con.execute(
+            "INSERT INTO owner.runtime_runs "
+            "(run_id,dataset,fingerprint,state,published_generation,request_key,destination_json) "
+            "VALUES ('historical','study',?,'succeeded','revision-one','same-request',?)",
+            [
+                _bind_saved_plan(old_saved, namespace="owner").definition.fingerprint,
+                json.dumps(
+                    destination.to_dict(),
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+            ],
+        )
+        with pytest.raises(TerrineError) as error:
+            run_serialized_plan(
+                old_saved.to_json(),
+                con=con.con,
+                namespace="owner",
+                request_key="same-request",
+            )
+        assert error.value.code == "terrine.runtime.saved_plan_mismatch"
+        assert error.value.context["execution_revision"] == 1
+        assert error.value.context["required_revision"] == 2
+        revision = backend.generation_execution_revision("study", "revision-one")
+        refreshed = plan_refresh(
+            namespace="owner",
+            dataset="study",
+            definition_hash=design.spec_hash,
+            snapshot_id=snapshot.snapshot_id,
+            graph=graph,
+            changes=ChangeSet((), "revision"),
+            reuse_base_generation="revision-one",
+            reuse_base_revision=revision,
+        )
+        assert refreshed.tasks
+        saved = SavedPlan.create(
+            plan_json=refreshed.serialize(),
+            design=design,
+            model=ModelReference.from_model(model, owner_key="model"),
+            destination=destination,
+            namespace="owner",
+            expected_base_manifest="revision-one",
+        )
+        saved.pin_snapshot(RuntimeStore(con.con, namespace="owner"))
+
+        class Resolver:
+            def resolve(self, reference):
+                return model
+
+        receipt = run_serialized_plan(
+            saved.to_json(),
+            con=con.con,
+            namespace="owner",
+            request_key="refresh",
+            resolver=Resolver(),
+            snapshot_authority=authority,
+        )
+        current = open_published_frame(receipt, con=con.con, namespace="owner")
+        assert current.table["recent"].to_pylist() == [pytest.approx(1.0)]
+        assert current.provenance.execution_revision == 2
+        assert receipt.published_generation is not None
+        assert backend.generation_execution_revision("study", receipt.published_generation) == 2
+        reopened = MaterializedFrame.from_arrow(backend.read_partition(historical, "all"))
+        assert reopened.table["recent"].to_pylist() == [0.0]
+        assert reopened.provenance.execution_revision == 1
+        assert backend.generation_execution_revision("study", "revision-one") == 1
+    finally:
+        con.disconnect()

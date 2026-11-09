@@ -133,15 +133,23 @@ def test_range_bound_refuses_before_source_execution(nonadditive_model, monkeypa
     assert error.value.context["limit"] == 128
 
 
-def test_additive_prefix_does_not_inherit_nonadditive_overlap_limit(nonadditive_model):
+def test_additive_does_not_inherit_nonadditive_overlap_limit(nonadditive_model):
+    from terrine.compile.anchors import AnchorTable
+    from terrine.compile.columns import compile_columns
+
     design = Design(
         "user",
         Schedule("1s", "2025-01-02", "2025-01-02"),
         features={"total": agg("amount", window=("-1d", "0d"))},
     )
-    compiled = compile_design(design, nonadditive_model)
+    anchors = nonadditive_model.con.sql("""
+        SELECT 'a' AS unit, 'supplied' AS anchor_id,
+            TIMESTAMPTZ '2025-01-02 12:00:00+00' AS t0
+    """)
+    compiled = compile_columns(design, nonadditive_model, _anchor_table=AnchorTable(anchors, ()))
     assert compiled.range_plans == {}
-    assert "prefix" in compiled.strategy["total"]
+    (row,) = nonadditive_model.con.to_pyarrow(compiled.table).to_pylist()
+    assert (row["total"], row["total__complete"], row["total__reason"]) == (13, True, None)
 
 
 def test_nonadditive_layer_plan_does_not_request_subtractable_prefixes(nonadditive_model):

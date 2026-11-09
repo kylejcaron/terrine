@@ -31,51 +31,6 @@ class LayerPlan:
     keys: tuple[LayerKey, ...]
 
 
-def measure_identity(measure) -> str:
-    """Stable identity for one bound measure, excluding schema-derived value type.
-
-    Only a native measure adds its mode, so version 2 Catalog measures keep their identities
-    and native and exact measures on one column never share an inline state.
-    """
-    fields = (
-        measure.source_name,
-        measure.event,
-        measure.aggregation,
-        tuple((item.property_name, item.op, item.values) for item in measure.filters),
-        measure.window_days,
-    )
-    if not measure.exact:
-        fields = (*fields, ("exact", False))
-    return hashlib.sha256(repr(fields).encode()).hexdigest()
-
-
-def build_measure_layer(
-    events: ibis.Table,
-    measure,
-    source,
-    *,
-    boundary: str,
-    resolution: Literal["day", "event"],
-) -> ibis.Table:
-    """Build one canonical sparse measure prefix from normalized source events."""
-    from terrine.temporal.daily import _sparse_group, resolve_measure, sparse_daily
-    from terrine.temporal.prefix import sparse_prefix
-
-    measure = resolve_measure(events, measure, source=source)
-    grouped = (
-        sparse_daily(events, measure, boundary, "_unit", source=source)
-        if resolution == "day"
-        else _sparse_group(
-            events,
-            measure,
-            {"_timestamp": events._timestamp},
-            "_unit",
-            source=source,
-        )
-    )
-    return sparse_prefix(grouped, measure, resolution=resolution)
-
-
 @metadata_operation()
 def build_layer(design: Design, model, key: LayerKey, *, relation_resolver=None) -> ibis.Table:
     """Build a compiler-planned anchor relation."""

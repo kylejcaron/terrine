@@ -6,7 +6,7 @@ import pytest
 
 from terrine.compile.anchors import compile_anchors
 from terrine.compile.columns import compile_columns
-from terrine.compile.layers import build_layer, measure_identity, plan_layers
+from terrine.compile.layers import build_layer, plan_layers
 from terrine.compile.materialize import compose_materialized_frame
 from terrine.data import Budget
 from terrine.errors import TerrineError
@@ -312,13 +312,7 @@ def test_same_fact_measures_keep_filter_and_aggregation_identity(column_model):
     )
 
 
-def test_measure_identity_includes_mode(column_model):
-    measure = column_model.metrics["total"].measures[0]
-    # An exact measure keeps the identity a version 2 Catalog recorded for it.
-    assert measure_identity(measure) == (
-        "e4f8f8777d24e608509f107794e2f2bbdc64914f9eb16c608df327d45c6fc2c9"
-    )
-    assert measure_identity(replace(measure, exact=False)) != measure_identity(measure)
+def test_measure_mode_change_invalidates_persisted_anchors(column_model):
     column_model.con.raw_sql("ALTER TABLE events ALTER amount TYPE DOUBLE")
     native = column_model.catalog.model_dump(mode="json")
     native["measures"]["total"]["exact"] = False
