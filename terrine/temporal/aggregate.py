@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import itertools
 import re
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import Any, Literal, cast
@@ -1117,6 +1117,33 @@ def _day_consumed(bucket, points, contexts):
     return consumed
 
 
+def _masked_day_events(
+    builder: _Builder, events: ibis.Table, contexts: Iterable[_WindowContext]
+) -> tuple[ibis.Table, str]:
+    """Mask unused instants before any fixed-offset calendar conversion."""
+    table = builder.table
+    unit, lower, upper, timestamp = (
+        builder.name(name) for name in ("scope_unit", "scope_start", "scope_end", "day_timestamp")
+    )
+    starts, ends = [], []
+    for context in contexts:
+        active = table[context.available].fill_null(False)
+        for check in context.row_checks:
+            active &= ~table[check.column].fill_null(True)
+        start, end = table[context.start], table[context.end]
+        starts.append(active.ifelse(start, ibis.null(start.type())))
+        ends.append(active.ifelse(end, ibis.null(end.type())))
+    rows = table.select(table.unit.name(unit), **{lower: least(*starts), upper: greatest(*ends)})
+    envelope = rows.group_by(unit).aggregate(**{lower: rows[lower].min(), upper: rows[upper].max()})
+    joined = events.left_join(envelope, events._unit == envelope[unit])
+    instant = joined._timestamp
+    inside = compare_timestamps(instant, joined[lower], "ge") & compare_timestamps(
+        instant, joined[upper], "lt"
+    )
+    masked = inside.fill_null(ibis.literal(False)).ifelse(instant, ibis.null(instant.type()))
+    return joined.mutate(**{timestamp: masked}), timestamp
+
+
 def _reduce_daily_source(
     builder: _Builder,
     events: ibis.Table,
@@ -1130,7 +1157,11 @@ def _reduce_daily_source(
     bucket, scope_unit, scope_bucket, unit, anchor_id = (
         builder.name(name) for name in ("bucket", "scope_unit", "scope_bucket", "unit", "anchor_id")
     )
-    events = events.mutate(**{bucket: local_day(events._timestamp, minutes)[1]})
+    window_contexts = {
+        context.available: context for contexts in primitives.values() for context in contexts
+    }
+    events, timestamp = _masked_day_events(builder, events, window_contexts.values())
+    events = events.mutate(**{bucket: local_day(events[timestamp], minutes)[1]})
     identities = events.select(
         events._unit.name(scope_unit), events[bucket].name(scope_bucket)
     ).distinct()

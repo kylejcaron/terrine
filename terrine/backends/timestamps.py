@@ -1,8 +1,8 @@
 """Lossless timestamp ordering, exact elapsed-offset comparisons and UTC conversion.
 
 DuckDB keys finite instants by truncated seconds and a signed remainder taken from
-Ibis's exact microsecond/nanosecond ``delta``, and compares a microsecond point
-with a microsecond state natively; PostgreSQL timestamps are exact at
+native microsecond epoch ticks or an exact nanosecond delta, and compares
+equal-zone microsecond pairs natively; PostgreSQL timestamps are exact at
 microseconds and are their own key; BigQuery and Snowflake instants are finite
 within years 1 to 9999, their own key, and split into seconds and nanoseconds
 from an exact epoch delta.

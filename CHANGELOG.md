@@ -32,6 +32,9 @@
 - Extract DuckDB microsecond timestamp parts from native epoch ticks rather than
   calendar differences, preserving equal and adjacent naive/aware instants at
   finite timestamp endpoints.
+- Mask unused source timestamps with typed NULLs before local-day conversion,
+  using one available/aligned request envelope per unit while preserving exact
+  gap-bucket and primitive consumption masks, event multiplicity and anchor grain.
 
 ### Breaking changes
 

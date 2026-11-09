@@ -548,9 +548,14 @@ domains, per-input exact-float quantization and `below_resolution` notes remain
 intact. Native selected sums and divisions follow the backend's ordinary binary64
 arithmetic, without a lifetime-history error certificate.
 
-The daily form first derives distinct required `(unit, bucket)` identities from
-available requests. It does not summarize unused units or the days between
-disjoint requests. Each equivalent primitive has its own consumption flag within
+The daily form first derives a per-unit start/end envelope from available,
+aligned requests and joins one envelope row to each event. Timestamps outside
+that envelope become typed NULL inputs to local-day conversion, so an unused
+endpoint cannot overflow calendar normalization even if an optimizer moves
+filters. The original timestamps and numerical/filter inputs remain unchanged.
+It then derives exact required `(unit, bucket)` identities: the envelope alone
+does not activate payloads in gaps or for unavailable requests. Each equivalent
+primitive has its own consumption flag within
 that shared scope: a bucket needed only by a count cannot enter a sum's float
 conversion, finite checks, exact quantization or arithmetic. Duplicate anchors
 and overlapping requests cannot multiply events within a primitive/bucket.

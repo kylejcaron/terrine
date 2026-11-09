@@ -6,6 +6,7 @@ from decimal import Decimal
 from fractions import Fraction
 
 import ibis
+import ibis.expr.datatypes as dt
 import pyarrow as pa
 import pytest
 
@@ -40,11 +41,22 @@ def con():
         connection.disconnect()
 
 
-def _timestamp_source(con, instants, amounts, *, boundary="UTC"):
+def _timestamp_source(con, instants, amounts, *, boundary="UTC", aware_microseconds=False):
     raw = con.create_table(
-        "timestamp_edges",
+        "timestamp_edge_ticks" if aware_microseconds else "timestamp_edges",
         pa.table({"user_id": ["a"] * len(amounts), "occurred_at": instants, "amount": amounts}),
     )
+    if aware_microseconds:
+
+        @ibis.udf.scalar.builtin(
+            name="make_timestamptz", signature=((dt.int64,), dt.Timestamp(timezone="UTC", scale=6))
+        )
+        def native_aware(value):
+            """Construct a native UTC timestamp without an Arrow zone conversion."""
+
+        raw = con.create_table(
+            "timestamp_edges", raw.mutate(occurred_at=native_aware(raw.occurred_at))
+        )
     source = BoundSource(
         "timestamp_edges",
         TableRef(kind="table", name="timestamp_edges"),
@@ -99,27 +111,42 @@ def test_local_day_batch_preserves_nanosecond_midnight_edges(con, boundary, minu
             assert row[meta.complete_column] is True
 
 
-def test_local_day_batch_ignores_unused_event_on_final_supported_day(con):
+@pytest.mark.parametrize("aware", [False, True])
+def test_local_day_batch_ignores_unused_event_on_final_supported_day(con, aware):
     # DuckDB's finite TIMESTAMP endpoint exceeds Python's datetime domain.
-    requested = datetime(2025, 1, 2, 12, tzinfo=UTC)
+    boundary = "UTC+05:30"
+    t0 = datetime(2025, 1, 1, 18, 30, tzinfo=UTC)
+    requested = t0 + timedelta(hours=12)
     requested_us = (requested - datetime(1970, 1, 1, tzinfo=UTC)) // timedelta(microseconds=1)
-    instants = pa.array([requested_us, 2**63 - 2], pa.int64()).cast(pa.timestamp("us"))
-    pair = _timestamp_source(con, instants, [3, 100])
+    instants = pa.array([requested_us, 2**63 - 2], pa.int64())
+    if not aware:
+        instants = instants.cast(pa.timestamp("us"))
+    pair = _timestamp_source(con, instants, [3, 100], boundary=boundary, aware_microseconds=aware)
     count = (replace(pair[0], aggregation="count"), pair[1])
     for resolution in ("event", "day"):
         result = _batch(
-            _anchors(con),
+            _anchors(con, time=t0.isoformat()),
             [
                 ("sum", [pair], Window(0, "1d"), "mean"),
                 ("count", [count], Window(0, "1d"), "mean"),
             ],
             resolution=resolution,
+            boundary=boundary,
         )
         (row,) = _rows(con, result)
         assert (row["sum"], row["count"]) == (Decimal(3), 1)
         for meta in result.columns.values():
             assert row[meta.reason_column] is None
             assert row[meta.complete_column] is True
+    unaligned = _batch(
+        _anchors(con, time=(t0 + timedelta(microseconds=1)).isoformat()),
+        [("sum", [pair], Window(0, "1d"), "mean")],
+        boundary=boundary,
+        resolution="day",
+    )
+    with pytest.raises(TerrineError) as error:
+        _rows(con, unaligned)
+    assert error.value.code == "terrine.temporal.unaligned_day_resolution"
 
 
 @pytest.mark.parametrize("resolution", ["event", "day"])
