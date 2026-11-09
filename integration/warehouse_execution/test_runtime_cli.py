@@ -14,6 +14,7 @@ from terrine.runtime.graph import dependency_graph
 from terrine.runtime.planner import plan_refresh
 from terrine.runtime.state import RuntimeStore
 from tests._timing import HANG_GUARD_SECONDS
+from tests.runtime.test_execute import _publish
 
 
 def test_cli_run_waits_for_long_owner_execution_receipt():
@@ -29,7 +30,7 @@ def test_cli_run_waits_for_long_owner_execution_receipt():
             return pa.table({"id": [task.task_id]})
 
         def publish(self, plan, outputs, lease, run_id):
-            return f"g-{run_id}"
+            return _publish(con, plan, outputs, lease, run_id, generation=f"g-{run_id}")
 
     endpoint = ControlEndpoint(Path(f"/tmp/tclilong-{os.getpid()}.sock"))
     server = ControlServer(store, namespace="owner", endpoint=endpoint, executor=SlowExecutor())

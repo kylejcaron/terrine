@@ -19,6 +19,7 @@ from terrine.runtime.graph import dependency_graph
 from terrine.runtime.planner import plan_refresh
 from terrine.runtime.saved_plan import DestinationRef
 from terrine.runtime.state import RuntimeStore
+from tests.runtime.test_execute import _publish
 
 
 def _run_cli(command, *, check, capture_output, text, env):
@@ -34,11 +35,14 @@ def _run_cli(command, *, check, capture_output, text, env):
 
 
 class _Executor:
+    def __init__(self, con):
+        self.con = con
+
     def run_task(self, task, dependencies):
         return pa.table({"id": [task.task_id]})
 
     def publish(self, plan, outputs, lease, run_id):
-        return f"g-{run_id}"
+        return _publish(self.con, plan, outputs, lease, run_id, generation=f"g-{run_id}")
 
 
 def test_cli_plan_refuses_unknown_scan_under_strict_budget(tmp_path):
@@ -77,6 +81,9 @@ def test_cli_plan_refuses_unknown_scan_under_strict_budget(tmp_path):
             "budget",
             "expected_base_manifest",
             "expected_base_manifest_bound",
+            "execution_revision",
+            "reuse_base_generation",
+            "reuse_base_revision",
         )
     }
     payload["fingerprint"] = hashlib.sha256(
@@ -130,7 +137,7 @@ def test_cli_status_events_and_cancel_use_owner_ipc():
     )
     record_run_event("r1", "lifecycle", {"state": "queued"}, con=con, namespace="owner")
     endpoint = ControlEndpoint(Path(f"/tmp/tcli-{os.getpid()}.sock"))
-    server = ControlServer(store, namespace="owner", endpoint=endpoint, executor=_Executor())
+    server = ControlServer(store, namespace="owner", endpoint=endpoint, executor=_Executor(con))
     server.start()
     env = {
         **os.environ,

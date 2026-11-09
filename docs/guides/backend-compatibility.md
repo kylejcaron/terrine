@@ -212,7 +212,7 @@ Float measures have two arithmetic modes, chosen per metric declaration
 (`tr.sum("amount")` is native; `tr.sum("amount", exact=True)` or a Catalog
 measure without `exact: false` is exact). Counts, integer measures, declared
 decimals, keys and timestamps are always exact. The mode is part of the
-measure's identity: switching it rebuilds persisted prefix layers, and every
+measure's identity: switching it rebuilds retained execution outputs, and every
 metric-valued output column records it in `ColumnMeta.arithmetic`
 (`"native"` when any contributing measure is native, else `"exact"`).
 Float32 widens to Float64 first. NULL stays NULL. There is no bitwise or
@@ -247,7 +247,7 @@ are unchanged.
 
 #### Native float arithmetic (default)
 
-Finite values are summed in binary64 by the engine; the persisted prefix is
+Finite values are summed in binary64 by the engine; the inline prefix is
 the running `SUM` of those group sums (`numeric_policy: native`, strategy
 `sparse_{day|event}_prefix/native_float`). Windows are prefix differences,
 so the error bound is stated against the history prefix $P$ of the unit up
@@ -360,7 +360,7 @@ For $0 < |\hat D| \le e_D$ the ratio is returned with no stated accuracy.
 - A small window after a large history, when the native bound (proportional
   to the unit's history total through the window end) is wider than the
   window's values: lifetime totals in the $10^9$ range with windows of
-  cents, or persisted prefixes that keep growing.
+  cents, or inline history prefixes that keep growing.
 - Answers that must agree across engines and summation orders to
   $10^{-9}$: the exact sum is independent of order and engine except at
   conversion ties; a native sum has no such promise.

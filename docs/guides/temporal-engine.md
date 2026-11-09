@@ -765,13 +765,11 @@ count `P` satisfies `0 <= P <= rows < 2**63`, and a window difference
 (`±2**127`), far outside both bounds, and raises on overflow rather than
 wrapping, so no genuine count or difference leaves the type. The published
 `int64` is reached by `TRY_CAST`, which is NULL beyond `int64`, so a state
-written outside the bound (an external relation, a damaged persisted layer)
-refuses `terrine.temporal.exact_overflow`, never a wrapped integer. A stored
-`HUGEINT` reads back as `DECIMAL(38, 0)`, which holds every count exactly;
-persisted prefix layers carry counts as Arrow `decimal128(38, 0)` and restore
-them as `HUGEINT` by name, so a frame composed from layers runs the
-exact-arithmetic known answers only where direct compilation does. Layers
-written in the earlier text form restore and compose identically.
+written outside the bound (for example, an external relation)
+refuses `terrine.temporal.exact_overflow`, never a wrapped integer. These
+prefix counters are inline compiler state, not retained Arrow layers.
+Retained execution stores anchors and final outputs; it does not transport
+or restore internal prefix counts or provide a historical text-prefix ABI.
 The other engines count in their coefficient type.
 
 Raw BIGNUM is **not** an Arrow numeric export. Diagnostic projections must

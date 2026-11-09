@@ -401,7 +401,10 @@ class DatasetTools:
         ).fetchall()
         for record in invocations:
             try:
-                invocation = PlanInvocation.from_dict(json.loads(record[0]))
+                document = json.loads(record[0])
+                if "saved_plan_json" not in document:
+                    continue
+                invocation = PlanInvocation.from_dict(document)
                 if invocation.destination != destination or not invocation.saved_plan_json:
                     continue
                 definition = SavedPlan.from_json(invocation.saved_plan_json)

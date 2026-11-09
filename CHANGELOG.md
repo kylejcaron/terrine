@@ -51,6 +51,10 @@
   historical final data and metadata remain readable without relabeling.
   Runtime namespaces and DatasetManifest schemas remain version 1; no runtime
   schema upgrade is required.
+  Verified no-change dataset refreshes reuse the identical manifest under a
+  lease without recapturing sources or applying recomputation scan checks.
+  Restart recovery verifies stored owner or dataset-request identity and
+  terminates unverifiable interrupted runs instead of leaving them running.
 - Python 3.12 is the minimum supported version; CPython 3.12, 3.13 and 3.14
   are supported.
 - Float sums and means use native arithmetic unless `exact=True`.

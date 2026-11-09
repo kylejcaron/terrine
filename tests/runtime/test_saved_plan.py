@@ -24,6 +24,7 @@ from terrine.runtime.state import RuntimeStore
 from terrine.semantic.models import Catalog
 from terrine.spec import Design, FixedDate
 from terrine.spec.dataset import DatasetDefinition
+from tests.runtime.test_execute import _publish
 
 
 def _model(con):
@@ -138,7 +139,9 @@ def test_saved_plan_reconstructs_design_and_verifies_owner_model_in_fresh_resolv
             namespace="runtime",
             run_id="saved_plan-run",
             run_task=lambda task, dependencies: pa.table({"layer": [task.layer]}),
-            publish=lambda plan, outputs, lease: "generation-1",
+            publish=lambda plan, outputs, lease: _publish(
+                con.con, plan, outputs, lease, generation="generation-1"
+            ),
         )
         assert store.snapshot_references("snapshot-1") == (
             ("published_manifest", '["study","generation-1"]'),

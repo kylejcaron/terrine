@@ -16,6 +16,7 @@ from terrine.runtime.execute import execute_plan
 from terrine.runtime.graph import dependency_graph
 from terrine.runtime.planner import RefreshPlan, plan_refresh
 from terrine.runtime.status import get_run
+from tests.runtime.test_execute import _publish
 
 
 class FileOwner:
@@ -115,7 +116,9 @@ def run(plan, owner, con, *, run_id="cost-run", authorize=True):
         namespace="owner",
         run_id=run_id,
         run_task=owner.run_task,
-        publish=lambda plan, outputs, lease: "generation",
+        publish=lambda plan, outputs, lease: _publish(
+            con, plan, outputs, lease, generation="generation"
+        ),
         authorize_scan=owner.authorize_scan if authorize else None,
     )
 

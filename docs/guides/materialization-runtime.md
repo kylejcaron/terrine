@@ -231,6 +231,14 @@ Executed runs expose durable task progress (`completed_tasks`, `running_tasks`, 
 
 Status freshness describes whether the persisted attempt lease is current or stale, not proof that a backend query is alive or stopped. After an interrupted owner loses its lease, a recovery owner records `terrine.runtime.owner_interrupted` and can resume the same saved request from completed task outputs. Consumers can redeliver event pages safely by deduplicating on `(run_id, sequence)` and advancing only the acknowledged exclusive cursor.
 
+Committed publication recovery verifies the matching saved plan from an owner
+invocation, dataset request or fingerprint-bound direct execution record. Direct
+execution persists that identity atomically with its fenced running transition in
+the existing metadata tables. Recovery checks execution revision and any no-change
+reuse-base restriction. If that identity cannot be verified, the interrupted
+run becomes terminal with `terrine.runtime.saved_plan_mismatch`; recovery never
+infers a revision from installed code or leaves an unverified commit running.
+
 Run-state transitions distinguish recoverable failure from terminal results. A `failed` run may retry only after acquiring a newer lease fencing token; an expired writer cannot resume or publish. `succeeded` and `cancelled` runs are terminal and never regress.
 
 ### Optional telemetry
@@ -283,9 +291,15 @@ When an operator declares a correction, capture or identify the corrected source
 
 Effective-dated attribute corrections and roster exits or re-entries are source changes too: they can change output rows without changing fact-table totals. Nested `event_time(..., relative_to=...)` selectors can depend on corrections outside an aggregate's window around `t0`; refresh their dependent outputs rather than limiting change evidence to that aggregate window. The runtime correction matrix compares complete published rows and column metadata with ordinary Frame materialization, including these cases and a two-period `StatePanel`.
 
-That comparison also covers stable `EventAnchor(..., "each")` identities after removal, input schema widening, incomplete-to-complete readiness, panel baseline attributes, and corrected absorbing terminal histories. Every corrected saved request is replayed without re-executing its tasks. Published provenance names the exact retained input generations, and retained prefix outputs are checked when one aggregate window changes while another remains unaffected. A fresh process can reconstruct and execute a previously saved Model/Design plan even after live facts change. If any retained input artifact changes after partial task completion, execution refuses the artifact and publishes no generation; live fact, dimension, and roster mutations do not change a valid retained artifact.
+That comparison also covers stable `EventAnchor(..., "each")` identities after removal, input schema widening, incomplete-to-complete readiness, panel baseline attributes, and corrected absorbing terminal histories. Every corrected saved request is replayed without re-executing its tasks. Published provenance names the exact retained input generations. A fresh process can reconstruct and execute a previously saved Model/Design plan even after live facts change. If any retained input artifact changes after partial task completion, execution refuses the artifact and publishes no generation; live fact, dimension, and roster mutations do not change a valid retained artifact.
 
-An authoritative empty revision change set produces a no-change refresh. The built-in executor records that run against its expected current publication without creating an empty generation: exact result selection, column metadata, and the publication's original retained input binding remain unchanged.
+An authoritative empty revision change set against a verified current base produces
+a no-change refresh. `Dataset.refresh` checks the original runtime owner and
+rechecks that exact base and revision under a lease, returning the identical
+manifest without source capture or recomputation-only scan-budget preflight.
+The built-in executor records no-change runs against their expected current
+publication without creating an empty generation: exact result selection, column
+metadata, and the publication's original retained input binding remain unchanged.
 
 ## Consistency guarantees and limits
 

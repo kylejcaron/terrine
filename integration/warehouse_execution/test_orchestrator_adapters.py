@@ -338,7 +338,11 @@ def test_airflow_and_dagster_share_owner_state_and_failed_run_fence(tmp_path):
             return self.run_task(task, dependencies)
 
         def publish(self, plan, outputs, lease, run_id):
-            return f"generation-{run_id}"
+            from tests.runtime.test_execute import _publish
+
+            return _publish(
+                connection.con, plan, outputs, lease, run_id, generation=f"generation-{run_id}"
+            )
 
     resolver = Resolver()
     executor = Executor()
@@ -438,22 +442,21 @@ def test_airflow_and_dagster_share_owner_state_and_failed_run_fence(tmp_path):
         assert cli_run["durable_state"] == airflow_result["state"]
         assert cli_run["pinned_result_ref"] == airflow_result["published_generation"]
 
-        dagster_result = materialize(
-            [asset],
-            partition_key="2025-01-15",
-            instance=DagsterInstance.ephemeral(),
-        )
+        with DagsterInstance.ephemeral(tempdir=str(tmp_path)) as instance:
+            dagster_result = materialize(
+                [asset],
+                partition_key="2025-01-15",
+                instance=instance,
+            )
         assert dagster_result.success
         states = connection.con.execute(
             "SELECT state FROM owner.runtime_runs ORDER BY updated_at, run_id"
         ).fetchall()
         assert [state for (state,) in states].count("succeeded") == 2
-        assert (
-            connection.con.execute(
-                "SELECT count(*) FROM owner.runtime_plan_invocations"
-            ).fetchone()[0]
-            == 2
-        )
+        assert connection.con.execute(
+            "SELECT CAST(json_extract(invocation_json,'$.schema_version') AS INTEGER),count(*) "
+            "FROM owner.runtime_plan_invocations GROUP BY 1 ORDER BY 1"
+        ).fetchall() == [(1, 2), (3, 2)]
     finally:
         server.close()
         connection.disconnect()
@@ -567,11 +570,11 @@ def test_dagster_historical_partitions_publish_distinct_owner_outputs(monkeypatc
     )
     assert queue_limit.is_blocked(cast(Any, SimpleNamespace(tags=dict(asset.node_def.tags))))
     try:
-        instance = DagsterInstance.ephemeral()
-        results = [
-            materialize([asset], partition_key=partition, instance=instance)
-            for partition in ("2025-01-14", "2025-01-15")
-        ]
+        with DagsterInstance.ephemeral(tempdir=str(tmp_path)) as instance:
+            results = [
+                materialize([asset], partition_key=partition, instance=instance)
+                for partition in ("2025-01-14", "2025-01-15")
+            ]
         assert all(result.success for result in results)
         assert len({receipt.published_generation for receipt in receipts}) == 2
         assert [request.requested_scope for request in planned] == [
@@ -668,7 +671,9 @@ def test_dagster_same_root_failed_retry_reuses_fence_scoped_outputs(monkeypatch,
             return self._run(task)
 
         def publish(self, plan, outputs, lease, run_id):
-            return "generation-1"
+            from tests.runtime.test_execute import _publish
+
+            return _publish(connection.con, plan, outputs, lease, run_id, generation="generation-1")
 
     executor = FailsOnce()
     authority = SnapshotAuthority(RuntimeOwner(database, tmp_path / "snapshots"))
@@ -837,7 +842,9 @@ def test_airflow_operator_runs_and_retries_persisted_owner_invocation(tmp_path):
             return pa.table({"task_id": [task.task_id]})
 
         def publish(self, plan, outputs, lease, run_id):
-            return "generation-1"
+            from tests.runtime.test_execute import _publish
+
+            return _publish(connection.con, plan, outputs, lease, run_id, generation="generation-1")
 
     authority = SnapshotAuthority(RuntimeOwner(database, tmp_path / "snapshots"))
     planner = OwnerPlanner(resolver=Resolver(), snapshot_authority=authority)

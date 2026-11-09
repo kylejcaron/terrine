@@ -9,6 +9,7 @@ from terrine.runtime.graph import dependency_graph
 from terrine.runtime.leases import LeaseStore
 from terrine.runtime.planner import plan_refresh
 from terrine.runtime.saved_plan import DestinationRef
+from tests.runtime.test_execute import _publish
 
 
 def _plan(definition_hash="def"):
@@ -36,7 +37,9 @@ def test_request_key_replays_same_fingerprint_for_same_destination():
         request_key="client-request",
         destination=destination,
         run_task=lambda task, dependencies: pa.table({"id": [1]}),
-        publish=lambda plan, outputs, lease: published.append("g1") or "g1",
+        publish=lambda plan, outputs, lease: (
+            published.append("g1") or _publish(con, plan, outputs, lease)
+        ),
     )
     leases = LeaseStore(con, namespace="owner")
     active_lease = leases.acquire(
@@ -72,7 +75,7 @@ def test_request_key_changed_fingerprint_refuses():
         request_key="client-request",
         destination=destination,
         run_task=lambda task, dependencies: pa.table({"id": [1]}),
-        publish=lambda plan, outputs, lease: "g1",
+        publish=lambda plan, outputs, lease: _publish(con, plan, outputs, lease),
     )
 
     with pytest.raises(ValueError):
@@ -84,7 +87,9 @@ def test_request_key_changed_fingerprint_refuses():
             request_key="client-request",
             destination=destination,
             run_task=lambda task, dependencies: pa.table({"id": [2]}),
-            publish=lambda plan, outputs, lease: "g2",
+            publish=lambda plan, outputs, lease: _publish(
+                con, plan, outputs, lease, generation="g2"
+            ),
         )
 
 
@@ -105,7 +110,9 @@ def test_request_key_is_scoped_to_destination():
                 request_key="same-key",
                 destination=destination,
                 run_task=lambda task, dependencies: pa.table({"id": [1]}),
-                publish=lambda plan, outputs, lease, generation=run_id: generation,
+                publish=lambda plan, outputs, lease, generation=run_id: _publish(
+                    con, plan, outputs, lease, generation=generation
+                ),
             )
         )
 
@@ -132,7 +139,7 @@ def test_unadmitted_request_waiting_on_dataset_lease_is_retryable():
             request_key="waiting-request",
             destination=destination,
             run_task=lambda task, dependencies: pa.table({"id": [1]}),
-            publish=lambda plan, outputs, lease: "g1",
+            publish=lambda plan, outputs, lease: _publish(con, plan, outputs, lease),
         )
     row = con.execute(
         'SELECT state FROM "owner".runtime_runs WHERE run_id=?', ["new-run"]
@@ -147,7 +154,7 @@ def test_unadmitted_request_waiting_on_dataset_lease_is_retryable():
         request_key="waiting-request",
         destination=destination,
         run_task=lambda task, dependencies: pa.table({"id": [1]}),
-        publish=lambda plan, outputs, lease: "g1",
+        publish=lambda plan, outputs, lease: _publish(con, plan, outputs, lease),
     )
 
     assert receipt.state == "succeeded"
@@ -167,7 +174,7 @@ def test_owner_api_recovers_interrupted_matching_key_before_replay():
             return pa.table({"id": [task.task_id]})
 
         def publish(self, plan, outputs, lease, run_id):
-            return "g1"
+            return _publish(con, plan, outputs, lease, run_id)
 
     con = duckdb.connect(":memory:")
     try:

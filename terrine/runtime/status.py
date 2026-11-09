@@ -233,21 +233,19 @@ def _recover_interrupted_runs(con: Any, *, namespace: str, plan: RefreshPlan | N
             ).fetchone()
             publication_error = None
             if publication is not None:
-                revision = (
-                    plan.definition.execution_revision
+                recovering_plan = (
+                    plan
                     if plan is not None and plan.definition.fingerprint == fingerprint
-                    else _invocation_revision(con, schema, namespace, fingerprint)
+                    else _recovery_plan(con, schema, namespace, fingerprint)
                 )
-                if revision is None:
-                    continue
-                from terrine.runtime.backends.duckdb import DuckDBBackend
+                from terrine.runtime.execute import _verify_generation
 
                 try:
-                    actual = DuckDBBackend(con, namespace=namespace).generation_execution_revision(
-                        publication[0], publication[1]
+                    if recovering_plan is None:
+                        raise ValueError("publication has no verified plan identity")
+                    _verify_generation(
+                        recovering_plan, publication[1], con=con, namespace=namespace
                     )
-                    if actual != revision:
-                        raise ValueError("publication execution revision differs")
                 except (ValueError, TerrineError):
                     publication = None
                     publication_error = "terrine.runtime.saved_plan_mismatch"
@@ -305,17 +303,27 @@ def _recover_interrupted_runs(con: Any, *, namespace: str, plan: RefreshPlan | N
                 )
 
 
-def _invocation_revision(con: Any, schema: str, namespace: str, fingerprint: str) -> int | None:
+def _recovery_plan(con: Any, schema: str, namespace: str, fingerprint: str) -> RefreshPlan | None:
+    from terrine.runtime.planner import RefreshPlan
     from terrine.runtime.saved_plan import SavedPlan, _bind_saved_plan
 
-    for (payload,) in con.execute(
-        f"SELECT invocation_json FROM {schema}.runtime_plan_invocations"
+    for payload, invocation in con.execute(
+        f"SELECT invocation_json,TRUE FROM {schema}.runtime_plan_invocations "
+        f"UNION ALL SELECT recipe_json,FALSE FROM {schema}.runtime_dataset_requests"
     ).fetchall():
         try:
-            saved = SavedPlan.from_json(json.loads(payload)["saved_plan_json"])
-            bound = _bind_saved_plan(saved, namespace=namespace)
-        except (KeyError, ValueError, TerrineError):
+            document = json.loads(payload)
+            if not isinstance(document, dict):
+                continue
+            if invocation and document.get("schema_version") == 3:
+                bound = RefreshPlan.deserialize(payload)
+                if bound.definition.namespace != namespace:
+                    continue
+            else:
+                saved = SavedPlan.from_json(document["saved_plan_json"] if invocation else payload)
+                bound = _bind_saved_plan(saved, namespace=namespace)
+        except (KeyError, TypeError, ValueError, TerrineError):
             continue
         if bound.definition.fingerprint == fingerprint:
-            return bound.definition.execution_revision
+            return bound
     return None

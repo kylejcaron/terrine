@@ -9,6 +9,7 @@ from terrine.runtime.graph import dependency_graph
 from terrine.runtime.leases import LeaseStore
 from terrine.runtime.planner import plan_refresh
 from terrine.runtime.state import RuntimeStore
+from tests.runtime.test_execute import _publish
 
 
 def test_snapshot_references_are_durable_idempotent_and_owner_scoped():
@@ -66,7 +67,7 @@ def test_execution_pins_snapshot_for_active_run_and_published_manifest():
 
     def publish(plan, outputs, lease):
         assert store.snapshot_references("snapshot") == (("active_run", '["run-1",1]'),)
-        return "g1"
+        return _publish(con, plan, outputs, lease)
 
     result = execute_plan(
         plan,
@@ -119,7 +120,7 @@ def test_terminal_snapshot_cleanup_retries_transaction_conflict(monkeypatch):
         namespace="owner",
         run_id="run-1",
         run_task=lambda task, dependencies: pa.table({"task": [task.task_id]}),
-        publish=lambda plan, outputs, lease: "g1",
+        publish=lambda plan, outputs, lease: _publish(con, plan, outputs, lease),
     )
     assert result.state == "succeeded"
     assert attempts == 2
@@ -149,7 +150,7 @@ def test_gc_reconciles_terminal_run_snapshot_references_after_cleanup_exhaustion
             namespace="owner",
             run_id="run-1",
             run_task=lambda task, dependencies: pa.table({"task": [task.task_id]}),
-            publish=lambda plan, outputs, lease: "g1",
+            publish=lambda plan, outputs, lease: _publish(con, plan, outputs, lease),
         )
         assert result.state == "succeeded"
         assert store.snapshot_references("snapshot") == (
@@ -179,7 +180,7 @@ def test_retryable_failed_run_keeps_snapshot_until_successful_retry():
             namespace="owner",
             run_id="retry",
             run_task=lambda task, dependencies: (_ for _ in ()).throw(RuntimeError("task failed")),
-            publish=lambda plan, outputs, lease: "g1",
+            publish=lambda plan, outputs, lease: _publish(con, plan, outputs, lease),
         )
     assert store.snapshot_references("snapshot") == (("active_run", '["retry",1]'),)
     execute_plan(
@@ -188,7 +189,7 @@ def test_retryable_failed_run_keeps_snapshot_until_successful_retry():
         namespace="owner",
         run_id="retry",
         run_task=lambda task, dependencies: pa.table({"id": [1]}),
-        publish=lambda plan, outputs, lease: "g1",
+        publish=lambda plan, outputs, lease: _publish(con, plan, outputs, lease),
     )
     assert store.snapshot_references("snapshot") == (("published_manifest", '["orders","g1"]'),)
 
@@ -211,7 +212,9 @@ def test_string_publisher_moves_manifest_pin_between_snapshots():
             namespace="owner",
             run_id=f"run-{index}",
             run_task=lambda task, dependencies, index=index: pa.table({"id": [index]}),
-            publish=lambda plan, outputs, lease, index=index: f"g{index}",
+            publish=lambda plan, outputs, lease, index=index: (
+                _publish(con, plan, outputs, lease, generation=f"g{index}").generation
+            ),
         )
     assert store.snapshot_references("snapshot-1") == ()
     assert store.snapshot_references("snapshot-2") == (("published_manifest", '["orders","g2"]'),)
@@ -237,7 +240,7 @@ def test_collected_snapshot_pin_failure_records_run_and_releases_lease():
             namespace="owner",
             run_id="collected-run",
             run_task=lambda task, dependencies: pa.table({"id": [1]}),
-            publish=lambda plan, outputs, lease: "g1",
+            publish=lambda plan, outputs, lease: _publish(con, plan, outputs, lease),
         )
     run = con.execute(
         'SELECT state FROM "owner".runtime_runs WHERE run_id=?', ["collected-run"]
@@ -283,7 +286,7 @@ def test_cancel_during_snapshot_pin_failure_does_not_emit_false_failure(monkeypa
             namespace="owner",
             run_id="cancel-at-pin",
             run_task=lambda task, dependencies: pa.table({"id": [1]}),
-            publish=lambda plan, outputs, lease: "g1",
+            publish=lambda plan, outputs, lease: _publish(con, plan, outputs, lease),
         )
 
     status = get_run("cancel-at-pin", con=con, namespace="owner")

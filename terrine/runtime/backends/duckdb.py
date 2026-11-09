@@ -266,10 +266,10 @@ class DuckDBBackend:
         *,
         expected_manifest: str | None,
         lease: Any,
-        run_id: str,
+        run_id: str | None = None,
         execution_revision: int,
     ) -> PublicationReceipt:
-        """Record a no-change run against the current immutable publication."""
+        """Verify fenced reuse, recording a run receipt when a run identity is supplied."""
         if lease.resource != f"dataset:{dataset}":
             raise ValueError("lease resource does not match dataset")
         leases = LeaseStore(self.con, namespace=self.namespace)
@@ -289,17 +289,18 @@ class DuckDBBackend:
                 or self.generation_execution_revision(dataset, generation) != execution_revision
             ):
                 raise _EXECUTION_IDENTITY.error(reason="reuse_execution_revision_mismatch")
-            self._record_run_publication(
-                StagedGeneration(
-                    dataset,
-                    generation,
-                    {},
-                    run_id=run_id,
-                    snapshot_id=snapshot_id,
-                    execution_revision=execution_revision,
-                ),
-                version,
-            )
+            if run_id is not None:
+                self._record_run_publication(
+                    StagedGeneration(
+                        dataset,
+                        generation,
+                        {},
+                        run_id=run_id,
+                        snapshot_id=snapshot_id,
+                        execution_revision=execution_revision,
+                    ),
+                    version,
+                )
             partitions = self.con.execute(
                 f"SELECT partition FROM {self._schema}.runtime_partitions "
                 "WHERE dataset=? AND generation=? ORDER BY partition",

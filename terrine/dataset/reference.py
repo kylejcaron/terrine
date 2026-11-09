@@ -10,6 +10,7 @@ import uuid
 import warnings
 from collections.abc import Generator
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pyarrow as pa
@@ -33,8 +34,9 @@ from terrine.runtime.backends.base import PublicationReceipt
 from terrine.runtime.backends.duckdb import DuckDBBackend, _digest_relation, _digest_version
 from terrine.runtime.changes import ChangeSet
 from terrine.runtime.graph import dependency_graph
+from terrine.runtime.leases import LeaseStore
 from terrine.runtime.owner import RuntimeOwner
-from terrine.runtime.planner import RefreshPlan, plan_refresh
+from terrine.runtime.planner import RefreshPlan, admit_execution, plan_refresh
 from terrine.runtime.saved_plan import (
     DestinationRef,
     ModelReference,
@@ -507,6 +509,7 @@ class Dataset:
         self, model: Any, *, changes: ChangeSet | None = None, budget: Budget | None = None
     ) -> Dataset:
         """Publish a definition reconstruction while leaving this generation pinned."""
+        plan = self.plan_refresh(model, changes=changes, budget=budget)
         if (
             DuckDBBackend(model.con.con, namespace=self._namespace).current_generation(
                 self.manifest.generation.dataset_id
@@ -514,6 +517,25 @@ class Dataset:
             != self.manifest.generation.generation_id
         ):
             raise _STALE_BASE.error()
+        if not plan.tasks:
+            admit_execution(plan, namespace=self._namespace)
+            leases = LeaseStore(model.con.con, namespace=self._namespace)
+            lease = leases.acquire(
+                f"dataset:{plan.dataset}",
+                f"refresh-{uuid.uuid4().hex}",
+                ttl=timedelta(minutes=5),
+                now=datetime.now(UTC),
+            )
+            try:
+                DuckDBBackend(model.con.con, namespace=self._namespace).reuse_generation(
+                    plan.dataset,
+                    expected_manifest=plan.definition.reuse_base_generation,
+                    lease=lease,
+                    execution_revision=plan.definition.execution_revision,
+                )
+                return Dataset.from_manifest(self.manifest, con=model.con)
+            finally:
+                leases.release(lease)
         return stage_frame(
             self.manifest.definition.build(model),
             self.manifest.generation.dataset_id,

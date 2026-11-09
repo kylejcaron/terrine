@@ -664,7 +664,7 @@ def test_scoring_refresh_preserves_as_of_and_never_reads_unused_labels(events_wo
 
 @pytest.mark.parametrize("legacy", [False, True])
 def test_refresh_nochange_reuses_only_same_definition_and_rejects_stale_base(
-    events_world, tmp_path, legacy
+    events_world, tmp_path, legacy, monkeypatch
 ):
     import pytest
 
@@ -718,6 +718,18 @@ def test_refresh_nochange_reuses_only_same_definition_and_rejects_stale_base(
         assert "execution_revision" not in dataset.manifest.frame_metadata["provenance"]
     else:
         assert refreshed.manifest == dataset.manifest
+        from terrine.runtime.snapshot import SnapshotAuthority
+
+        def forbidden_capture(*args, **kwargs):
+            raise AssertionError("verified no-change refresh captured sources")
+
+        with monkeypatch.context() as patch:
+            patch.setattr(SnapshotAuthority, "capture", forbidden_capture)
+            for no_op_budget in (Budget(max_scan_bytes=1), budget):
+                assert (
+                    dataset.refresh(frame._model, changes=empty, budget=no_op_budget).manifest
+                    == dataset.manifest
+                )
     assert Dataset.from_manifest(dataset.manifest, con=con).manifest.to_json() == saved_manifest
     assert pa.Table.from_batches(list(dataset.to_arrow_batches())).equals(
         before, check_metadata=True
@@ -736,6 +748,44 @@ def test_refresh_nochange_reuses_only_same_definition_and_rejects_stale_base(
         dataset.refresh(frame._model, changes=empty, budget=budget)
     assert error.value.code == "terrine.dataset.stale_generation"
     con.disconnect()
+
+
+def test_refresh_rejects_another_owner_even_with_the_same_copied_generation(
+    events_world, tmp_path, monkeypatch
+):
+    import shutil
+
+    import ibis
+
+    from terrine.model import Model
+    from terrine.runtime.owner import RuntimeOwner
+    from terrine.runtime.snapshot import SnapshotAuthority
+
+    frame, con = _durable_frame(events_world, tmp_path)
+    dataset = frame.stage("training", budget=Budget(strict_scan=False))
+    con.raw_sql("CHECKPOINT")
+    copied_path = tmp_path / "copied.duckdb"
+    shutil.copy2(RuntimeOwner.from_connection(con).state_path, copied_path)
+    copied = ibis.duckdb.connect(str(copied_path))
+    try:
+        model = Model.from_catalog(
+            frame._model.catalog,
+            con=copied,
+            units=frame._model.units,
+            readiness=frame._model.readiness,
+            event_ids=frame._model.event_ids,
+        )
+
+        def forbidden_capture(*args, **kwargs):
+            raise AssertionError("wrong owner reached source capture")
+
+        monkeypatch.setattr(SnapshotAuthority, "capture", forbidden_capture)
+        with pytest.raises(TerrineError) as error:
+            dataset.refresh(model, budget=Budget(strict_scan=False))
+        assert error.value.code == "terrine.dataset.invalid_generation"
+    finally:
+        copied.disconnect()
+        con.disconnect()
 
 
 def test_refresh_after_mode_change_rebuilds_layers_and_matches_fresh_build(tmp_path):
