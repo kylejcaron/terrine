@@ -13,6 +13,9 @@
   preserved; candidate validation still precedes eligibility filtering, and
   interleaved additive/nonadditive outputs retain logical refusal order. Source
   histories register at their first consuming expression, not during batch preparation.
+- Require the DuckDB arithmetic witness for exact measure coefficients, not
+  decimal-valued timestamp coordinates. Count-only retained plans keep native
+  integer arithmetic without depending on an unrelated coefficient witness.
 - Choose raw contributions for single, relative, partial-day or unproven origins;
   repeated declaration-proven aligned fixed/scheduled origins can share
   noncumulative unit/day payloads. Primitive-specific masks precede numerical
