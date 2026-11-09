@@ -45,8 +45,8 @@ _STAMP_FORMAT = "YYYY-MM-DD HH24:MI:SS.FF9 TZHTZM"
 _RETENTION_ROUTE = "ALTER TABLE ... SET DATA_RETENTION_TIME_IN_DAYS = 1"
 # Every NUMBER(p, 0) up to this precision fits int64; wider ones keep their digits.
 _INT64_DIGITS = 18
-# Snowflake's own wording for NUMBER(38, 0) sums and differences that leave the
-# type, which terrine maps to its exact-overflow refusal.
+# Generic overflow messages also describe native arithmetic. Only an explicit
+# FIXED type identifies the exact domain reliably.
 _OVERFLOW_MESSAGES = ("value overflow in a sum aggregate", "number out of representable range")
 # A pinned read of an object created after the snapshot instant.
 _HISTORY_UNAVAILABLE = "time travel data is not available"
@@ -665,7 +665,7 @@ def _query_refusal() -> Generator[None]:
         yield
     except Exception as exc:
         message = str(exc).casefold()
-        if any(text in message for text in _OVERFLOW_MESSAGES):
+        if "fixed[" in message and any(text in message for text in _OVERFLOW_MESSAGES):
             raise EXACT_OVERFLOW.error() from exc
         if _HISTORY_UNAVAILABLE in message:
             raise _binding_error("a relation was replaced after the snapshot") from exc

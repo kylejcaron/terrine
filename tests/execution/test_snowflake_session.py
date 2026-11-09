@@ -202,3 +202,24 @@ def test_sql_relation_with_a_relative_time_travel_offset_refuses(monkeypatch):
     with pytest.raises(TerrineError) as error:
         _snowflake.resolve(object(), relation)
     assert error.value.code == "terrine.execution.snapshot_unavailable"
+
+
+@pytest.mark.parametrize(
+    ("message", "exact"),
+    [
+        ("Number out of representable range: type: FIXED[SB16](38,0)", True),
+        ("Value overflow in a sum aggregate", False),
+        ("Number out of representable range", False),
+    ],
+)
+def test_overflow_translation_requires_an_explicit_exact_domain(message, exact):
+    failure = RuntimeError(message)
+    with pytest.raises((RuntimeError, TerrineError)) as caught:
+        with _snowflake._query_refusal():
+            raise failure
+    if exact:
+        assert isinstance(caught.value, TerrineError)
+        assert caught.value.code == "terrine.temporal.exact_overflow"
+        assert caught.value.__cause__ is failure
+    else:
+        assert caught.value is failure

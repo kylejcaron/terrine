@@ -314,13 +314,13 @@ class BigQuerySession:
 
 @contextmanager
 def _overflow_refusal() -> Generator[None]:
-    """BigQuery reports BIGNUMERIC overflow as a query error; refuse with the code."""
+    """Map type-labelled NUMERIC/BIGNUMERIC overflow, preserving native failures."""
     from terrine.backends.numeric import EXACT_OVERFLOW
 
     try:
         yield
     except Exception as exc:
-        if "overflow" in str(exc).casefold():
+        if "numeric overflow" in str(exc).casefold():
             raise EXACT_OVERFLOW.error() from exc
         raise
 
