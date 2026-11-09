@@ -7,6 +7,7 @@ import duckdb
 import pyarrow as pa
 import pytest
 
+from terrine.compile.provenance import EXECUTION_REVISION
 from terrine.runtime.control import _recover_interrupted_runs
 from terrine.runtime.state import RuntimeStore
 
@@ -65,7 +66,12 @@ def test_committed_recovery_uses_stored_plan_identity_or_finishes_failed(identit
     reuse = identity == "reuse_request"
     if reuse:
         backend.publish_generation(
-            StagedGeneration("orders", "base", {"p": pa.table({"id": [1]})}, execution_revision=1),
+            StagedGeneration(
+                "orders",
+                "base",
+                {"p": pa.table({"id": [1]})},
+                execution_revision=EXECUTION_REVISION,
+            ),
             expected_manifest=None,
             lease=lease,
         )
@@ -85,7 +91,7 @@ def test_committed_recovery_uses_stored_plan_identity_or_finishes_failed(identit
             graph=dependency_graph(sources=("events",)),
             changes=ChangeSet((), "operator") if reuse else None,
             reuse_base_generation="base" if reuse else None,
-            reuse_base_revision=1 if reuse else None,
+            reuse_base_revision=EXECUTION_REVISION if reuse else None,
         )
         saved = SavedPlan.create(
             plan_json=plan.serialize(),
@@ -130,7 +136,7 @@ def test_committed_recovery_uses_stored_plan_identity_or_finishes_failed(identit
             {"p": pa.table({"id": [2]})},
             run_id="stale",
             snapshot_id=bound.snapshot_id,
-            execution_revision=None if identity == "legacy_invocation" else 1,
+            execution_revision=None if identity == "legacy_invocation" else EXECUTION_REVISION,
         ),
         expected_manifest="base" if reuse else None,
         lease=lease,

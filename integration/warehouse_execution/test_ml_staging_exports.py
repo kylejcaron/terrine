@@ -14,6 +14,7 @@ import pytest
 from examples.ml_staging import create_model, training_design
 from integration.warehouse_execution.ml_staging_fixtures import run_script, training_view
 from terrine import Budget, agg
+from terrine.compile.provenance import EXECUTION_REVISION
 from terrine.data import Coverage
 from terrine.dataset.export import ExportManifest
 from terrine.dataset.reference import Dataset
@@ -714,7 +715,10 @@ def test_refresh_nochange_reuses_only_same_definition_and_rejects_stale_base(
     refreshed = dataset.refresh(frame._model, changes=empty, budget=budget)
     if legacy:
         assert refreshed.manifest.generation != dataset.manifest.generation
-        assert refreshed.manifest.frame_metadata["provenance"]["execution_revision"] == 1
+        assert (
+            refreshed.manifest.frame_metadata["provenance"]["execution_revision"]
+            == EXECUTION_REVISION
+        )
         assert "execution_revision" not in dataset.manifest.frame_metadata["provenance"]
     else:
         assert refreshed.manifest == dataset.manifest
@@ -726,9 +730,7 @@ def test_refresh_nochange_reuses_only_same_definition_and_rejects_stale_base(
         with monkeypatch.context() as patch:
             patch.setattr(SnapshotAuthority, "capture", forbidden_capture)
             patch.setenv("TERRINE_RUNTIME_NAMESPACE", "other_runtime")
-            reopened = Dataset.from_manifest(
-                dataset.manifest, con=con, namespace="terrine_runtime"
-            )
+            reopened = Dataset.from_manifest(dataset.manifest, con=con, namespace="terrine_runtime")
             for no_op_budget in (Budget(max_scan_bytes=1), budget):
                 assert (
                     reopened.refresh(frame._model, changes=empty, budget=no_op_budget).manifest

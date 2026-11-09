@@ -4,6 +4,7 @@ import duckdb
 import pyarrow as pa
 import pytest
 
+from terrine.compile.provenance import EXECUTION_REVISION
 from terrine.errors import TerrineError
 from terrine.runtime.backends.duckdb import DuckDBBackend, StagedGeneration
 from terrine.runtime.leases import LeaseStore
@@ -529,10 +530,16 @@ def test_reuse_rechecks_base_revision_and_fence_before_recording_receipt():
     )
     with pytest.raises(TerrineError):
         backend.reuse_generation(
-            "orders", expected_manifest="old", lease=lease, run_id="old-reuse", execution_revision=1
+            "orders",
+            expected_manifest="old",
+            lease=lease,
+            run_id="old-reuse",
+            execution_revision=EXECUTION_REVISION,
         )
     backend.publish_generation(
-        StagedGeneration("orders", "new", {"p": pa.table({"id": [2]})}, execution_revision=1),
+        StagedGeneration(
+            "orders", "new", {"p": pa.table({"id": [2]})}, execution_revision=EXECUTION_REVISION
+        ),
         expected_manifest="old",
         lease=lease,
     )
@@ -542,7 +549,7 @@ def test_reuse_rechecks_base_revision_and_fence_before_recording_receipt():
             expected_manifest="old",
             lease=lease,
             run_id="stale-base",
-            execution_revision=1,
+            execution_revision=EXECUTION_REVISION,
         )
     takeover = LeaseStore(con.cursor(), namespace="owner")
 
@@ -561,6 +568,6 @@ def test_reuse_rechecks_base_revision_and_fence_before_recording_receipt():
             expected_manifest="new",
             lease=lease,
             run_id="stale-fence",
-            execution_revision=1,
+            execution_revision=EXECUTION_REVISION,
         )
     assert con.execute("SELECT count(*) FROM owner.runtime_run_publications").fetchone() == (0,)

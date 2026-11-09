@@ -2,6 +2,7 @@ import duckdb
 import pyarrow as pa
 import pytest
 
+from terrine.compile.provenance import EXECUTION_REVISION
 from terrine.runtime.execute import execute_plan
 from terrine.runtime.graph import dependency_graph
 from terrine.runtime.planner import plan_refresh
@@ -154,7 +155,7 @@ def test_cancel_before_publish_never_exposes_generation():
     assert published == []
 
 
-@pytest.mark.parametrize("revision", [1, 2])
+@pytest.mark.parametrize("revision", [EXECUTION_REVISION, EXECUTION_REVISION + 1])
 def test_post_commit_publish_error_reconciles_only_matching_revision(revision):
     from terrine.runtime.backends.base import StagedGeneration
     from terrine.runtime.backends.duckdb import DuckDBBackend
@@ -168,14 +169,16 @@ def test_post_commit_publish_error_reconciles_only_matching_revision(revision):
     def publish(plan, outputs, lease):
         def fail(boundary):
             if boundary == "after_commit":
-                if revision != 1:
+                if revision != EXECUTION_REVISION:
                     con.execute(
                         "UPDATE owner.runtime_partition_metadata SET schema_metadata=?",
                         [
                             pa.schema(
                                 [("id", pa.int64())],
                                 metadata={
-                                    b"terrine.execution": b'{"version":1,"execution_revision":2}'
+                                    b"terrine.execution": (
+                                        f'{{"version":1,"execution_revision":{revision}}}'.encode()
+                                    )
                                 },
                             )
                             .serialize()
@@ -207,7 +210,7 @@ def test_post_commit_publish_error_reconciles_only_matching_revision(revision):
             publish=publish,
         )
 
-    if revision != 1:
+    if revision != EXECUTION_REVISION:
         from terrine.errors import TerrineError
 
         with pytest.raises(TerrineError) as error:
@@ -262,7 +265,7 @@ def test_post_commit_empty_refresh_restores_previous_result_partitions():
         graph=dependency_graph(sources=("events",), definition_hash="def", partitions=("p1",)),
         changes=ChangeSet((), "revision"),
         reuse_base_generation="generation-old",
-        reuse_base_revision=1,
+        reuse_base_revision=EXECUTION_REVISION,
     )
 
     def publish_empty(plan, outputs, lease):
@@ -1358,7 +1361,9 @@ def test_reuse_evidence_is_rechecked_under_lease_before_custom_callbacks(changed
         "dataset:orders", "setup", ttl=timedelta(minutes=1), now=datetime.now(UTC)
     )
     backend.publish_generation(
-        StagedGeneration("orders", "base", {"p": pa.table({"id": [1]})}, execution_revision=1),
+        StagedGeneration(
+            "orders", "base", {"p": pa.table({"id": [1]})}, execution_revision=EXECUTION_REVISION
+        ),
         expected_manifest=None,
         lease=lease,
     )
@@ -1371,7 +1376,7 @@ def test_reuse_evidence_is_rechecked_under_lease_before_custom_callbacks(changed
         graph=dependency_graph(sources=("events",), definition_hash="def"),
         changes=ChangeSet((), "revision"),
         reuse_base_generation="base",
-        reuse_base_revision=1,
+        reuse_base_revision=EXECUTION_REVISION,
     )
     if changed == "base":
         con.execute("UPDATE owner.runtime_manifests SET generation='other'")

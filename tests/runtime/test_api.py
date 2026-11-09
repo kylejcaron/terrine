@@ -7,6 +7,7 @@ import pyarrow as pa
 import pytest
 
 import terrine.runtime as runtime
+from terrine.compile.provenance import EXECUTION_REVISION
 from terrine.errors import TerrineError
 from terrine.runtime.execute import RunReceipt
 from terrine.runtime.graph import dependency_graph
@@ -254,7 +255,11 @@ def test_published_generation_uses_receipt_generation_not_current_manifest():
     schema = (
         pa.schema(
             [("id", pa.int64())],
-            metadata={b"terrine.execution": b'{"version":1,"execution_revision":2}'},
+            metadata={
+                b"terrine.execution": (
+                    f'{{"version":1,"execution_revision":{EXECUTION_REVISION + 1}}}'.encode()
+                )
+            },
         )
         .serialize()
         .to_pybytes()
@@ -328,7 +333,7 @@ def test_published_frame_reader_roundtrips_exact_generation_metadata():
                 reason_column="revenue_reason",
             )
         },
-        provenance=replace(_provenance(), execution_revision=1),
+        provenance=replace(_provenance(), execution_revision=EXECUTION_REVISION),
     )
 
     class Publisher(_Executor):
@@ -502,7 +507,7 @@ def test_empty_refresh_plan_reuses_current_generation_result_selection():
         graph=changed_graph,
         changes=ChangeSet((), "revision"),
         reuse_base_generation="g2",
-        reuse_base_revision=1,
+        reuse_base_revision=EXECUTION_REVISION,
     )
     receipt = runtime.run_plan(
         no_op,
@@ -554,7 +559,9 @@ def test_empty_plan_cannot_report_an_arbitrary_generation_as_verified_reuse(comm
         "dataset:orders", "setup", ttl=timedelta(minutes=1), now=datetime.now(UTC)
     )
     backend.publish_generation(
-        StagedGeneration("orders", "base", {"p": pa.table({"id": [1]})}, execution_revision=1),
+        StagedGeneration(
+            "orders", "base", {"p": pa.table({"id": [1]})}, execution_revision=EXECUTION_REVISION
+        ),
         expected_manifest=None,
         lease=lease,
     )
@@ -569,7 +576,7 @@ def test_empty_plan_cannot_report_an_arbitrary_generation_as_verified_reuse(comm
         ),
         changes=ChangeSet((), "revision"),
         reuse_base_generation="base",
-        reuse_base_revision=1,
+        reuse_base_revision=EXECUTION_REVISION,
     )
 
     class NoOpExecutor:
@@ -771,7 +778,7 @@ def test_failed_run_retry_reuses_run_id_outputs_and_advances_fence():
     assert executor.calls == len(plan.tasks)
 
 
-@pytest.mark.parametrize("revision", [None, 2])
+@pytest.mark.parametrize("revision", [None, EXECUTION_REVISION + 1])
 def test_nonempty_publication_refuses_missing_or_different_execution_evidence(revision):
     from terrine.runtime.backends.duckdb import DuckDBBackend, StagedGeneration
 

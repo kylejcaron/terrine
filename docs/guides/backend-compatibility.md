@@ -219,20 +219,20 @@ Float32 widens to Float64 first. NULL stays NULL. There is no bitwise or
 order-independence promise in either mode. Row predicates compare original
 values; output thresholds compare published results.
 
-#### Local selected-input reducer
+#### Selected-input aggregation
 
-The internal raw `aggregate_windows` reducer uses selected source-window
-contributions rather than lifetime prefix differences. Its native sums and
-divisions use ordinary backend binary64 arithmetic: normal order dependence,
-rounding and underflow are permitted, without a universal relative-error bound
-or a magnitude-history certificate. Selected nonfinite inputs and nonfinite
-published results still refuse. A wider count or an unavailable output does not
-make otherwise unconsumed inputs relevant to another sum's arithmetic.
+Ordinary and retained compilation use the same local `aggregate_windows`
+reducer. Additive outputs aggregate selected source-window contributions,
+from raw rows or eligible noncumulative day summaries, rather than lifetime
+prefix differences. Selection, availability and numerical consumption are
+per output: a wider count, another unit or an unavailable output does not
+activate an otherwise unconsumed sum. Unused historical buckets and gaps do
+not enter that sum's arithmetic.
 
-Exact inputs retain the backend's existing coefficient domains and final output
+Exact inputs retain the backend's coefficient domains and final output
 narrowing. Exact floating inputs are selection-masked and quantized individually
-before reduction; discarded nonzero terms retain `below_resolution`. Native
-wide integers that Ibis describes as decimals convert losslessly to the exact
+before reduction; discarded nonzero terms retain `below_resolution`. Wide
+integers that Ibis describes as decimals convert losslessly to the exact
 coefficient domain before nullable selection, avoiding an unintended narrowing
 to the declared decimal alias. Fixed-domain accumulation guards apply to each
 consumed primitive/window, not the union of all source access.
@@ -240,66 +240,48 @@ consumed primitive/window, not the union of all source access.
 An explicitly identified exact-type overflow retains
 `terrine.temporal.exact_overflow`; native or ambiguous engine arithmetic errors
 preserve their original cause rather than being relabeled as exact overflow.
-This is an error-boundary distinction, not new live-warehouse conformance
-evidence. The ordinary compiler still uses the prefix policy below pending
-its migration; specialized cumulative-trajectory and cohort arithmetic guards
-are unchanged.
+This policy does not imply live-warehouse conformance evidence.
 
 #### Native float arithmetic (default)
 
-Finite values are summed in binary64 by the engine; the inline prefix is
-the running `SUM` of those group sums (`numeric_policy: native`, strategy
-`sparse_{day|event}_prefix/native_float`). Windows are prefix differences,
-so the error bound is stated against the history prefix $P$ of the unit up
-to the window end, not against the window alone:
+Selected contributions are summed in binary64 by the backend. Means divide by
+their actual denominator; ratios convert each operand once and divide once.
+Normal order dependence, rounding and underflow follow backend behavior. There
+is no lifetime-history certificate, bitwise cross-engine promise or universal
+relative-error bound for ill-conditioned sums and ratios. A small recent
+window no longer loses its contributions through subtraction of large
+excluded totals. Raw and day reductions preserve selected inputs, not every
+exceptional-arithmetic outcome under different physical summation orders.
 
-$$
-|\hat S - S| \le 2\,n_P\,\varepsilon \sum_{i\in P}|x_i|,
-\qquad \varepsilon = 2^{-53}.
-$$
+Selected nonfinite inputs refuse `terrine.temporal.float64_precision` with
+`reason="nonfinite_input"`. Where the backend returns a nonfinite sum or
+quotient, a cheap result check refuses with `reason="bound_overflow"`.
+Where arithmetic itself raises, its backend execution cause is preserved;
+there is no promise that every engine overflow or underflow becomes that
+package refusal. For example, PostgreSQL can raise while summing two selected
+`1e308` values or dividing a subnormal sum. Do not precompute magnitude
+certificates merely to avoid these permitted backend errors.
 
-A small window after a large history therefore has an absolute error
-proportional to the history total: three events of a few tenths after
-$10^6$ events of $10^3$ (a prefix total of $10^9$) are answered within
-$0.22$, however small the window's own sum. Values below $5\cdot10^{-10}$
-are kept, within that bound. The exact mode below is the remedy when the
-window matters at a resolution the history total does not allow. A mean
-divides the bound by its actual denominator, plus the quotient's own
-rounding $2^{-52}|\hat r|$; a ratio converts each operand once and divides
-once in float64, and the ratio bound below holds with $e_N$ and $e_D$ the
-operands' native bounds (`tests/_float_bound.py` has both forms). A
-non-finite input at or before the end of a non-empty window refuses
-`terrine.temporal.float64_precision` with `reason="nonfinite_input"`; a
-sum, difference or quotient that leaves the binary64 range refuses with
-`reason="bound_overflow"`. Empty windows are zero after any history.
+Nonzero contributions below $5\cdot10^{-10}$ are retained in native mode,
+subject to ordinary binary64 rounding and underflow. Unlike exact mode,
+native arithmetic does not intentionally quantize them away.
 
-On an IEEE 754 engine (DuckDB) an overflow is an infinity and an underflow a
-zero, so only a non-finite result refuses. PostgreSQL's `float8` raises on
-both instead, and the portable policy (which BigQuery and Snowflake inherit)
-assumes the same, so those policies withhold every binary64 sum, quotient and
-product *before* the engine evaluates it, and `bound_overflow` on them also
-refuses finite results whose admission bound leaves the safe range:
+#### Specialized cumulative and cohort arithmetic
 
-- a unit's history whose summed magnitudes reach about half the binary64
-  range ($\sum|x_i| \gtrsim 8.99\cdot10^{307}$), even where the values cancel;
-  a window ending at or after such a state refuses, an empty one is still zero;
-- a mean or ratio whose quotient could round to zero or overflow: with a
-  divisor of magnitude at least one, a quotient below $2^{-1020}$ (about
-  $8.9\cdot10^{-308}$; a subnormal sum over a count, for example); with a
-  divisor below one, a quotient above $2^{1020}$ (about $1.1\cdot10^{307}$).
-  A quotient a large divisor keeps at or below its numerator cannot overflow
-  and publishes; a zero numerator divides to zero;
-- a cohort total or cumulative trajectory whose summed magnitudes reach half
-  the range, and a cohort mean whose normalizing quotient (a unit value over
-  the cohort's largest magnitude $m$) falls below $2^{-1020}$ while $m \ge 1$,
-  or whose rescaling product (the mean of the normalized values times $m$)
-  falls below $2^{-1020}$ while $m < 1$ or above half the range while
-  $m \ge 1$; the other side of each guard cannot be reached, because a
-  quotient over a divisor below one exceeds its numerator and a product by a
-  factor below one stays below it.
+The source-window change does not relax the separate safeguards for cumulative
+trajectories or cohort reductions. PostgreSQL and portable policies (inherited
+by BigQuery and Snowflake) still withhold unsafe inputs before those operations.
+Their `bound_overflow` refusals can cover finite results when:
 
-These are the price of never evaluating an operation the engine would raise
-on; DuckDB publishes the same finite results.
+- cumulative or cohort magnitude totals reach about half the binary64 range;
+- cohort mean normalization falls below $2^{-1020}$ with a divisor of
+  magnitude at least one;
+- rescaling falls below $2^{-1020}$ with a factor below one, or exceeds half
+  the range with a factor at least one.
+
+The existing quotient/product guards and missingness rules remain in force.
+DuckDB may publish the corresponding finite results. An aggregate cannot be
+made safe by wrapping its result in CASE; required guards withhold its inputs.
 
 #### Exact float arithmetic (`exact=True`)
 
@@ -315,9 +297,9 @@ a published result beyond float64 uses `reason="bound_overflow"`.
 
 The quantized value joins the declared-decimal coefficient path at scale 9:
 DuckDB `BIGNUM`, PostgreSQL `NUMERIC`, BigQuery `BIGNUMERIC`, Snowflake
-`NUMBER(38, 0)`, and portable `DECIMAL(38, 0)`. Prefix subtraction is exact,
-so a small recent window is not cancelled by a huge history, and the bound
-depends on the window $W$ alone:
+`NUMBER(38, 0)`, and portable `DECIMAL(38, 0)`. Selected coefficients combine
+exactly within the backend's supported domain, so excluded history cannot
+cancel a recent window. The bound depends on the window $W$ alone:
 
 $$
 |\hat S - S| \le e_S = 10^{-9}\,n_W + 10^{-12}\sum_{i\in W}|x_i|.
@@ -341,11 +323,12 @@ the resulting value is still subject to the same window-sum bound.
 
 #### Means and ratios
 
-A mean divides its sum's bound by its actual denominator, including
-calendar-day means. Means and ratios convert each exact operand at its own
-scale once, then divide once in float64; a native operand enters as it is.
-A denominator that is exactly zero returns NULL with `zero_denominator`.
-Otherwise, when $|\hat D| > e_D$:
+An exact-derived mean divides its sum's bound by its actual denominator,
+including calendar-day means. Means and ratios convert each exact operand at
+its own scale once, then divide once in float64. A native operand enters as it
+is, without a general propagated-error certificate. A denominator that is
+exactly zero returns NULL with `zero_denominator`. For operands with stated
+bounds, when $|\hat D| > e_D$:
 
 $$
 |\hat r-N/D| \le
@@ -357,50 +340,41 @@ For $0 < |\hat D| \le e_D$ the ratio is returned with no stated accuracy.
 
 #### When to choose exact
 
-- A small window after a large history, when the native bound (proportional
-  to the unit's history total through the window end) is wider than the
-  window's values: lifetime totals in the $10^9$ range with windows of
-  cents, or inline history prefixes that keep growing.
-- Answers that must agree across engines and summation orders to
-  $10^{-9}$: the exact sum is independent of order and engine except at
-  conversion ties; a native sum has no such promise.
-- Contributions below $5\cdot10^{-10}$ never need exact mode: both modes
-  are wrong for them in different ways (native keeps them within a bound that
-  may exceed them, exact drops them and says so); declare decimals or rescale.
-- Exact mode costs decimal prefix state, larger SQL (about a third more on
-  the README design) and a backend with exact state: an engine without it
-  refuses `terrine.temporal.exact_unsupported`, and bounded coefficient
-  engines refuse `terrine.temporal.exact_overflow` at $10^{29}$-scale
-  magnitudes where native mode publishes.
+- Quantized, order-independent source sums are useful when selected
+  contributions have widely different magnitudes or cancellation, provided
+  the fixed scale preserves the resolution the study needs.
+- Exact sums agree across engines and summation orders within their stated
+  quantization/conversion bound, except for permitted conversion ties. Native
+  sums make no such order-independence promise.
+- Nonzero contributions below $5\cdot10^{-10}$ can vanish in exact mode;
+  native mode retains them subject to backend rounding and underflow. Declare
+  decimals or rescale when that resolution must survive exact quantization.
+- Exact mode costs coefficient arithmetic and requires a backend with the
+  necessary exact domain. An engine without it refuses
+  `terrine.temporal.exact_unsupported`; bounded coefficient engines can refuse
+  `terrine.temporal.exact_overflow` even when native arithmetic would return a
+  finite value. Choose from the required result contract, not a universal
+  cost or accuracy ranking.
 
 Signed integer quotients still truncate toward zero, including both `int64`
 endpoints, and are NULL beyond `int64` or for a zero divisor.
-- Exact accumulations are admitted only when a binary64 bound on the summed
-  magnitudes proves the exact sum fits the type: with `n` contributing values
-  the computed bound `B` lies within `e = (1 + u)(1 + γₙ₋₁) − 1` of the true
-  magnitude sum (`γₖ = k · u / (1 − k · u)`), so a partition is admitted iff
-  `B < limit · (1 − e)`. Otherwise its values are withheld before the backend
-  adds them and every consumer of that state refuses: sums, averages and
-  ratios with `terrine.temporal.exact_overflow`, including float coefficients.
-  Cohort totals, means and cumulative trajectories keep their existing
-  overflow reasons. The same admission, against half the binary64 range,
-  guards native sums on the policies that bound float arithmetic. This
-  bound is deliberately conservative: opposite-sign history whose magnitudes
-  alone exceed the domain is refused even where the exact difference would
-  fit, and a prefix difference leaving the fixed domain refuses likewise.
-  Nothing is answered by a backend overflow error, a narrowed value or a
-  silent NULL.
-- Timestamps use native order, typed UTC epoch deltas and signed sub-second
-  parts; fixed-offset local days and their start instants come from one epoch
-  delta and one floor quotient rather than chained conversions, keeping day
-  buckets and endpoint alignment shallow; the union/window as-of fallback
-  (never a range join), NULL-ignoring coalesced extrema and portable integer
-  sequences (seconds multiplied first, then cast to an interval) are the
-  defaults.
-
-DuckDB's `BIGNUM` coefficient state is unbounded. Bounded coefficient
-engines retain the declared-decimal accumulation limits; their guards
-withhold unsafe state and refuse before any output is published.
+- Bounded exact accumulations are admitted only when a binary64 bound on the
+  selected magnitudes proves the exact sum fits the coefficient type. With
+  `n` contributions, the computed bound `B` lies within
+  `e = (1 + u)(1 + γₙ₋₁) − 1` of the true magnitude sum
+  (`γₖ = k · u / (1 − k · u)`); admission requires
+  `B < limit · (1 − e)`. Otherwise inputs are withheld before addition and
+  consumers refuse `terrine.temporal.exact_overflow`, including exact-float
+  coefficients. This can conservatively refuse opposite-sign selected inputs
+  even when their signed sum would fit; excluded history is not part of that
+  bound. DuckDB's `BIGNUM` coefficient accumulation is unbounded. Final output
+  domains and the separate cumulative/cohort safeguards still apply.
+- Timestamp comparisons use backend-native order or exact signed timestamp
+  parts as appropriate. Fixed-offset days preserve the original timestamp
+  precision; unused source timestamps are masked before calendar
+  normalization. As-of selectors retain their union/window fallback, while
+  additive source windows use local membership reductions. NULL-ignoring
+  extrema and portable integer sequences remain backend-policy operations.
 
 ### Provenance stamp
 
