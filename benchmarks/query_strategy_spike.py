@@ -258,6 +258,58 @@ def profile(con, sql, backend, path):
     return None
 
 
+def local_query(model, frame, windows, resolution):
+    """Exercise the production reducer directly, without the declaration selector."""
+    from dataclasses import replace
+
+    from terrine.compile.columns import exact_scope
+    from terrine.semantic.bind import normalize_events
+    from terrine.temporal.aggregate import AggregateRequest, aggregate_windows
+    from terrine.temporal.daily import resolve_measure
+    from terrine.windows import Window
+
+    sources = {}
+    requests = []
+    with exact_scope(model):
+        for metric_name in METRICS:
+            metric = model.metrics[metric_name]
+            measures = []
+            for measure in metric.measures:
+                if measure.source_name not in sources:
+                    source = model.sources[measure.source_name]
+                    events = normalize_events(
+                        model._relation(source.relation), source, source.units["user"]
+                    )
+                    sources[source.name] = (events, source)
+                events, source = sources[measure.source_name]
+                measures.append(resolve_measure(events, measure, source=source))
+            resolved = replace(metric, measures=tuple(measures))
+            requests.extend(
+                AggregateRequest(
+                    resolved, Window(f"-{days}d", 0), f"{metric_name}_{days}d", "feature"
+                )
+                for days in windows
+            )
+        result = aggregate_windows(
+            frame._compiled._anchors.table,
+            requests,
+            sources,
+            model.readiness,
+            boundary=model.catalog.day_boundary,
+            resolution=resolution,
+        )
+    table = result.table
+    selected = {"unit": table.unit, "t0": table.t0}
+    for output, meta in result.columns.items():
+        selected[output] = table[output]
+        for kind in ("complete", "reason", "observed_from", "observed_until"):
+            selected[f"{output}__{kind}"] = table[getattr(meta, f"{kind}_column")]
+    selected.update(
+        {f"check_{index}": table[check.column] for index, check in enumerate(result.row_checks)}
+    )
+    return result, table.select(**selected)
+
+
 def measure_case(con, config, mode, anchor_count, backend, repeats, out, full, variants):
     windows = tuple(range(1, 11))
     label = f"{backend}-{mode}-anchors{anchor_count}"
@@ -305,6 +357,12 @@ def measure_case(con, config, mode, anchor_count, backend, repeats, out, full, v
         )
         row["build_seconds"]["bucketed"] = time.perf_counter() - begin
         queries["bucketed"] = bucketed
+    local_results = {}
+    for name, resolution in (("local_raw", "event"), ("local_day", "day")):
+        if name in variants:
+            begin = time.perf_counter()
+            local_results[name], queries[name] = local_query(model, frame, windows, resolution)
+            row["build_seconds"][name] = time.perf_counter() - begin
     queries = {name: queries[name] for name in variants}
     compiled = {}
     for name, expression in queries.items():
@@ -323,23 +381,38 @@ def measure_case(con, config, mode, anchor_count, backend, repeats, out, full, v
             "server_seconds": [],
         }
     print(json.dumps({"progress": "compiled", "case": label}), flush=True)
+    expected_reference = check_table(candidate.to_pyarrow())
     # Alternate order so the same variant does not always benefit from warming.
     for repeat in range(repeats):
         for name in variants if repeat % 2 == 0 else tuple(reversed(variants)):
             row["variants"][name]["server_seconds"].append(timed_sql(con, compiled[name]))
     tables = {}
     for name, expression in queries.items():
-        begin = time.perf_counter()
-        tables[name] = check_table(expression.to_pyarrow())
-        row["variants"][name]["query_to_arrow_seconds"] = time.perf_counter() - begin
+        if name in local_results:
+            validation_times = []
+            for _ in range(repeats):
+                begin = time.perf_counter()
+                local_results[name].validate(con.to_pyarrow)
+                tables[name] = check_table(expression.to_pyarrow())
+                validation_times.append(time.perf_counter() - begin)
+                compare(tables[name], expected_reference)
+                from benchmarks.query_strategy_oracle import assert_values
+
+                assert_values(con, tables[name], mode, model.readiness.for_fact("events"))
+            row["variants"][name]["validation_to_arrow_seconds"] = validation_times
+            row["variants"][name]["validation_to_arrow_median_seconds"] = statistics.median(
+                validation_times
+            )
+        else:
+            begin = time.perf_counter()
+            tables[name] = check_table(expression.to_pyarrow())
+            row["variants"][name]["query_to_arrow_seconds"] = time.perf_counter() - begin
         row["variants"][name]["server_median_seconds"] = statistics.median(
             row["variants"][name]["server_seconds"]
         )
         row["variants"][name]["output_arrow_bytes"] = tables[name].nbytes
         profile(con, compiled[name], backend, out / f"{label}-{name}-explain.txt")
-    expected = tables.get("direct")
-    if expected is None:
-        expected = check_table(candidate.to_pyarrow())
+    expected = expected_reference
     for table in tables.values():
         compare(table, expected)
     from benchmarks.query_strategy_oracle import assert_values
