@@ -420,6 +420,7 @@ def compile_columns(
     check_columns: list[str] = []
     lifted: dict[int, tuple[str, ...]] = {}
     normalized_sources, sources, selector_sources, source_histories = {}, {}, {}, {}
+    source_checks: dict[str, list[_DeferredCheck]] = {}
     sketches: list[SketchSidecar] = []
     sketch_aliases: dict[str, list[str]] = {}
     selector_identity_checks = []
@@ -438,7 +439,7 @@ def compile_columns(
         else None
     )
 
-    def events_for(source_name, *, selector=False):
+    def events_for(source_name, *, selector=False, register_checks=True):
         if source_name not in normalized_sources:
             source = model.sources[source_name]
             raw = model._relation(source.relation)
@@ -456,16 +457,19 @@ def compile_columns(
                 raw, source, source.units[unit_name], extra_columns=extra_columns
             )
             histories = {}
+            source_checks[source_name] = []
             for dimension in source.dimensions:
                 history = model._relation(dimension.relation)
                 histories[dimension.name] = history
-                checks.append(_HistoryValidation(history, dimension))
+                source_checks[source_name].append(_HistoryValidation(history, dimension))
             source_property_columns[source_name] = _enriched_property_columns(
                 source.dimensions, events.columns
             )
             normalized_sources[source_name] = events
             source_histories[source_name] = histories
             sources[source_name] = enrich_events(events, source, histories)
+        if register_checks:
+            checks.extend(source_checks.pop(source_name, ()))
         if not selector:
             return sources[source_name]
         if source_name not in selector_sources:
@@ -488,7 +492,9 @@ def compile_columns(
             )
         return selector_sources[source_name]
 
-    lowering = CompileContext(model, unit_name, fixed, events_for)
+    lowering = CompileContext(
+        model, unit_name, fixed, lambda name: events_for(name, register_checks=False)
+    )
 
     selector_origins: dict[EventTime, tuple[ibis.Table, str]] = {}
     selector_metadata = {}
@@ -942,14 +948,14 @@ def compile_columns(
             checks_by_output[check.context["output"]].append(check)
         for node in group:
             output = output_names[node]
-            if output_checks := checks_by_output[output]:
-                deferred = TemporalResult(
-                    result.table,
-                    {output: result.columns[output]},
-                    row_checks=tuple(output_checks),
-                )
-                additive_checks[node] = deferred
-                lifted[id(deferred)] = tuple(lifted_names[check.column] for check in output_checks)
+            output_checks = checks_by_output[output]
+            deferred = TemporalResult(
+                result.table,
+                {output: result.columns[output]},
+                row_checks=tuple(output_checks),
+            )
+            additive_checks[node] = deferred
+            lifted[id(deferred)] = tuple(lifted_names[check.column] for check in output_checks)
             cutoff = FeatureCutoff(
                 latest_seconds=(
                     (selector_timing(origin)[0][1] if origin is not None else 0)
@@ -966,7 +972,9 @@ def compile_columns(
     def expression(node: Expr) -> CompiledValue:
         nonlocal table
         if node in values:
-            if node in additive_checks:
+            if isinstance(node, MetricAgg) and node in additive_checks:
+                for measure in model.metrics[node.metric].measures:
+                    events_for(measure.source_name)
                 checks.append(additive_checks.pop(node))
             return values[node]
         if isinstance(node, MetricAgg) and node in additive_groups.get(node.relative_to, ()):
