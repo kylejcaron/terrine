@@ -239,6 +239,14 @@ reuse-base restriction. If that identity cannot be verified, the interrupted
 run becomes terminal with `terrine.runtime.saved_plan_mismatch`; recovery never
 infers a revision from installed code or leaves an unverified commit running.
 
+Recovery releases active-run snapshot pins only after the fenced terminal
+transition. Failed runs retain retry inputs unless their exact checksummed
+plan identity proves that the execution format or revision is no longer
+admissible. Missing identity or invalid publication evidence alone does not
+authorize release. Snapshot collection also reconciles obsolete failed-run
+pins left by earlier owners; saved-plan and current-publication references
+still protect the inputs until separately released or superseded.
+
 Run-state transitions distinguish recoverable failure from terminal results. A `failed` run may retry only after acquiring a newer lease fencing token; an expired writer cannot resume or publish. `succeeded` and `cancelled` runs are terminal and never regress.
 
 ### Optional telemetry

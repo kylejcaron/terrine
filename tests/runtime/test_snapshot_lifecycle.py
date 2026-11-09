@@ -182,6 +182,7 @@ def test_retryable_failed_run_keeps_snapshot_until_successful_retry():
             run_task=lambda task, dependencies: (_ for _ in ()).throw(RuntimeError("task failed")),
             publish=lambda plan, outputs, lease: _publish(con, plan, outputs, lease),
         )
+    store.release_terminal_run_snapshot_references()
     assert store.snapshot_references("snapshot") == (("active_run", '["retry",1]'),)
     execute_plan(
         plan,

@@ -313,9 +313,12 @@ class RuntimeStore:
                 self.con.execute("ROLLBACK")
             raise
 
-    def unpin_snapshot(self, snapshot_id: str, *, kind: str, reference: str) -> None:
+    def unpin_snapshot(
+        self, snapshot_id: str, *, kind: str, reference: str, _in_transaction: bool = False
+    ) -> None:
         _check_snapshot_reference(snapshot_id, kind, reference)
-        self.con.execute("BEGIN TRANSACTION")
+        if not _in_transaction:
+            self.con.execute("BEGIN TRANSACTION")
         try:
             self.advance_snapshot_guard(snapshot_id)
             self.con.execute(
@@ -323,9 +326,11 @@ class RuntimeStore:
                 "WHERE snapshot_id=? AND kind=? AND reference=?",
                 [snapshot_id, kind, reference],
             )
-            self.con.execute("COMMIT")
+            if not _in_transaction:
+                self.con.execute("COMMIT")
         except Exception:
-            self.con.execute("ROLLBACK")
+            if not _in_transaction:
+                self.con.execute("ROLLBACK")
             raise
 
     def snapshot_references(self, snapshot_id: str) -> tuple[tuple[str, str], ...]:
@@ -338,15 +343,36 @@ class RuntimeStore:
         ).fetchall()
         return tuple((kind, reference) for kind, reference in rows)
 
-    def release_terminal_run_snapshot_references(self) -> None:
-        """Reconcile active-run pins left by terminal cleanup conflicts."""
-        terminal = {
-            run_id
-            for (run_id,) in self.con.execute(
-                f"SELECT run_id FROM {self._schema}.runtime_runs "
-                "WHERE state IN ('succeeded', 'cancelled')"
-            ).fetchall()
-        }
+    def release_terminal_run_snapshot_references(self, *, _in_transaction: bool = False) -> None:
+        """Release terminal pins, retaining failures unless exact identity forbids retry."""
+        from terrine.errors import TerrineError
+        from terrine.runtime.planner import admit_execution
+        from terrine.runtime.saved_plan import _stored_plan_identity
+
+        terminal = set()
+        for run_id, state, fingerprint in self.con.execute(
+            f"SELECT run_id,state,fingerprint FROM {self._schema}.runtime_runs "
+            "WHERE state IN ('succeeded', 'cancelled', 'failed')"
+        ).fetchall():
+            if state == "failed":
+                identity = _stored_plan_identity(
+                    self.con, schema=self._schema, namespace=self.namespace, fingerprint=fingerprint
+                )
+                if identity is None:
+                    continue
+                plan, saved_version = identity
+                try:
+                    admit_execution(
+                        plan, namespace=self.namespace, saved_plan_version=saved_version
+                    )
+                except TerrineError as error:
+                    if error.context.get("reason") != "execution_revision_mismatch":
+                        continue
+                except ValueError:
+                    continue
+                else:
+                    continue
+            terminal.add(run_id)
         if not terminal:
             return
         references = self.con.execute(
@@ -360,9 +386,14 @@ class RuntimeStore:
                 run_id = reference
             if run_id in terminal:
                 try:
-                    self.unpin_snapshot(snapshot_id, kind="active_run", reference=reference)
+                    self.unpin_snapshot(
+                        snapshot_id,
+                        kind="active_run",
+                        reference=reference,
+                        _in_transaction=_in_transaction,
+                    )
                 except Exception as exc:
-                    if type(exc).__name__ != "TransactionException":
+                    if _in_transaction or type(exc).__name__ != "TransactionException":
                         raise
 
     def replace_published_snapshot(

@@ -336,6 +336,34 @@ def _bind_saved_plan(saved_plan: SavedPlan, *, namespace: str) -> RefreshPlan:
     )
 
 
+def _stored_plan_identity(
+    con: Any, *, schema: str, namespace: str, fingerprint: str
+) -> tuple[RefreshPlan, int | None] | None:
+    """Restore exact checksummed identity without granting execution admission."""
+    for payload, invocation in con.execute(
+        f"SELECT invocation_json,TRUE FROM {schema}.runtime_plan_invocations "
+        f"UNION ALL SELECT recipe_json,FALSE FROM {schema}.runtime_dataset_requests"
+    ).fetchall():
+        try:
+            document = json.loads(payload)
+            if not isinstance(document, dict):
+                continue
+            saved_version = None
+            if invocation and document.get("schema_version") == 3:
+                bound = RefreshPlan.deserialize(payload)
+                if bound.definition.namespace != namespace:
+                    continue
+            else:
+                saved = SavedPlan.from_json(document["saved_plan_json"] if invocation else payload)
+                bound = _bind_saved_plan(saved, namespace=namespace)
+                saved_version = saved.schema_version
+        except (KeyError, TypeError, ValueError, TerrineError):
+            continue
+        if bound.definition.fingerprint == fingerprint:
+            return bound, saved_version
+    return None
+
+
 def resolve_plan(
     saved_plan: SavedPlan, *, resolver: ModelResolver, namespace: str
 ) -> tuple[RefreshPlan, Model, Design | DatasetDefinition, DestinationRef]:

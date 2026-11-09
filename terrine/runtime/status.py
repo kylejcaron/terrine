@@ -233,18 +233,24 @@ def _recover_interrupted_runs(con: Any, *, namespace: str, plan: RefreshPlan | N
             ).fetchone()
             publication_error = None
             if publication is not None:
-                recovering_plan = (
-                    plan
-                    if plan is not None and plan.definition.fingerprint == fingerprint
-                    else _recovery_plan(con, schema, namespace, fingerprint)
-                )
                 from terrine.runtime.execute import _verify_generation
                 from terrine.runtime.planner import admit_execution
+                from terrine.runtime.saved_plan import _stored_plan_identity
 
+                identity = (
+                    (plan, None)
+                    if plan is not None and plan.definition.fingerprint == fingerprint
+                    else _stored_plan_identity(
+                        con, schema=schema, namespace=namespace, fingerprint=fingerprint
+                    )
+                )
                 try:
-                    if recovering_plan is None:
+                    if identity is None:
                         raise ValueError("publication has no verified plan identity")
-                    admit_execution(recovering_plan, namespace=namespace)
+                    recovering_plan, saved_version = identity
+                    admit_execution(
+                        recovering_plan, namespace=namespace, saved_plan_version=saved_version
+                    )
                     _verify_generation(
                         recovering_plan, publication[1], con=con, namespace=namespace
                     )
@@ -303,32 +309,5 @@ def _recover_interrupted_runs(con: Any, *, namespace: str, plan: RefreshPlan | N
                     namespace=namespace,
                     _in_transaction=True,
                 )
-
-
-def _recovery_plan(con: Any, schema: str, namespace: str, fingerprint: str) -> RefreshPlan | None:
-    from terrine.runtime.planner import RefreshPlan, admit_execution
-    from terrine.runtime.saved_plan import SavedPlan, _bind_saved_plan
-
-    for payload, invocation in con.execute(
-        f"SELECT invocation_json,TRUE FROM {schema}.runtime_plan_invocations "
-        f"UNION ALL SELECT recipe_json,FALSE FROM {schema}.runtime_dataset_requests"
-    ).fetchall():
-        try:
-            document = json.loads(payload)
-            if not isinstance(document, dict):
-                continue
-            if invocation and document.get("schema_version") == 3:
-                bound = RefreshPlan.deserialize(payload)
-                if bound.definition.namespace != namespace:
-                    continue
-            else:
-                saved = SavedPlan.from_json(document["saved_plan_json"] if invocation else payload)
-                bound = _bind_saved_plan(saved, namespace=namespace)
-                admit_execution(
-                    bound, namespace=namespace, saved_plan_version=saved.schema_version
-                )
-        except (KeyError, TypeError, ValueError, TerrineError):
-            continue
-        if bound.definition.fingerprint == fingerprint:
-            return bound
-    return None
+        if stale:
+            store.release_terminal_run_snapshot_references(_in_transaction=True)

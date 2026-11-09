@@ -129,6 +129,7 @@ def test_committed_recovery_uses_stored_plan_identity_or_finishes_failed(identit
             "committed",
             {"p": pa.table({"id": [2]})},
             run_id="stale",
+            snapshot_id=bound.snapshot_id,
             execution_revision=None if identity == "legacy_invocation" else 1,
         ),
         expected_manifest="base" if reuse else None,
@@ -141,6 +142,9 @@ def test_committed_recovery_uses_stored_plan_identity_or_finishes_failed(identit
         "('stale','orders',?,'running',1,'request')",
         [bound.definition.fingerprint],
     )
+    store = RuntimeStore(con, namespace="owner")
+    saved.pin_snapshot(store)
+    store.pin_snapshot(bound.snapshot_id, kind="active_run", reference='["stale",1]')
     _recover_interrupted_runs(con, namespace="owner")
     from terrine.runtime.status import get_run
 
@@ -149,9 +153,32 @@ def test_committed_recovery_uses_stored_plan_identity_or_finishes_failed(identit
     assert status.durable_state == ("failed" if failed else "succeeded")
     assert status.error_code == ("terrine.runtime.saved_plan_mismatch" if failed else None)
     assert status.pinned_result_ref == (None if failed else "committed")
+    obsolete = identity in {"legacy_invocation", "legacy_envelope"}
+    references = store.snapshot_references(bound.snapshot_id)
+    assert (("active_run", '["stale",1]') in references) == (failed and not obsolete)
+    if obsolete:
+        assert not store.mark_snapshot_for_gc(bound.snapshot_id)
+        # Reconcile pins left by an earlier owner that already recorded failure.
+        store.pin_snapshot(bound.snapshot_id, kind="active_run", reference='["stale",1]')
+        store.release_terminal_run_snapshot_references()
+        assert ("active_run", '["stale",1]') not in store.snapshot_references(bound.snapshot_id)
+        replacement = _lease(con, "owner")
+        backend.publish_generation(
+            StagedGeneration(
+                "orders", "replacement", {"p": pa.table({"id": [3]})}, execution_revision=1
+            ),
+            expected_manifest="committed",
+            lease=replacement,
+        )
+        LeaseStore(con, namespace="owner").release(replacement)
+        saved.release_snapshot(store)
+        assert store.snapshot_references(bound.snapshot_id) == ()
+        assert store.mark_snapshot_for_gc(bound.snapshot_id)
 
 
-def test_direct_execution_persists_plan_identity_before_committed_crash():
+@pytest.mark.parametrize("upgraded", [False, True])
+def test_direct_execution_persists_plan_identity_before_committed_crash(monkeypatch, upgraded):
+    import terrine.runtime.planner as planner
     from terrine.runtime.execute import execute_plan
     from tests.runtime.test_execute import _plan, _publish
 
@@ -171,8 +198,25 @@ def test_direct_execution_persists_plan_identity_before_committed_crash():
             run_task=lambda *_: pa.table({"id": [1]}),
             publish=publish,
         )
+    if upgraded:
+        monkeypatch.setattr(planner, "EXECUTION_REVISION", plan.definition.execution_revision + 1)
+        con.execute(
+            "INSERT INTO owner.runtime_leases "
+            "SELECT 'dataset:orders',run_id,attempt_fence,TIMESTAMP '2999-01-01' "
+            "FROM owner.runtime_runs WHERE run_id='interrupted'"
+        )
+        _recover_interrupted_runs(con, namespace="owner")
+        assert con.execute("SELECT state FROM owner.runtime_runs").fetchone() == ("running",)
+        assert ("active_run", '["interrupted",1]') in RuntimeStore(
+            con, namespace="owner"
+        ).snapshot_references(plan.snapshot_id)
+        con.execute("UPDATE owner.runtime_leases SET expires_at=TIMESTAMP '2000-01-01'")
     _recover_interrupted_runs(con, namespace="owner")
-    assert con.execute("SELECT state,published_generation FROM owner.runtime_runs").fetchone() == (
-        "succeeded",
-        "g1",
+    from terrine.runtime.status import get_run
+
+    status = get_run("interrupted", con=con, namespace="owner")
+    assert status.durable_state == ("failed" if upgraded else "succeeded")
+    assert status.pinned_result_ref == (None if upgraded else "g1")
+    assert RuntimeStore(con, namespace="owner").snapshot_references(plan.snapshot_id) == (
+        ("published_manifest", '["orders","g1"]'),
     )

@@ -59,6 +59,9 @@
   identity under the current revision. Obsolete or unverifiable interrupted
   runs terminate with a saved-plan mismatch instead of becoming successful
   or remaining running; historical publications remain unchanged.
+  Recovery and snapshot collection release active-run pins for verified obsolete
+  execution identities, while missing identity, invalid publication evidence
+  and ordinary retryable failures retain their input snapshots.
 - Python 3.12 is the minimum supported version; CPython 3.12, 3.13 and 3.14
   are supported.
 - Float sums and means use native arithmetic unless `exact=True`.
