@@ -523,6 +523,15 @@ Bounded exact reduction keeps numerical guard intermediates private to each
 source; joining three or more independent exact sources preserves the same
 public values, domains and anchor grain.
 
+Independent contexts, contribution primitives and output finalizers share
+projection layers at the same named-column dependency depth. Arithmetic stays
+behind its explicit column boundaries: selected-input masks still precede float
+conversion, quantization and invalid-input checks. This avoids serially nesting
+every output's intermediates without introducing per-output source joins or
+inlining repeated numerical expressions. The five-metric, ten-window raw/day
+DuckDB smoke compiles, validates and exports in both integer and native modes;
+this is exercised evidence, not a performance guarantee or a new public mode.
+
 Event counts include selected null values; event means divide by the selected
 nonnull count. For values `2, NULL, 3`, the count is `3`, sum is `5`, and event
 mean is `2.5`. Complete empty sums/counts are zero, complete empty conversions

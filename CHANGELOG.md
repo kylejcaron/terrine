@@ -19,6 +19,10 @@
   conversion, checks and sums, without multiplying overlapping contributions.
   Raw/day reduction shares finalization, exact domains and per-input quantization.
 - Preserve independent exact-source batches under bounded arithmetic policies.
+- Stage independent local-window contexts, selected contributions and outputs
+  at their named-column dependency depth, so wide batches compile without a
+  projection chain that grows with output count. Existing masks, arithmetic
+  guards and metadata remain unchanged; the public compiler migration is later.
 
 ### Breaking changes
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from fractions import Fraction
@@ -36,6 +37,107 @@ def con():
         yield connection
     finally:
         connection.disconnect()
+
+
+@pytest.mark.parametrize("resolution", ["event", "day"])
+@pytest.mark.parametrize("dtype", ["int64", "float64"])
+def test_wide_local_batch_materializes_values_reasons_and_full_anchor_support(
+    con, resolution, dtype
+):
+    # Catches independent outputs accumulating a serial projection chain that
+    # cannot compile, and relinking that loses a window mask or anchor identity.
+    start = datetime(2025, 1, 1, tzinfo=UTC)
+    end = datetime(2025, 1, 15, tzinfo=UTC)
+    t0 = datetime(2025, 1, 12, tzinfo=UTC)
+    days, values = [2, 4, 7, 10, 4, 7], [2, None, 6, -2, None, 0]
+    units = ["a", "a", "a", "a", "null", "zero"]
+    measure, source = _local(
+        con,
+        values,
+        dtype=dtype,
+        exact=dtype == "int64",
+        units=units,
+        times=[start + timedelta(days=day - 1, hours=12) for day in days],
+    )
+    pairs = {
+        "count": [(replace(measure, aggregation="count"), source)],
+        "sum": [(measure, source)],
+        "average": [(replace(measure, aggregation="avg_event"), source)],
+        "ratio": [(measure, source), (replace(measure, aggregation="count"), source)],
+        "conversion": [(measure, source)],
+    }
+    anchors = _anchors(con, time=t0.isoformat(), units=("a", "a", "null", "zero", "empty"))
+    anchors = anchors.mutate(
+        t0=(anchors.anchor_id == "1").ifelse(t0 - timedelta(days=1), anchors.t0),
+        _observed_from=(anchors.anchor_id == "1").ifelse(start + timedelta(days=4), start),
+        _observed_until=ibis.literal(end),
+    )
+    result = _batch(
+        anchors,
+        [
+            (
+                f"{kind}_{width}",
+                pair,
+                Window(f"-{width}d", 0),
+                kind if kind in {"ratio", "conversion"} else "mean",
+            )
+            for kind, pair in pairs.items()
+            for width in range(1, 11)
+        ],
+        readiness=Readiness({"postings": BoundCoverage(start, end)}),
+        resolution=resolution,
+    )
+    rows = sorted(_rows(con, result), key=lambda row: row["anchor_id"])
+    assert [(row["unit"], row["anchor_id"], row["t0"]) for row in rows] == [
+        ("a", "0", t0),
+        ("a", "1", t0 - timedelta(days=1)),
+        ("null", "2", t0),
+        ("zero", "3", t0),
+        ("empty", "4", t0),
+    ]
+    for row in rows:
+        assert row["_observed_from"] == start + timedelta(days=4 if row["anchor_id"] == "1" else 0)
+        assert row["_observed_until"] == end
+        for width in range(1, 11):
+            lower = row["t0"] - timedelta(days=width)
+            selected = [
+                value
+                for unit, day, value in zip(units, days, values, strict=True)
+                if unit == row["unit"]
+                and lower <= start + timedelta(days=day - 1, hours=12) < row["t0"]
+            ]
+            nonnull = [value for value in selected if value is not None]
+            total = sum(nonnull)
+            expected = {
+                "count": len(selected),
+                "sum": total if nonnull or not selected else None,
+                "average": Fraction(total, len(nonnull)) if nonnull else None,
+                "ratio": Fraction(total, len(selected)) if nonnull else None,
+                "conversion": bool(selected),
+            }
+            for kind, value in expected.items():
+                output = f"{kind}_{width}"
+                meta = result.columns[output]
+                complete = lower >= row["_observed_from"]
+                reason = None
+                if not complete:
+                    value, reason = None, "incomplete_observation"
+                elif kind in {"sum", "average", "ratio"} and selected and not nonnull:
+                    reason = "all_values_null"
+                elif kind == "average" and not selected:
+                    reason = "no_observations"
+                elif kind == "ratio" and not selected:
+                    reason = "zero_denominator"
+                if value is None:
+                    assert row[output] is None
+                elif kind == "conversion":
+                    assert row[output] is value
+                else:
+                    assert row[output] == pytest.approx(float(value), rel=2**-50)
+                assert row[meta.reason_column] == reason
+                assert row[meta.complete_column] is complete
+                assert row[meta.observed_from_column] == row["_observed_from"]
+                assert row[meta.observed_until_column] == end
 
 
 @pytest.mark.parametrize("resolution", ["event", "day"])

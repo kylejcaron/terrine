@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from typing import Any, cast
 
 import ibis
 import ibis.expr.datatypes as dt
+import ibis.expr.operations as ops
 import ibis.expr.types as ir
 from ibis.common.exceptions import IbisError
+from ibis.common.graph import Graph
 
 from terrine.backends.dialect import current_dialect
 from terrine.backends.numeric import (
@@ -197,6 +199,56 @@ def _predicate(events: ibis.Table, measure: BoundMeasure, source: BoundSource):
     return predicate, observed_null, missing, literal_null, nonfinite
 
 
+def _batch_projections(base: ibis.Table, branches: Sequence[ibis.Table]) -> ibis.Table:
+    """Stage independent temporal projections by named-column dependency depth.
+
+    Every branch contains only projections above ``base`` and assigns fresh
+    names. Keep expressions behind their column boundaries rather than inlining
+    them, so selection still precedes conversion and invalid-input checks.
+    """
+    root = base.op()
+    fields = {ops.Field(root, name): name for name in base.columns}
+    depths = dict.fromkeys(base.columns, 0)
+    layers: dict[int, dict[str, tuple[Any, dict[Any, str]]]] = {}
+
+    def scalar(node):
+        return not isinstance(node, ops.Relation)
+
+    for branch in branches:
+        chain = []
+        relation = branch.op()
+        while relation != root:
+            if not isinstance(relation, ops.Project):
+                raise ValueError("temporal projection branches must share their base relation")
+            chain.append(relation)
+            relation = relation.parent
+        for relation in reversed(chain):
+            for name, value in relation.values.items():
+                if isinstance(value, ops.Field) and fields[value] == name:
+                    fields[ops.Field(relation, name)] = name
+                    continue
+                reads = {
+                    node: fields[node]
+                    for node in Graph.from_bfs(value, filter=scalar).nodes()
+                    if isinstance(node, ops.Field)
+                }
+                if name in depths:
+                    raise ValueError("temporal projection branches must assign fresh names")
+                depth = 1 + max((depths[column] for column in reads.values()), default=0)
+                layers.setdefault(depth, {})[name] = (value, reads)
+                depths[name] = depth
+                fields[ops.Field(relation, name)] = name
+    table = base
+    for depth in sorted(layers):
+        parent = table.op()
+        values = {}
+        for name, (value, reads) in layers[depth].items():
+            replacements = {field: ops.Field(parent, column) for field, column in reads.items()}
+            values[name] = value.replace(replacements, filter=scalar).to_expr()
+        table = table.mutate(**values)
+    return table
+
+
 def contributions(
     events: ibis.Table,
     measure: BoundMeasure,
@@ -204,6 +256,7 @@ def contributions(
     source: BoundSource,
     consumed: ir.BooleanValue | None = None,
     counting: bool = False,
+    _name: Callable[[str], str] | None = None,
 ) -> tuple[ibis.Table, dict[str, ir.Value]]:
     """Per-event sufficient primitives, selected before accumulation.
 
@@ -215,7 +268,7 @@ def contributions(
 
     def project(label: str, expression: ir.Value) -> ir.Value:
         nonlocal table
-        name = f"__terrine_contribution_{label}"
+        name = _name(label) if _name is not None else f"__terrine_contribution_{label}"
         while name.casefold() in used:
             name += "_"
         used.add(name.casefold())

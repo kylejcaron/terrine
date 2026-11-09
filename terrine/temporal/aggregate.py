@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -47,6 +48,7 @@ from terrine.temporal.daily import (
     _EXACT_FLOAT_COUNTS,
     _NATIVE_FLOAT_COUNTS,
     _UNKNOWN_FIELDS,
+    _batch_projections,
     _require_backend,
     contributions,
     native_arithmetic,
@@ -176,7 +178,7 @@ class _Builder:
         self._table = table
         self._staged: dict[str, ir.Value] = {}
         self.used = {name.casefold() for name in (*table.columns, output)}
-        self.counter = 0
+        self.counter = itertools.count()
         self.numeric: list[tuple[str, RefusalSpec, Mapping[str, Any]]] = []
         self.practical = practical
 
@@ -194,14 +196,20 @@ class _Builder:
             raise ValueError("staged intermediates must be projected before replacing the table")
         self._table = table
 
+    def fork(self, table: ibis.Table) -> _Builder:
+        """Build an independent projection branch with shared fresh names."""
+        branch = _Builder(table, "", practical=self.practical)
+        branch.used = self.used
+        branch.counter = self.counter
+        return branch
+
     def name(self, label: str) -> str:
         # Intermediates share the relation with declared outputs, so they stay in
         # the reserved namespace; the label's initials keep the name short, since
         # it is listed at every level of the statement.
         initials = "".join(word[0] for word in label.split("_") if word)
         while True:
-            name = f"__terrine_w{self.counter}_{initials}"
-            self.counter += 1
+            name = f"__terrine_w{next(self.counter)}_{initials}"
             if name.casefold() not in self.used:
                 self.used.add(name.casefold())
                 return name
@@ -1049,23 +1057,26 @@ def _reduce_source(
         matched |= active & _interval(events._timestamp, points[t0], primitive.window)
     joined = events.inner_join(points, (events._unit == points[unit]) & matched)
     aliases: dict[_Primitive, dict[str, str]] = {}
-    payload = {}
+    payload = []
+    branches = []
     for primitive, contexts in primitives.items():
         active = ibis.literal(False)
         for context in contexts:
             active |= joined[context.available]
         consumed = active & _interval(joined._timestamp, joined[t0], primitive.window)
-        joined, fields = contributions(
+        projected, fields = contributions(
             joined,
             primitive.measure,
             source=source,
             consumed=consumed,
             counting=primitive.counting,
+            _name=builder.name,
         )
         names = {name: builder.name(name) for name in fields}
         aliases[primitive] = names
-        payload.update({names[name]: expression for name, expression in fields.items()})
-    leaf = joined.select(unit, anchor_id, **payload)
+        payload.extend(names.values())
+        branches.append(projected.select(**{names[name]: value for name, value in fields.items()}))
+    leaf = _batch_projections(joined, branches).select(unit, anchor_id, *payload)
     reduced = _reduce_payload(leaf, aliases, [unit, anchor_id])
     return reduced, aliases, (unit, anchor_id)
 
@@ -1156,15 +1167,22 @@ def _reduce_daily_source(
         (events._unit == scope[scope_unit]) & (events[bucket] == scope[scope_bucket]),
     )
     bucket_aliases = {}
-    payload = {}
+    payload = []
+    branches = []
     for key, mask in buckets.items():
-        selected, fields = contributions(
-            selected, key.measure, source=source, consumed=selected[mask], counting=key.counting
+        projected, fields = contributions(
+            selected,
+            key.measure,
+            source=source,
+            consumed=selected[mask],
+            counting=key.counting,
+            _name=builder.name,
         )
         names = {name: builder.name(name) for name in fields}
         bucket_aliases[key] = names
-        payload.update({names[name]: expression for name, expression in fields.items()})
-    leaf = selected.select(scope_unit, scope_bucket, **payload)
+        payload.extend(names.values())
+        branches.append(projected.select(**{names[name]: value for name, value in fields.items()}))
+    leaf = _batch_projections(selected, branches).select(scope_unit, scope_bucket, *payload)
     daily = _reduce_payload(leaf, bucket_aliases, [scope_unit, scope_bucket])
     matched = ibis.literal(False)
     for contexts in primitives.values():
@@ -1215,6 +1233,7 @@ def aggregate_windows(
         name.casefold() for events, _ in sources.values() for name in events.columns
     )
     contexts = []
+    context_branches = []
     primitives: dict[str, dict[_Primitive, list[_WindowContext]]] = {}
     components = []
     outputs = {name.casefold() for name in anchors.columns}
@@ -1239,7 +1258,9 @@ def aggregate_windows(
             raise UNSUPPORTED_TRANSFORM.error(transform=type(metric.transforms[0]).__name__)
         if len(metric.measures) != (2 if metric.kind == "ratio" else 1):
             raise ValueError("metric kind has an invalid number of measures")
-        context = _window_context(builder, metric, window, readiness, boundary, output, resolution)
+        branch = builder.fork(anchors)
+        context = _window_context(branch, metric, window, readiness, boundary, output, resolution)
+        context_branches.append(branch.table)
         contexts.append(context)
         keys = []
         for measure in metric.measures:
@@ -1261,6 +1282,7 @@ def aggregate_windows(
             primitives.setdefault(measure.source_name, {}).setdefault(key, []).append(context)
             keys.append(key)
         components.append(keys)
+    builder.table = _batch_projections(anchors, context_branches)
     reductions = [
         (
             _reduce_daily_source(builder, *sources[name], source_primitives, boundary)
@@ -1289,10 +1311,11 @@ def aggregate_windows(
         reduced_fields.update(aliases)
     columns = {}
     row_checks = []
+    retained = builder.table
+    output_branches = []
     for request, context, keys in zip(requests, contexts, components, strict=True):
-        retained = builder.table
+        branch = builder.fork(retained)
         quantities, unknown_flags = [], []
-        builder.numeric = []
         for measure, key in zip(request.metric.measures, keys, strict=True):
             fields = reduced_fields[key]
             numeric_context = {
@@ -1301,12 +1324,12 @@ def aggregate_windows(
                 "output": request.output,
             }
             if measure.filters:
-                count = builder.col(fields["unknown_filter_count"])
-                flag = builder.put("unknown_filter", count > exact_literal(0, count))
+                count = branch.col(fields["unknown_filter_count"])
+                flag = branch.put("unknown_filter", count > exact_literal(0, count))
                 unknown_flags.append((flag, UNKNOWN_FILTER, numeric_context))
             quantities.append(
                 _local_component(
-                    builder,
+                    branch,
                     measure,
                     fields,
                     days=(request.window.end.seconds - request.window.start.seconds) // 86400,
@@ -1315,7 +1338,7 @@ def aggregate_windows(
                 )
             )
         result = _finalize_window(
-            builder,
+            branch,
             retained,
             request.metric,
             request.window,
@@ -1329,9 +1352,10 @@ def aggregate_windows(
             list(context.row_checks),
             unknown_flags,
         )
-        builder.table = result.table
+        output_branches.append(result.table)
         columns.update(result.columns)
         row_checks.extend(result.row_checks)
+    builder.table = _batch_projections(retained, output_branches)
     public = [*anchors.columns]
     for output, meta in columns.items():
         assert meta.observed_from_column is not None
