@@ -23,6 +23,42 @@ against the independent oracle. Re-reading the old receipt verifies its
 immutability. It is explicitly an owner single-task **full rebuild**, not a
 claim of incremental prefix reuse or a second compiler.
 
+## Wide window materialization
+
+Use the five-metric, ten-window fixture to measure the actual public Frame
+boundary rather than the prototype's server-only query:
+
+```sh
+uv run python -m benchmarks.query_strategy_spike --frame-only \
+  --units 10000 --events-per-unit 30 --anchors 1 --repeats 3 \
+  --output /path/to/new-fixed-run
+uv run python -m benchmarks.query_strategy_spike --frame-only \
+  --units 1000 --events-per-unit 300 --anchors 21 --repeats 3 \
+  --output /path/to/new-dense-run
+uv run python -m benchmarks.query_strategy_spike --frame-only --poor-compression --irregular \
+  --units 1000 --events-per-unit 30 --anchors 1 --repeats 3 \
+  --output /path/to/new-irregular-run
+```
+
+Each timed sample includes validation and full Arrow materialization; its
+values, reasons, completeness and observation bounds are checked afterward
+against independent Python arithmetic. Records separate build/compile times,
+raw/formatted SQL bytes, all materialization samples, medians, output rows/bytes
+and distinct unit/day buckets. SQL and an additional, untimed `EXPLAIN ANALYZE`
+are stored separately. Source scan bytes remain unmeasured.
+
+The poor-compression fixture has one event per unit/day and varying intraday
+times. Event-relative repeated anchors force the general path; its bucket count
+can be compared directly with its event count. `--anchors` controls only the
+fixed/scheduled cases, not the number of event-relative origins.
+
+Add `--retained` to measure stage, a source correction and refresh in a
+disposable owner database, including capture/validation/publication. Corrected
+data is checked against a fresh public rebuild and independent arithmetic;
+the old generation must remain unchanged. These timings are separate from
+ordinary materialization. Run the same driver and fixture against both commits
+for end-to-end ratios. Prototype timings are not a public-Frame baseline.
+
 ## Inputs, references and bounds
 
 Generator version 2 uses typed keyed unit/event positions. Batch size and unit

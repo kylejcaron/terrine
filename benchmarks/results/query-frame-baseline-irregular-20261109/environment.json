@@ -1,0 +1,21 @@
+{
+  "python": "3.12.11",
+  "platform": "macOS-15.7.4-arm64-arm-64bit",
+  "ibis": "12.0.0",
+  "pyarrow": "23.0.1",
+  "args": {
+    "backend": "duckdb",
+    "units": 1000,
+    "events_per_unit": 30,
+    "modes": "integer,native",
+    "anchors": "1",
+    "repeats": 3,
+    "full": false,
+    "variants": "current,direct",
+    "output": "/Users/kylejcaron/orca/workspaces/terrine/query-strategy/benchmarks/results/query-frame-baseline-irregular-20261109",
+    "frame_only": true,
+    "poor_compression": true,
+    "irregular": true,
+    "retained": false
+  }
+}

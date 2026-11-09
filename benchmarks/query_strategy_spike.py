@@ -1,8 +1,9 @@
 """Throwaway direct-window experiment, not a supported Terrine compiler.
 
 Run with python -m benchmarks.query_strategy_spike. Only the five cost metrics,
-UTC day windows and one event source are implemented. This is evidence for a
-future design, never a replacement Frame API. No wall-clock gates.
+UTC day windows and one event source are implemented in the prototype. The
+``--frame-only`` path instead measures validated public Frame materialization,
+optionally retained stage/correction/refresh. No wall-clock gates.
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ import json
 import math
 import platform
 import statistics
+import tempfile
 import time
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -362,12 +364,155 @@ def measure_case(con, config, mode, anchor_count, backend, repeats, out, full, v
     return row
 
 
+def measure_frame_case(
+    con, config, mode, anchor_count, repeats, out, *, irregular=False, retained=False
+):
+    """Measure the public Frame boundary, including validation and Arrow conversion."""
+    from benchmarks.query_strategy_oracle import assert_values
+    from terrine import Budget
+    from terrine.runtime.changes import Change, ChangeSet
+    from terrine.spec import EventAnchor
+
+    windows = tuple(range(1, 11))
+    label = f"frame-{mode}-{'irregular' if irregular else f'anchors{anchor_count}'}"
+    model = make_model(con, config, mode, "duckdb")
+    design = make_design(anchor_count, windows)
+    if irregular:
+        design = Design("user", EventAnchor("event", "each"), features=design.features)
+    begin = time.perf_counter()
+    frame = design.build(model)
+    expression = frame.expr
+    build_seconds = time.perf_counter() - begin
+    begin = time.perf_counter()
+    sql = con.compile(expression)
+    compile_seconds = time.perf_counter() - begin
+    pretty = str(ibis.to_sql(expression, dialect="duckdb", pretty=True))  # noqa: TID251
+    compact = str(ibis.to_sql(expression, dialect="duckdb", pretty=False))  # noqa: TID251
+    (out / f"{label}.sql").write_text(sql)
+    times = []
+    checks = 0
+    result = None
+    budget = Budget(strict_scan=False)
+    for _ in range(repeats):
+        begin = time.perf_counter()
+        result = frame.materialize(budget=budget).table
+        times.append(time.perf_counter() - begin)
+        selected = {"unit": result["unit"], "t0": result["t0"]}
+        for metric in METRICS:
+            for days in windows:
+                name = f"{metric}_{days}d"
+                selected[name] = result[name]
+                for kind in ("complete", "reason", "observed_from", "observed_until"):
+                    column = getattr(frame.columns[name], f"{kind}_column")
+                    selected[f"{name}__{kind}"] = result[column]
+        checks += assert_values(con, pa.table(selected), mode, model.readiness.for_fact("events"))
+    assert result is not None
+    profile(con, sql, "duckdb", out / f"{label}-explain.txt")
+    events = con.table("events")
+    bucket_count = (
+        events.select("unit_id", bucket=events.event_time.truncate("D"))
+        .distinct()
+        .count()
+        .execute()
+    )
+    row = {
+        "case": label,
+        "units": config.units,
+        "events": config.units * config.events_per_unit,
+        "distinct_unit_day_buckets": int(bucket_count),
+        "outputs": len(METRICS) * len(windows),
+        "output_rows": len(result),
+        "output_arrow_bytes": result.nbytes,
+        "build_seconds": build_seconds,
+        "compile_seconds": compile_seconds,
+        "submitted_sql_bytes": len(sql.encode()),
+        "formatted_sql_bytes": len(pretty.encode()),
+        "compact_sql_bytes": len(compact.encode()),
+        "full_frame_materialization_seconds": times,
+        "full_frame_median_seconds": statistics.median(times),
+        "oracle_values_checked": checks,
+        "strategy": dict(frame._compiled.strategy),
+    }
+    if retained:
+        retained_samples = []
+        for sample in range(repeats):
+            begin = time.perf_counter()
+            staged = frame.stage(f"{label.replace('-', '_')}_{sample}", budget=budget)
+            stage_seconds = time.perf_counter() - begin
+            old_table = staged.to_pyarrow()
+            relation = "events_native" if mode == "native" else "events"
+            begin = time.perf_counter()
+            con.raw_sql(f'UPDATE "{relation}" SET value=value+1 WHERE value IS NOT NULL')
+            correction_seconds = time.perf_counter() - begin
+            changes = ChangeSet((Change("update", "events"),), "operator")
+            begin = time.perf_counter()
+            refreshed = staged.refresh(model, changes=changes, budget=budget)
+            refresh_seconds = time.perf_counter() - begin
+            actual = refreshed.to_pyarrow()
+            expected = frame.materialize(budget=budget).table
+            assert actual.equals(expected), "retained correction differs from full public rebuild"
+            assert staged.to_pyarrow().equals(old_table), "old generation changed after correction"
+            selected = {"unit": actual["unit"], "t0": actual["t0"]}
+            for metric in METRICS:
+                for days in windows:
+                    name = f"{metric}_{days}d"
+                    selected[name] = actual[name]
+                    for kind in ("complete", "reason", "observed_from", "observed_until"):
+                        selected[f"{name}__{kind}"] = actual[
+                            getattr(frame.columns[name], f"{kind}_column")
+                        ]
+            retained_samples.append(
+                {
+                    "stage_seconds": stage_seconds,
+                    "source_correction_seconds": correction_seconds,
+                    "refresh_seconds": refresh_seconds,
+                    "output_rows": len(actual),
+                    "oracle_values_checked": assert_values(
+                        con, pa.table(selected), mode, model.readiness.for_fact("events")
+                    ),
+                    "old_generation_unchanged": True,
+                }
+            )
+        row["retained_samples"] = retained_samples
+        for operation in ("stage", "refresh"):
+            row[f"retained_{operation}_median_seconds"] = statistics.median(
+                sample[f"{operation}_seconds"] for sample in retained_samples
+            )
+    (out / f"{label}.json").write_text(json.dumps(row, default=str, indent=2, sort_keys=True))
+    print(json.dumps(row, default=str, sort_keys=True), flush=True)
+    return row
+
+
 def run(con, args, out):
     config = ScaleConfig(
-        units=args.units, events_per_unit=args.events_per_unit, batch_size=50_000, anchor_periods=21
+        span_days=max(30, args.events_per_unit) if args.poor_compression else 30,
+        units=args.units,
+        events_per_unit=args.events_per_unit,
+        batch_size=50_000,
+        anchor_periods=21,
     )
     start = time.perf_counter()
     load_tables(con, config)
+    if args.poor_compression:
+        # One row per unit/day, with intraday jitter: summaries cannot compress it.
+        events = con.table("events")
+        numbered = events.mutate(
+            _event_index=ibis.row_number().over(
+                ibis.window(group_by=events.unit_id, order_by=events.event_id)
+            )
+        )
+        spread = numbered.mutate(
+            event_time=ibis.literal(EPOCH)
+            + (
+                numbered._event_index.cast("int64") * 86400
+                + (numbered._event_index.cast("int64") * 997) % 40000
+                + 1800
+            ).as_interval("s")
+        ).drop("_event_index")
+        con.create_table("events_spread", spread)
+        con.drop_table("events")
+        con.create_table("events", con.table("events_spread"))
+        con.drop_table("events_spread")
     table = con.table("events")
     con.create_table("events_native", table.mutate(value=table.value.cast("float64") / 10))
     if args.backend == "postgres":
@@ -377,6 +522,20 @@ def run(con, args, out):
     results = []
     for mode in args.modes.split(","):
         for anchors in [int(x) for x in args.anchors.split(",")]:
+            if args.frame_only:
+                results.append(
+                    measure_frame_case(
+                        con,
+                        config,
+                        mode,
+                        anchors,
+                        args.repeats,
+                        out,
+                        irregular=args.irregular,
+                        retained=args.retained,
+                    )
+                )
+                continue
             results.append(
                 measure_case(
                     con,
@@ -405,7 +564,17 @@ def main():
     parser.add_argument("--full", action="store_true")
     parser.add_argument("--variants", default="current,direct")
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--frame-only", action="store_true", help="time validated public materialization"
+    )
+    parser.add_argument("--poor-compression", action="store_true", help="one event per unit/day")
+    parser.add_argument("--irregular", action="store_true", help="event-relative repeated anchors")
+    parser.add_argument("--retained", action="store_true", help="also time stage/correct/refresh")
     args = parser.parse_args()
+    if args.frame_only and args.backend != "duckdb":
+        parser.error("--frame-only currently measures DuckDB")
+    if (args.irregular or args.retained) and not args.frame_only:
+        parser.error("--irregular and --retained require --frame-only")
     args.output.mkdir(parents=True, exist_ok=False)
     environment = {
         "python": platform.python_version(),
@@ -416,11 +585,13 @@ def main():
     }
     (args.output / "environment.json").write_text(json.dumps(environment, default=str, indent=2))
     if args.backend == "duckdb":
-        con = ibis.duckdb.connect(threads=1)
-        try:
-            run(con, args, args.output)
-        finally:
-            con.disconnect()
+        with tempfile.TemporaryDirectory(prefix="terrine-window-benchmark-") as temporary:
+            database = str(Path(temporary) / "owner.duckdb") if args.retained else ":memory:"
+            con = ibis.duckdb.connect(database, threads=1)
+            try:
+                run(con, args, args.output)
+            finally:
+                con.disconnect()
     else:
         schema = f"query_spike_{uuid.uuid4().hex[:12]}"
         admin: Any = ibis.connect(args.postgres_url)
