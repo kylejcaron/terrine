@@ -137,9 +137,7 @@ def _refusal(design, model):
 
 @pytest.mark.parametrize("order", ["metric_first", "nonadditive_first"])
 def test_first_refusal_follows_registration_order_across_check_kinds(con, order):
-    """An additive sum over a NaN amount and a filtered distinct count whose filter
-    is unknown for a matched event both fail; the output registered first refuses.
-    Outputs register in name order, so the names fix the schedule."""
+    """An unrelated valid additive output must not reorder interleaved refusals."""
     model = _orders_model(
         con,
         [_order("a", datetime(2025, 1, 1, 12, tzinfo=UTC), amount=float("nan"), channel=None)],
@@ -147,10 +145,11 @@ def test_first_refusal_follows_registration_order_across_check_kinds(con, order)
     spend = agg("spend", window=("-1d", "0s"))
     distinct = agg("web_distinct", window=("-1d", "0s"))
     features = (
-        {"a_spend": spend, "b_distinct": distinct}
+        {"b_spend": spend, "c_distinct": distinct}
         if order == "metric_first"
-        else {"a_distinct": distinct, "b_spend": spend}
+        else {"b_distinct": distinct, "c_spend": spend}
     )
+    features = {"a_empty": agg("spend", window=("-2d", "-1d")), **features}
     error = _refusal(Design("user", FixedDate("2025-01-02"), features=features), model)
     assert error.code == (
         "terrine.temporal.float64_precision"

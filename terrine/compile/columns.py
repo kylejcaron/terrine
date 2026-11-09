@@ -415,9 +415,8 @@ def compile_columns(
     table = anchors.table
     values: dict[Expr, CompiledValue] = {}
     checks: list[_DeferredCheck] = []
-    # Row checks of every window result become flag columns of the candidate
-    # relation, numbered in schedule order, so the audit can count them in one
-    # gate statement where the schedule allows it (see the splice below).
+    # Lift window flags once at candidate grain. Logical check registration is
+    # separate from batch attachment, so interleaved outputs keep refusal order.
     check_columns: list[str] = []
     lifted: dict[int, tuple[str, ...]] = {}
     normalized_sources, sources, selector_sources, source_histories = {}, {}, {}, {}
@@ -831,14 +830,13 @@ def compile_columns(
             right,
             [null_safe_equal(table[key], right[f"{key_prefix}_key_{key}"]) for key in _ANCHOR_KEY],
         )
-        if result is not None:
-            checks.append(result)
         return renamed_metadata
 
     # Reserve names before any group is pending. A group may finish leaves that
     # appear much later in the public traversal, without changing outward order.
     output_names: dict[Expr, str] = {}
     additive_groups: dict[EventTime | None, list[MetricAgg]] = {}
+    additive_checks: dict[MetricAgg, TemporalResult] = {}
     for named in (design.features, design.outcomes, design.eligibility):
         for node in named.values():
             for leaf in _output_leaves(node):
@@ -932,8 +930,26 @@ def compile_columns(
                 )
             result_table = result_table.mutate(**relative_values)
         metadata = attach_result(result_table, metadata, timing_names, result)
+        lifted_names = dict(
+            zip(
+                (check.column for check in result.row_checks),
+                lifted.pop(id(result), ()),
+                strict=True,
+            )
+        )
+        checks_by_output: dict[str, list[RowCheck]] = {output: [] for output in result.columns}
+        for check in result.row_checks:
+            checks_by_output[check.context["output"]].append(check)
         for node in group:
             output = output_names[node]
+            if output_checks := checks_by_output[output]:
+                deferred = TemporalResult(
+                    result.table,
+                    {output: result.columns[output]},
+                    row_checks=tuple(output_checks),
+                )
+                additive_checks[node] = deferred
+                lifted[id(deferred)] = tuple(lifted_names[check.column] for check in output_checks)
             cutoff = FeatureCutoff(
                 latest_seconds=(
                     (selector_timing(origin)[0][1] if origin is not None else 0)
@@ -950,10 +966,12 @@ def compile_columns(
     def expression(node: Expr) -> CompiledValue:
         nonlocal table
         if node in values:
+            if node in additive_checks:
+                checks.append(additive_checks.pop(node))
             return values[node]
         if isinstance(node, MetricAgg) and node in additive_groups.get(node.relative_to, ()):
             compile_additives(node.relative_to)
-            return values[node]
+            return expression(node)
         output = output_names[node]
         expression_anchors = anchors.table
         relative = getattr(node, "relative_to", None)
@@ -1287,6 +1305,8 @@ def compile_columns(
             result_table = result_table.mutate(**relative_values)
             meta = replace(meta, complete_column=combined_complete, reason_column=combined_reason)
         meta = attach_result(result_table, {output: meta}, timing_refs, result)[output]
+        if result is not None:
+            checks.append(result)
         assert cutoff is not None
         compiled = CompiledValue(output, meta, cutoff)
         values[node] = compiled

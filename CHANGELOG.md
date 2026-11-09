@@ -10,7 +10,8 @@
   once per invocation, reduce each source before cross-source ratios, and join
   each batch and its checks once at null-safe `(unit, anchor_id)` identity.
   Duplicate anchors, output order, roles, timing, availability and reasons are
-  preserved; candidate validation still precedes eligibility filtering.
+  preserved; candidate validation still precedes eligibility filtering, and
+  interleaved additive/nonadditive outputs retain logical refusal order.
 - Choose raw contributions for single, relative, partial-day or unproven origins;
   repeated declaration-proven aligned fixed/scheduled origins can share
   noncumulative unit/day payloads. Primitive-specific masks precede numerical
