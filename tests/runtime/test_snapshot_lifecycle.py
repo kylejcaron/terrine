@@ -40,15 +40,23 @@ def test_snapshot_reference_identity_is_validated():
 
 
 @pytest.mark.parametrize(
-    ("reference", "bare_state", "fenced_state", "released"),
+    ("references", "bare_state", "fenced_state", "released"),
     [
-        ('{"s":1,"other":2}', None, "obsolete", False),
-        ('"st"', None, "obsolete", False),
-        ('["s",true]', None, "obsolete", False),
-        ('["s",1.0]', None, "obsolete", False),
-        ('["s",0]', None, "obsolete", False),
-        ('["s",-1]', None, "obsolete", False),
-        ('["s",1,2]', None, "obsolete", False),
+        pytest.param(
+            (
+                '{"s":1,"other":2}',
+                '"st"',
+                '["s",true]',
+                '["s",1.0]',
+                '["s",0]',
+                '["s",-1]',
+                '["s",1,2]',
+            ),
+            None,
+            "obsolete",
+            False,
+            id="malformed-fenced-references",
+        ),
         ("s", "obsolete", None, True),
         ('["s",1]', None, "obsolete", True),
         ('["s",1]', "running", "obsolete", False),
@@ -62,11 +70,13 @@ def test_snapshot_reference_identity_is_validated():
     ],
 )
 def test_snapshot_cleanup_requires_every_recognized_owner_to_be_terminal(
-    reference, bare_state, fenced_state, released
+    references, bare_state, fenced_state, released
 ):
     from pathlib import Path
 
     from terrine.runtime.saved_plan import SavedPlan, _bind_saved_plan
+
+    references = (references,) if isinstance(references, str) else references
 
     con = duckdb.connect()
     store = RuntimeStore(con, namespace="owner")
@@ -87,7 +97,7 @@ def test_snapshot_cleanup_requires_every_recognized_owner_to_be_terminal(
         "INSERT INTO owner.runtime_plan_invocations VALUES (?,?,?,?)",
         ["current", current.definition.fingerprint, "snapshot", current.serialize().decode()],
     )
-    for run_id, owner_state in ((reference, bare_state), ("s", fenced_state)):
+    for run_id, owner_state in ((references[0], bare_state), ("s", fenced_state)):
         if owner_state is not None:
             con.execute(
                 "INSERT INTO owner.runtime_runs "
@@ -98,10 +108,11 @@ def test_snapshot_cleanup_requires_every_recognized_owner_to_be_terminal(
                     "running" if owner_state == "running" else "failed",
                 ],
             )
-    store.pin_snapshot("snapshot", kind="active_run", reference=reference)
+    for reference in references:
+        store.pin_snapshot("snapshot", kind="active_run", reference=reference)
     store.release_terminal_run_snapshot_references()
     assert store.snapshot_references("snapshot") == (
-        () if released else (("active_run", reference),)
+        () if released else tuple(sorted(("active_run", reference) for reference in references))
     )
     assert store.mark_snapshot_for_gc("snapshot") is released
 
