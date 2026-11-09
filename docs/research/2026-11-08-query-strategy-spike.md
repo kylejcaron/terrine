@@ -8,7 +8,7 @@ Use one batched, window-local aggregate pipeline with raw rows or eligible noncu
 
 Raw direct aggregation is not universally faster: overlapping anchors exposed a regression. Local daily summaries resolved it in both native and integer workloads, including summary construction. An independent Astra xhigh reviewer agreed with this revised direction after inspecting the results and runtime code; its initial recommendation had retained restricted exact prefixes.
 
-The implementation proposal and complete pathway matrix are in [the design specification](../superpowers/specs/2026-11-08-practical-window-aggregation-design.md). Implementation, migration and release have not been performed.
+The implementation proposal and complete pathway matrix are in the design specification at repository path `docs/superpowers/specs/2026-11-08-practical-window-aggregation-design.md`. Implementation, migration and release have not been performed.
 
 ## Method and reproducibility
 
