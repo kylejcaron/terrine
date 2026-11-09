@@ -39,7 +39,7 @@ def compose_materialized_frame(
     persisted: Mapping[LayerKey, ibis.Table],
     budget: Budget | None = None,
 ) -> CompiledStudy:
-    """Compose standard compiler output from verified logical anchor and prefix layers.
+    """Compose standard compiler output from verified logical anchor layers.
 
     Persisted relations are compiler logical inputs, never final frame partitions.
     The caller verifies physical generation provenance before crossing this boundary.
@@ -51,7 +51,6 @@ def compose_materialized_frame(
     snapshot_ids = {key.snapshot_id for key in persisted}
     if len(snapshot_ids) > 1 or (snapshot_ids and not next(iter(snapshot_ids))):
         raise ValueError("persisted layers must belong to one non-empty snapshot")
-    substitutions: dict[tuple[str, str, str, str], ibis.Table] = {}
     persisted_anchors: ibis.Table | None = None
     for key, relation in persisted.items():
         if (
@@ -73,20 +72,9 @@ def compose_materialized_frame(
                 raise _ANCHOR_LAYER_INVALID.error()
             persisted_anchors = relation
             continue
-        if (
-            key.layer != "prefix"
-            or key.grain != "unit"
-            or key.measure is None
-            or key.resolution not in {"day", "event"}
-        ):
-            raise ValueError("persisted layer identity does not match compiler requirements")
-        identity = (key.source, key.measure, key.unit, key.resolution)
-        if identity in substitutions:
-            raise ValueError("duplicate persisted logical layer key")
-        substitutions[identity] = relation
+        raise ValueError("persisted layer identity does not match compiler requirements")
     return compile_design(
         design,
         model,
-        persisted_prefixes=substitutions,
         persisted_anchors=persisted_anchors,
     )

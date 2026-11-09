@@ -28,7 +28,7 @@ from terrine.spec import Design, FixedDate, agg
 from tests._timing import HANG_GUARD_SECONDS
 from tests.compile.test_columns import column_model  # noqa: F401
 from tests.compile.test_columns import column_model as column_model
-from tests.compile.test_persisted_layers import _persisted_prefixes
+from tests.compile.test_persisted_layers import _persisted_anchors
 
 
 def _catalog() -> Catalog:
@@ -461,14 +461,14 @@ def test_saved_panel_publication_preserves_ordinary_provenance(column_model, tmp
         con.disconnect()
 
 
-def test_persisted_daily_prefix_anchor_reuse_matches_ordinary_frame_compiler(column_model):
+def test_persisted_anchor_reuse_matches_ordinary_frame_compiler(column_model):
     design = Design(
         "user",
         FixedDate("2025-01-03T00:00:00+00:00"),
         features={"total": agg("total", window=("-1d", "0s"))},
     )
     ordinary = compile_columns(design, column_model)
-    persisted = _persisted_prefixes(design, column_model)
+    persisted = _persisted_anchors(design, column_model)
     anchor_key = next(
         key for key in plan_layers(design, column_model).keys if key.layer == "anchor"
     )
@@ -547,7 +547,7 @@ def test_persisted_shape_matrix_preserves_panel_rows_and_metadata(column_model, 
             period="1h",
         )
     ordinary = compile_design(design, column_model)
-    persisted = _persisted_prefixes(design, column_model)
+    persisted = _persisted_anchors(design, column_model)
     anchor_key = next(
         key for key in plan_layers(design, column_model).keys if key.layer == "anchor"
     )
@@ -574,7 +574,7 @@ def test_persisted_shape_matrix_preserves_panel_rows_and_metadata(column_model, 
         ("12h", [5, 8, 10, 7], [105, 208, 210, 107]),
     ],
 )
-def test_state_panel_consumes_frozen_prefixes_and_scheduled_anchors(
+def test_state_panel_consumes_frozen_snapshot_and_scheduled_anchors(
     column_model, state_kind, every, totals, fresh_totals
 ):
     from terrine.compile.dispatch import compile_design
@@ -646,14 +646,27 @@ def test_state_panel_consumes_frozen_prefixes_and_scheduled_anchors(
     anchor_key = next(key for key in persisted if key.layer == "anchor")
     anchors = persisted[anchor_key]
     persisted[anchor_key] = anchors.filter(anchors.unit == "a")
+    con.raw_sql("CREATE TABLE frozen_events AS SELECT * FROM events")
+    frozen_model = Model._bind(
+        model.catalog,
+        con=con,
+        readiness=model.readiness,
+        units=model.units,
+        event_ids=model.event_ids,
+        input_binding=model.input_binding,
+        source_names=set(model.sources),
+        engine=model._engine,
+        resolver=lambda relation: (
+            con.table("frozen_events")
+            if getattr(relation, "name", None) == "events"
+            else model._relation(relation)
+        ),
+    )
     con.raw_sql("UPDATE events SET amount=amount+100")
 
-    cached = compose_materialized_frame(design, model, persisted=persisted)
+    cached = compose_materialized_frame(design, frozen_model, persisted=persisted)
     actual = con.to_pyarrow(cached.table.order_by("t0"))
     assert actual.equals(expected)
-    assert {key.resolution for key in persisted if key.layer == "prefix"} == (
-        {"day"} if every == "1d" else {"day", "event"}
-    )
     assert cached._anchors.table is persisted[anchor_key]
     assert cached.roles == ordinary.roles
     assert cached.columns == ordinary.columns

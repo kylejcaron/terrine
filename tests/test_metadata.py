@@ -420,13 +420,15 @@ def test_pre_change_arrow_metadata_refuses_with_portable_version_error():
 def test_engine_stamp_round_trips_and_historic_verified_metadata():
     from importlib.resources import files
 
-    frame = _frame(_provenance(_UNVERIFIED_STAMP))
+    frame = _frame(replace(_provenance(_UNVERIFIED_STAMP), execution_revision=1))
     json_payload = json.loads(frame.to_json())
     arrow_payload = json.loads(
         frame.to_pyarrow().schema.metadata[b"terrine.materialized_frame.v2"].decode("utf-8")
     )
     assert json_payload["version"] == 1
     assert arrow_payload["version"] == 2
+    assert json_payload["provenance"]["execution_revision"] == 1
+    assert arrow_payload["provenance"]["execution_revision"] == 1
     for restored in (
         MaterializedFrame.from_json(frame.to_json()),
         MaterializedFrame.from_arrow(frame.to_pyarrow()),
@@ -454,6 +456,8 @@ def test_engine_stamp_round_trips_and_historic_verified_metadata():
         assert historical.provenance.execution_snapshot.backend == "duckdb"
         assert historical.roles == frame.roles
         assert historical.table.equals(frame.table)
+        assert historical.provenance.execution_revision is None
+        assert "execution_revision" not in historical.to_metadata()["provenance"]
 
 
 _ALL_STAMP_FIELDS = ("dialect", "engine_name", "engine_status")

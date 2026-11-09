@@ -32,12 +32,20 @@ construction. The canonical runtime `PlanDefinition` is available as
 Owner preparation accepts `PlanRequest.dataset_definition` and persists the
 complete saved plan as `PlanInvocation.saved_plan_json`.
 
-Saved-plan envelopes with missing, unknown or superseded fields refuse with
-`terrine.runtime.saved_plan_mismatch`, even when the recognized fields carry a
-valid checksum. Prepare a fresh invocation rather than editing serialized names. Superseded
-owner request fields refuse with `terrine.runtime.plan_request_invalid` instead
-of silently dropping the training/scoring view. Manifest envelopes have their
-own `terrine.dataset.invalid_manifest` refusal; [definition persistence](ml-staging.md#reopening-a-pinned-dataset)
+New saved plans use envelope version **2** and runtime plan-definition version
+**3**, with execution revision **1** in the execution fingerprint. Declaration
+identity is unchanged: a plan's `definition_hash` still equals its saved
+Design's hash. Historical version-1 saved plans and version-2 runtime plans
+verify their original checksums and remain available for inspection, snapshot
+pin release, and authorized status, event and cancellation operations. They
+cannot execute or return an execution replay: rebuild a plan from the dataset
+definition after `terrine.runtime.saved_plan_mismatch`.
+
+Missing, unknown or superseded current envelope fields also refuse, even with
+a valid checksum. Superseded owner request fields refuse with
+`terrine.runtime.plan_request_invalid` instead of silently dropping the
+training/scoring view. Manifest envelopes retain their own
+`terrine.dataset.invalid_manifest` refusal; [definition persistence](ml-staging.md#reopening-a-pinned-dataset)
 describes which bare definitions remain readable.
 
 A destination reference identifies `(database, schema, dataset)` for request-key isolation. It is not a provisioning command: arrange the customer-owned database and schema through the application before starting the owner. The owner uses its configured connection and namespace; do not put a connection string or secret in a plan or request key.
@@ -53,31 +61,67 @@ DuckDB capture uses backend-native `COPY` into retained storage rather than tran
 Runtime composition enters through the same `compile_design` dispatcher as
 ordinary Frames. Its supported logical-input matrix is:
 
-| Shape | Persisted anchor/prefix substitution |
+| Shape | Retained logical inputs |
 | --- | --- |
-| `cross_section` | Verified anchor and additive prefix layers |
-| `SequentialSpec` | Verified scheduled anchors and additive prefixes; treatment, sampling and timing metadata retained |
-| `EventPanelSpec` | Verified parent event anchors expanded into the declared periods; additive prefixes reused at translated evaluation times |
-| `StatePanel` | Verified scheduled output anchors and additive prefixes for features, binned state periods/endpoints, and baseline features; internal endpoint and baseline anchors keep their own domains |
+| `cross_section` | Verified anchors and the retained source snapshot |
+| `SequentialSpec` | Verified scheduled anchors and snapshot inputs; treatment, sampling and timing metadata retained |
+| `EventPanelSpec` | Verified parent event anchors expanded into declared periods, with snapshot-backed aggregation at translated evaluation times |
+| `StatePanel` | Verified scheduled output anchors and snapshot inputs for features, binned state periods/endpoints and baseline features; internal endpoint and baseline anchors keep their own domains |
 | Calendar comparisons, event sequences, cohorts, survival and other shapes | Refuse |
 
 Unsupported substitutions refuse before source resolution with
 `terrine.compile.runtime_shape_unsupported`, including direct `compile_design`
 calls. The coded refusal carries the shape and the route
-`ordinary Frame materialization or a full rebuild`. Nonadditive windows use raw
-events with their compiler-derived sparse range bounds, never an additive
-prefix layer. Nested event selectors reuse the existing selector-dependency
-invalidation contract, and re-anchored additive metrics require event-resolution
-prefixes rather than assuming calendar alignment.
+`ordinary Frame materialization or a full rebuild`. Additive and nonadditive
+windows use the ordinary compiler against the retained snapshot. Retained
+execution does not produce daily/prefix tasks, substitute cumulative prefix
+relations, or transport exact prefix state through Arrow. The ordinary compiler
+can still build inline prefix expressions; it is not a persisted intermediate
+ABI. Nested event selectors keep their existing dependency invalidation.
 
 Approximate quantile sidecars remain available only through ordinary Frame
 materialization. Dataset staging, owner planning and saved plans refuse them
 with `terrine.runtime.sketch_sidecar_unavailable` before source validation or
 snapshot capture; use exact quantiles for retained runtime outputs.
 
-For persisted-layer staging, pass the resolved design, model, logical relations, and budget through `terrine.runtime.materialize.compose_runtime_frame`, with `admit=context.admit` from the task's execution context. This runtime entry point applies the same execution-owned shape-budget, integrity, and unknown-eligibility gates as `Frame.materialize` before returning the compiled relation for staging, and submits every relation it will read for admission first, so a DuckDB build that fails the exact-arithmetic known answers refuses before any check runs. The built-in executor also admits each anchor and prefix layer before reading it. Composition runs the whole check schedule once (the anchor checks, then the folded gate statements and in-place checks in registration order); the staging task then reads its output in one statement that carries only the eligibility summary, decoded before the first batch is written. Persisted prefix layers written by this version hold counts as Arrow `decimal128(38, 0)` on DuckDB; an earlier version cannot read them, while layers written in the earlier text form still restore here.
+For retained-anchor staging, pass the resolved design, model, logical anchor relations,
+and budget through `terrine.runtime.materialize.compose_runtime_frame`, with
+`admit=context.admit` from the task's execution context. This entry point applies
+the same shape-budget, integrity and unknown-eligibility gates as
+`Frame.materialize` before staging, and admits every relation before reading it.
+The built-in executor also admits each anchor relation before reading it.
+Composition runs the complete check schedule once; the output statement
+carries the eligibility summary, decoded before its first batch is written.
 
-The built-in executor transfers anchor, prefix, and final outputs in bounded Arrow batches to owner-retained IPC artifacts. Task state stores verified artifact references rather than full Arrow payloads; retry checks the artifact checksum before use. Final output budgets are enforced while writing batches. Publication streams these artifacts into generation-specific DuckDB tables and retains their logical Arrow schema, including duration ticks and Frame metadata. `DuckDBBackend.read_batches` reopens an exact partition with that schema and closes its cursor when the reader closes.
+The built-in executor transfers anchor and final outputs in bounded Arrow batches
+to owner-retained IPC artifacts. Task state stores checksum-verified artifact
+references rather than full Arrow payloads. Final output budgets are enforced
+while writing batches. Publication streams these artifacts into immutable
+generation tables and retains their logical Arrow schema, including duration
+ticks and Frame metadata. Readers and schema-marker wrappers close their
+underlying streams. `DuckDBBackend.read_batches` reopens an exact partition
+with that schema and closes its cursor when the reader closes.
+
+Every newly executed partition, including typed-empty and plain Arrow output,
+carries a separate `terrine.execution` schema marker:
+`{"version":1,"execution_revision":1}`. The publisher takes this revision from
+the validated executing plan, not the installed code or incoming data. Existing
+markers and any Frame provenance must agree; historical Frame metadata cannot
+be silently relabeled. Ordinary Frames also record `Provenance.execution_revision`;
+legacy provenance leaves that optional field absent when reserialized.
+
+`generation_execution_revision(dataset, generation)` reads the exact published
+generation's complete partition-schema evidence without reading source rows.
+All markers absent means historical/unknown revision 0. Missing schema rows,
+mixed absence, malformed markers or unequal revisions cannot authorize reuse.
+Only a verified current-revision base permits a reduced or no-change plan;
+unknown or older bases retain the full graph even for a partial ChangeSet.
+Reuse is rechecked under the dataset lease before callbacks and transactionally
+before recording its receipt. A custom no-op returning an arbitrary generation
+is not verified reuse. Request-key replay and post-commit recovery check the
+exact committed generation, including when a newer generation is current.
+The marker uses the existing partition schema storage: runtime namespaces
+remain at schema version **1**, with no schema migration or new runtime columns.
 
 ## Cost evidence and scan budgets
 
@@ -121,12 +165,13 @@ source execution. Apply the same budget to capture as to execution: a later
 plan cannot authorize already-unbudgeted source capture. Retaining input rows
 or limiting output does not turn their size into a scan bound.
 
-Runtime plan schema **2** fingerprints cost evidence, forecast fields, attempt
-limits, budget, publication preconditions, and the reconstruction identity when
-bound to a saved Model/Design plan. Schema 1 is explicitly rejected; replan
-older plans rather than silently upgrading absent evidence. Use
-`plan.bind_base_manifest(generation)` when binding publication preconditions
-without a saved Model/Design plan.
+Runtime plan schema **3** fingerprints execution revision, verified reuse-base
+identity/evidence, cost evidence, forecast fields, attempt limits, budget,
+publication preconditions and any saved Model/Design reconstruction binding.
+Version 2 remains decodable for administration, not executable; version 1
+cannot supply the required cost evidence. Use
+`plan.bind_base_manifest(generation)` to bind publication preconditions.
+That method alone does not supply evidence authorizing computational reuse.
 
 `get_run(...).cost` separately reports observed completed-task artifact rows
 and bytes, intermediate artifact bytes, and durable attempt counts. When
@@ -135,6 +180,12 @@ it does not replace the completed-task observations. These are not total
 allocation, repeated-query work, or scan measurements. Unavailable scan
 observations remain `None` with a reason; legacy missing artifact observations
 remain unavailable. Observations never rewrite saved forecasts.
+
+The remaining task graph has no retained daily or prefix outputs. Observed
+intermediate bytes account for actual retained anchors and other remaining
+task artifacts; fewer intermediates do not turn unknown source scans into
+zero-cost or verified scan bounds.
+
 Published datasets are sorted on read; runtime byte accounting describes the stored artifact, not the re-sorted table.
 
 ## Save, run, and follow runs

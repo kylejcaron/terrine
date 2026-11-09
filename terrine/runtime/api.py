@@ -84,9 +84,14 @@ def run_plan(
     cancelled: Callable[[], bool] | None = None,
 ) -> RunReceipt:
     """Run a plan under owner execution callbacks, replaying destination-scoped keys."""
+    from terrine.runtime.execute import _verify_replay
+    from terrine.runtime.planner import admit_execution
+
+    admit_execution(plan, namespace=namespace)
     if request_key is not None:
         if destination is None:
             raise ValueError("destination is required with a request_key")
+        _recover_interrupted_runs(con, namespace=namespace, plan=plan)
         existing = find_run_by_request_key(
             request_key, destination=destination, con=con, namespace=namespace
         )
@@ -105,6 +110,7 @@ def run_plan(
                     "Request key is already bound to a different plan.",
                 ).error()
             if existing.state in {"running", "cancel_requested", "succeeded", "cancelled"}:
+                _verify_replay(plan, existing, con=con, namespace=namespace)
                 if existing.state in {"succeeded", "cancelled"}:
                     from terrine.runtime.execute import _release_run_snapshot_refs
 
@@ -157,6 +163,11 @@ def run_serialized_plan(
     if isinstance(document, dict) and "plan_json" in document:
         saved_plan = SavedPlan.from_json(serialized)
         embedded_plan = _bind_saved_plan(saved_plan, namespace=namespace)
+        from terrine.runtime.planner import admit_execution
+
+        admit_execution(
+            embedded_plan, namespace=namespace, saved_plan_version=saved_plan.schema_version
+        )
         saved_plan_destination = saved_plan.destination
         if destination is not None and destination != saved_plan_destination:
             raise _SAVED_PLAN_MISMATCH.error(reason="supplied destination differs from saved plan")
@@ -379,93 +390,20 @@ def _preflight_design_partitions(plan: RefreshPlan) -> None:
         ).error()
 
 
-_EXACT_LAYER_COLUMNS_KEY = b"terrine.runtime.exact_layer_columns"
-_COUNT_LAYER_COLUMNS_KEY = b"terrine.runtime.count_layer_columns"
-
-
-def _duckdb_type(name: str):
-    from ibis.expr import datatypes as dt
-    from sqlglot import exp as sge
-
-    return dt.Unknown(raw_type=sge.DataType.build(name, dialect="duckdb"))
-
-
-def _persistable_layer(relation: Any, execute: Any):
-    """The layer in Arrow types that read back as the same exact state.
-
-    BIGNUM has no Arrow type: those columns travel as text and are restored
-    by name. A HUGEINT count travels as ``decimal128(38, 0)``, DuckDB's own
-    Arrow type for it, and is restored to HUGEINT by name; a count is at most
-    the source row count, below ``2**63``, so its 19 digits fit the 38 exactly.
-    """
-    bignum, hugeint = _duckdb_type("BIGNUM"), _duckdb_type("HUGEINT")
-    schema = relation.schema()
-    exact_columns = tuple(name for name, dtype in schema.items() if dtype == bignum)
-    counts = tuple(name for name, dtype in schema.items() if dtype == hugeint)
-    casts = {name: relation[name].cast("string") for name in exact_columns}
-    casts.update({name: relation[name].cast("decimal(38, 0)") for name in counts})
-    result = execute(relation.mutate(**casts) if casts else relation)
-    metadata = {
-        key: json.dumps(columns).encode()
-        for key, columns in (
-            (_EXACT_LAYER_COLUMNS_KEY, exact_columns),
-            (_COUNT_LAYER_COLUMNS_KEY, counts),
-        )
-        if columns
-    }
-    if metadata:
-        import pyarrow as pa
-
-        if isinstance(result, pa.RecordBatchReader):
-            result = pa.RecordBatchReader.from_batches(
-                result.schema.with_metadata(metadata), result
-            )
-        else:
-            result = result.replace_schema_metadata(metadata)
-    return result
-
-
 def _restore_persisted_layer(context: Any, arrow: Any, name: str):
-    """A temporary table holding a persisted layer in the types it was built with.
-
-    Counts return to HUGEINT, the count state direct compilation reads, so a
-    frame composed from layers needs exactly the admission a direct one does.
-    Layers written without count names keep their counts as ``decimal(38, 0)``.
-    """
+    """Restore a retained anchor relation in the snapshot connection."""
     from contextlib import nullcontext
 
     from terrine.runtime.arrow import ArrowOutput
 
-    metadata = arrow.schema.metadata or {}
-    exact_columns = json.loads(metadata.get(_EXACT_LAYER_COLUMNS_KEY, b"[]"))
-    counts = json.loads(metadata.get(_COUNT_LAYER_COLUMNS_KEY, b"[]"))
-    quoted = ['"' + column.replace('"', '""') + '"' for column in counts]
-    replaced = ", ".join(f"CAST({column} AS HUGEINT) AS {column}" for column in quoted)
-    projection = f"* REPLACE ({replaced})" if counts else "*"
     raw = context.con.con
     with arrow.open() if isinstance(arrow, ArrowOutput) else nullcontext(arrow) as source:
         raw.register(name + "_input", source)
         try:
-            raw.execute(f'CREATE TEMP TABLE "{name}" AS SELECT {projection} FROM "{name}_input"')
+            raw.execute(f'CREATE TEMP TABLE "{name}" AS SELECT * FROM "{name}_input"')
         finally:
             raw.unregister(name + "_input")
-    relation = context.con.table(name)
-    if counts:
-        # Ibis infers a stored HUGEINT as decimal(38, 0); declare what it holds.
-        hugeint = _duckdb_type("HUGEINT")
-        schema = ibis.schema(
-            {
-                column: hugeint if column in counts else dtype
-                for column, dtype in relation.schema().items()
-            }
-        )
-        relation = relation.op().copy(schema=schema).to_expr()
-    exact_dtype = _duckdb_type("BIGNUM")
-    return (
-        relation.mutate(**{column: relation[column].cast(exact_dtype) for column in exact_columns})
-        if exact_columns
-        else relation
-    )
+    return context.con.table(name)
 
 
 class DesignExecutor:
@@ -488,6 +426,9 @@ class DesignExecutor:
         from terrine.spec.validate import resolve_unit
 
         self._model = model
+        from terrine.runtime.planner import admit_execution
+
+        admit_execution(plan, namespace=namespace)
         self.design = resolve_unit(design, model)
         self._plan = plan
         self._keys: tuple[Any, ...] | None = None
@@ -514,7 +455,6 @@ class DesignExecutor:
         from terrine.data import MaterializedFrame, Provenance
 
         if task.layer in {
-            "daily",
             "roster",
             "selector",
             "state_point",
@@ -527,30 +467,6 @@ class DesignExecutor:
             if self._keys is None:
                 self._keys = plan_layers(self.design, execution_model).keys
             layer_keys = self._keys
-        if task.layer == "prefix":
-            keys = [
-                self._with_snapshot(key, self._plan.snapshot_id)
-                for key in layer_keys
-                if key.layer == "prefix" and key.source == task.source
-            ]
-            relations = {
-                key: build_layer(
-                    self.design, execution_model, key, relation_resolver=context.resolve
-                )
-                for key in keys
-            }
-            # Every layer's arithmetic is admitted before the first of them is read.
-            context.admit(*relations.values())
-            results = {
-                key: self._stream_layer(relation, context) for key, relation in relations.items()
-            }
-            with self._lock:
-                self._layers.setdefault(task.partition, {}).update(results)
-            return (
-                next(iter(results.values()))
-                if results
-                else pa.table({"_terrine_empty": pa.array([], type=pa.int8())})
-            )
         if task.layer == "anchor":
             key = self._with_snapshot(layer_keys[0], self._plan.snapshot_id)
             relation = build_layer(
@@ -677,6 +593,7 @@ class DesignExecutor:
                 roles=compiled.roles,
                 columns=compiled.columns,
                 provenance=Provenance(
+                    execution_revision=self._plan.definition.execution_revision,
                     feature_cutoffs=compiled.feature_cutoffs,
                     eligibility_cutoffs=compiled.eligibility_cutoffs,
                     eligibility_summary=summary,
@@ -744,10 +661,7 @@ class DesignExecutor:
     def _stream_layer(self, relation: Any, context: Any):
         from terrine.runtime.arrow import ArrowOutput
 
-        def read_layer(table):
-            return context.to_arrow_batches(table, chunk_size=65_536)
-
-        reader = _persistable_layer(relation, read_layer)
+        reader = context.to_arrow_batches(relation, chunk_size=65_536)
         return ArrowOutput.write(reader, root=self._output_root)
 
     @metadata_operation()
@@ -766,6 +680,8 @@ class DesignExecutor:
         return replace(key, snapshot_id=snapshot_id)
 
     def publish(self, plan: Any, outputs: Any, lease: Any, run_id: str):
+        from contextlib import ExitStack
+
         from terrine.runtime.arrow import ArrowOutput
         from terrine.runtime.backends.base import StagedGeneration
 
@@ -775,21 +691,26 @@ class DesignExecutor:
                 expected_manifest=plan.expected_base_manifest,
                 lease=lease,
                 run_id=run_id,
+                execution_revision=plan.definition.execution_revision,
             )
 
-        stage = StagedGeneration(
-            plan.dataset,
-            f"generation-{run_id}",
-            {
-                key: output.open() if isinstance(output, ArrowOutput) else output
-                for key, output in outputs.items()
-            },
-            run_id=run_id,
-            snapshot_id=plan.snapshot_id,
-        )
-        return self._backend.publish_generation(
-            stage, expected_manifest=plan.expected_base_manifest, lease=lease
-        )
+        with ExitStack() as streams:
+            stage = StagedGeneration(
+                plan.dataset,
+                f"generation-{run_id}",
+                {
+                    key: streams.enter_context(output.open())
+                    if isinstance(output, ArrowOutput)
+                    else output
+                    for key, output in outputs.items()
+                },
+                run_id=run_id,
+                snapshot_id=plan.snapshot_id,
+                execution_revision=plan.definition.execution_revision,
+            )
+            return self._backend.publish_generation(
+                stage, expected_manifest=plan.expected_base_manifest, lease=lease
+            )
 
 
 def open_published_frame(receipt: RunReceipt, *, con: Any, namespace: str):

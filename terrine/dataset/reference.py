@@ -500,13 +500,13 @@ class Dataset:
             snapshot_id=self.manifest.source_snapshots["snapshot_id"],
             budget=budget if budget is not None else Budget(strict_scan=False),
             changes=changes,
+            base_generation=self.manifest.generation.generation_id,
         )
 
     def refresh(
         self, model: Any, *, changes: ChangeSet | None = None, budget: Budget | None = None
     ) -> Dataset:
         """Publish a definition reconstruction while leaving this generation pinned."""
-        plan = self.plan_refresh(model, changes=changes, budget=budget)
         if (
             DuckDBBackend(model.con.con, namespace=self._namespace).current_generation(
                 self.manifest.generation.dataset_id
@@ -514,8 +514,6 @@ class Dataset:
             != self.manifest.generation.generation_id
         ):
             raise _STALE_BASE.error()
-        if not plan.tasks:
-            return Dataset.from_manifest(self.manifest, con=model.con, namespace=self._namespace)
         return stage_frame(
             self.manifest.definition.build(model),
             self.manifest.generation.dataset_id,
@@ -529,13 +527,23 @@ class Dataset:
         )
 
 
-def _plan_frame(frame, *, namespace, table, snapshot_id, budget, changes=None):
+def _plan_frame(
+    frame, *, namespace, table, snapshot_id, budget, changes=None, base_generation=None
+):
     from terrine.spec.validate import validate_design
 
     definition = _definition_for(frame)
     definition_hash = hashlib.sha256(
         (definition.digest + frame._model.model_hash).encode()
     ).hexdigest()
+    base_revision = None
+    if base_generation is not None:
+        try:
+            base_revision = DuckDBBackend(
+                frame._model.con.con, namespace=namespace
+            ).generation_execution_revision(table, base_generation)
+        except TerrineError:
+            pass
     return plan_refresh(
         namespace=namespace,
         dataset=table,
@@ -543,6 +551,8 @@ def _plan_frame(frame, *, namespace, table, snapshot_id, budget, changes=None):
         snapshot_id=snapshot_id,
         budget=budget,
         changes=changes,
+        reuse_base_generation=base_generation,
+        reuse_base_revision=base_revision,
         graph=dependency_graph(
             frame._model,
             frame._design,
@@ -612,6 +622,7 @@ def stage_frame(
         snapshot_id=snapshot.snapshot_id,
         budget=budget,
         changes=_changes,
+        base_generation=expected_base,
     )
     saved = SavedPlan.create(
         plan_json=plan.serialize(),

@@ -3,9 +3,9 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from terrine.errors import RefusalSpec
+from terrine.errors import RefusalSpec, TerrineError
 from terrine.runtime.events import (
     _latest_event_cursor,
     event_read_transaction,
@@ -17,6 +17,9 @@ from terrine.runtime.state import RuntimeStore
 from terrine.runtime.synchronization import run_publication_lock
 
 __all__ = ["RunStatus", "CancelReceipt", "get_run", "cancel_run"]
+
+if TYPE_CHECKING:
+    from terrine.runtime.planner import RefreshPlan
 
 _UNAVAILABLE = RefusalSpec(
     "terrine.runtime.run_unavailable",
@@ -207,14 +210,14 @@ _INTERRUPTED = RefusalSpec(
 )
 
 
-def _recover_interrupted_runs(con: Any, *, namespace: str) -> None:
+def _recover_interrupted_runs(con: Any, *, namespace: str, plan: RefreshPlan | None = None) -> None:
     """Reconcile attempts whose fenced execution lease is no longer live."""
     store = RuntimeStore(con, namespace=namespace)
     store.initialize()
     schema = store._schema
     with event_transaction(con, namespace=namespace):
         stale = con.execute(
-            f"SELECT r.run_id,r.state,r.attempt_fence FROM {schema}.runtime_runs r "
+            f"SELECT r.run_id,r.state,r.attempt_fence,r.fingerprint FROM {schema}.runtime_runs r "
             f"LEFT JOIN {schema}.runtime_leases l ON l.resource='dataset:' || r.dataset "
             "AND l.owner=r.run_id AND l.fence=r.attempt_fence "
             "WHERE r.state IN ('queued','running','cancel_requested') "
@@ -223,11 +226,31 @@ def _recover_interrupted_runs(con: Any, *, namespace: str) -> None:
             "AND (l.resource IS NULL OR l.expires_at<=(current_timestamp AT TIME ZONE 'UTC')) "
             "ORDER BY r.run_id"
         ).fetchall()
-        for run_id, old_state, fence in stale:
+        for run_id, old_state, fence, fingerprint in stale:
             publication = con.execute(
                 f"SELECT dataset,generation FROM {schema}.runtime_run_publications WHERE run_id=?",
                 [run_id],
             ).fetchone()
+            publication_error = None
+            if publication is not None:
+                revision = (
+                    plan.definition.execution_revision
+                    if plan is not None and plan.definition.fingerprint == fingerprint
+                    else _invocation_revision(con, schema, namespace, fingerprint)
+                )
+                if revision is None:
+                    continue
+                from terrine.runtime.backends.duckdb import DuckDBBackend
+
+                try:
+                    actual = DuckDBBackend(con, namespace=namespace).generation_execution_revision(
+                        publication[0], publication[1]
+                    )
+                    if actual != revision:
+                        raise ValueError("publication execution revision differs")
+                except (ValueError, TerrineError):
+                    publication = None
+                    publication_error = "terrine.runtime.saved_plan_mismatch"
             state = (
                 "succeeded"
                 if publication is not None
@@ -265,7 +288,7 @@ def _recover_interrupted_runs(con: Any, *, namespace: str) -> None:
                     state,
                     generation,
                     datetime.now(UTC).replace(tzinfo=None),
-                    _INTERRUPTED.code if state == "failed" else None,
+                    (publication_error or _INTERRUPTED.code) if state == "failed" else None,
                     run_id,
                     old_state,
                     fence,
@@ -280,3 +303,19 @@ def _recover_interrupted_runs(con: Any, *, namespace: str) -> None:
                     namespace=namespace,
                     _in_transaction=True,
                 )
+
+
+def _invocation_revision(con: Any, schema: str, namespace: str, fingerprint: str) -> int | None:
+    from terrine.runtime.saved_plan import SavedPlan, _bind_saved_plan
+
+    for (payload,) in con.execute(
+        f"SELECT invocation_json FROM {schema}.runtime_plan_invocations"
+    ).fetchall():
+        try:
+            saved = SavedPlan.from_json(json.loads(payload)["saved_plan_json"])
+            bound = _bind_saved_plan(saved, namespace=namespace)
+        except (KeyError, ValueError, TerrineError):
+            continue
+        if bound.definition.fingerprint == fingerprint:
+            return bound.definition.execution_revision
+    return None

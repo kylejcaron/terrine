@@ -1321,6 +1321,9 @@ class Provenance:
     ``engine_name`` is the actual backend that executed, ``dialect`` the admitted
     expression policy and ``engine_status`` that policy's registered status; a
     portable result records ``"generic"`` and ``"unverified"``.
+
+    ``execution_revision`` identifies computation semantics. Historical metadata
+    retains ``None`` rather than inheriting the installed compiler's revision.
     """
 
     feature_cutoffs: Mapping[str, FeatureCutoff]
@@ -1352,8 +1355,13 @@ class Provenance:
         Literal["measurement_time", "retrospective_effective_time", "recorded_at"] | None
     ) = None
     dataset_view: DatasetViewMeta | None = None
+    execution_revision: int | None = None
 
     def __post_init__(self) -> None:
+        if self.execution_revision is not None and (
+            type(self.execution_revision) is not int or self.execution_revision <= 0
+        ):
+            raise ValueError("execution_revision must be a positive integer or None")
         for name in ("design_hash", "model_hash", "shape"):
             _nonempty(getattr(self, name), name)
         object.__setattr__(
@@ -1732,11 +1740,14 @@ def _decode(value: Any, cls: type) -> Any:
 def _metadata_payload(
     roles: Roles, columns: Mapping[str, ColumnMeta], provenance: Provenance
 ) -> dict[str, Any]:
+    encoded_provenance = _encode(provenance)
+    if provenance.execution_revision is None:
+        del encoded_provenance["execution_revision"]
     return {
         "version": 1,
         "roles": _encode(roles),
         "columns": _encode(columns),
-        "provenance": _encode(provenance),
+        "provenance": encoded_provenance,
     }
 
 

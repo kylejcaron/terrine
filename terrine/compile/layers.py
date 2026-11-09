@@ -9,14 +9,9 @@ import ibis
 
 from terrine.execution._metadata import metadata_operation
 from terrine.spec.design import Design
-from terrine.windows import Duration
 
-LayerResolution = Literal["day", "event", "point", "period"]
-LayerName = Literal["daily", "prefix", "anchor", "state_point", "state_period"]
-# The persisted prefix state's schema, part of every layer identity: a layer
-# written under another format is rebuilt, never read. 2 added the exact float
-# state's ``float64_below_resolution_count``.
-PREFIX_STATE_FORMAT = 2
+LayerResolution = Literal["point"]
+LayerName = Literal["anchor"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,12 +27,6 @@ class LayerKey:
 
 
 @dataclass(frozen=True, slots=True)
-class LayerSubstitution:
-    key: LayerKey
-    relation: ibis.Table
-
-
-@dataclass(frozen=True, slots=True)
 class LayerPlan:
     keys: tuple[LayerKey, ...]
 
@@ -46,7 +35,7 @@ def measure_identity(measure) -> str:
     """Stable identity for one bound measure, excluding schema-derived value type.
 
     Only a native measure adds its mode, so version 2 Catalog measures keep their identities
-    and native and exact measures on one column never share a persisted layer.
+    and native and exact measures on one column never share an inline state.
     """
     fields = (
         measure.source_name,
@@ -89,14 +78,12 @@ def build_measure_layer(
 
 @metadata_operation()
 def build_layer(design: Design, model, key: LayerKey, *, relation_resolver=None) -> ibis.Table:
-    """Build one compiler-planned anchor or measure-prefix relation."""
+    """Build a compiler-planned anchor relation."""
     from dataclasses import replace
 
     from terrine.compile.anchors import compile_anchors
     from terrine.model import Model
-    from terrine.semantic.bind import normalize_events
     from terrine.spec.validate import resolve_unit
-    from terrine.temporal.attributes import enrich_events
 
     design = resolve_unit(design, model)
     if relation_resolver is None:
@@ -119,121 +106,17 @@ def build_layer(design: Design, model, key: LayerKey, *, relation_resolver=None)
 
     if replace(key, snapshot_id="unbound") not in expected:
         raise ValueError("layer key does not belong to this Design and Model")
-    if key.layer == "anchor":
-        return compile_anchors(design, bound_model).table
-    if key.resolution not in {"day", "event"}:
-        raise ValueError("prefix layer resolution must be day or event")
-
-    measure = next(
-        (
-            measure
-            for metric in model.metrics.values()
-            for measure in metric.measures
-            if measure_identity(measure) == key.measure and measure.source_name == key.source
-        ),
-        None,
-    )
-    if measure is None:
-        raise ValueError("layer measure is absent from the bound Model")
-    source = model.sources[key.source]
-    resolve = relation_resolver or model._relation
-    raw = resolve(source.relation)
-    events = normalize_events(raw, source, source.units[design.unit])
-    histories = {dimension.name: resolve(dimension.relation) for dimension in source.dimensions}
-    events = enrich_events(events, source, histories)
-    return build_measure_layer(
-        events,
-        measure,
-        source,
-        boundary=model.catalog.day_boundary,
-        resolution=key.resolution,
-    )
+    return compile_anchors(design, bound_model).table
 
 
 @metadata_operation()
 def plan_layers(design: Design, model) -> LayerPlan:
     """Describe compiler input layers for a design, without consulting runtime state."""
-    from terrine.semantic.rules import calendar_average_alignment
-    from terrine.spec.anchors import FixedDate, Schedule
-    from terrine.spec.expressions import (
-        ApproxMetricDistinct,
-        ApproxMetricQuantile,
-        AttributeAsOf,
-        EventTime,
-        MetricAgg,
-        MetricQuantile,
-        RetentionMetric,
-        _output_leaves,
-        agg,
-    )
-    from terrine.spec.state_panel import BinnedMetricState, StatePanel
-    from terrine.spec.validate import _fixed_anchors, resolve_unit
+    from terrine.spec.validate import resolve_unit
 
     design = resolve_unit(design, model)
     unit_name = design.unit
     assert unit_name is not None
-    measures: dict[tuple[str, str, str, LayerResolution], None] = {}
-    anchor_points = (
-        _fixed_anchors(design, model) if isinstance(design.anchor, (FixedDate, Schedule)) else None
-    )
-
-    def expression(node, points=anchor_points) -> None:
-        if isinstance(
-            node,
-            (
-                AttributeAsOf,
-                EventTime,
-                MetricQuantile,
-                ApproxMetricQuantile,
-                ApproxMetricDistinct,
-                RetentionMetric,
-            ),
-        ):
-            return
-        elif isinstance(node, MetricAgg):
-            metric = model.metrics[node.metric]
-            resolution: LayerResolution = (
-                "day"
-                if points
-                and node.relative_to is None
-                and all(
-                    calendar_average_alignment(
-                        node.window, anchor=instant, day_boundary=model.catalog.day_boundary
-                    )
-                    == "aligned"
-                    for instant in points
-                )
-                else "event"
-            )
-            for measure in metric.measures:
-                if measure.aggregation in {"min", "max", "count_distinct"}:
-                    continue
-                identity = measure_identity(measure)
-                measures[(measure.source_name, identity, unit_name, resolution)] = None
-        else:
-            raise TypeError(f"unsupported design expression: {type(node).__name__}")
-
-    for node in (
-        *design.features.values(),
-        *design.outcomes.values(),
-        *design.eligibility.values(),
-    ):
-        for leaf in _output_leaves(node):
-            expression(leaf)
-    if isinstance(design.shape, StatePanel):
-        assert anchor_points is not None
-        baseline_points = anchor_points[:1]
-        for node in design.shape.baseline_features.values():
-            expression(node, baseline_points)
-        if isinstance(design.shape.state, BinnedMetricState):
-            assert isinstance(design.anchor, Schedule)
-            assert isinstance(design.anchor.every, Duration)
-            expression(
-                agg(
-                    design.shape.state.metric,
-                    window=(Duration(-design.anchor.every.seconds), 0),
-                )
-            )
     source_schema = {
         name: {
             column: str(dtype.copy(nullable=True))
@@ -243,23 +126,22 @@ def plan_layers(design: Design, model) -> LayerPlan:
     }
     definition_hash = hashlib.sha256(
         json.dumps(
-            [design.spec_hash, model.model_hash, source_schema, PREFIX_STATE_FORMAT],
+            [design.spec_hash, model.model_hash, source_schema],
             sort_keys=True,
             separators=(",", ":"),
         ).encode()
     ).hexdigest()
-    anchor = LayerKey(
-        "anchor",
-        "__design__",
-        None,
-        unit_name,
-        "unit_anchor",
-        "point",
-        definition_hash,
-        "unbound",
+    return LayerPlan(
+        (
+            LayerKey(
+                "anchor",
+                "__design__",
+                None,
+                unit_name,
+                "unit_anchor",
+                "point",
+                definition_hash,
+                "unbound",
+            ),
+        )
     )
-    prefixes = tuple(
-        LayerKey("prefix", source, measure, unit, "unit", resolution, definition_hash, "unbound")
-        for source, measure, unit, resolution in sorted(measures)
-    )
-    return LayerPlan((anchor, *prefixes))

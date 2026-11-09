@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import gc
+import warnings
+
 import pyarrow as pa
 import pytest
 
@@ -15,8 +18,13 @@ def test_durable_arrow_output_is_bounded_verified_and_metadata_preserving(tmp_pa
     restored = ArrowOutput.from_bytes(output.to_bytes())
     assert restored.num_rows == 5
     assert restored.schema.equals(schema, check_metadata=True)
-    with restored.open() as reader:
-        assert [batch.num_rows for batch in reader] == [1] * 5
+    with warnings.catch_warnings(record=True) as recorded:
+        warnings.simplefilter("always", ResourceWarning)
+        with restored.open() as reader:
+            assert [batch.num_rows for batch in reader] == [1] * 5
+        del reader
+        gc.collect()
+    assert not any(issubclass(item.category, ResourceWarning) for item in recorded)
     restored.path.write_bytes(b"corrupt")
     with pytest.raises(ValueError):
         restored.open()

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import replace
 from datetime import UTC
 from typing import cast
@@ -253,7 +252,6 @@ def compile_sequential(
     design: Design,
     model,
     *,
-    persisted_prefixes: Mapping[tuple[str, str, str, str], ibis.Table] | None = None,
     persisted_anchors: ibis.Table | None = None,
 ) -> CompiledStudy:
     if not isinstance(design.shape, SequentialSpec):
@@ -261,7 +259,6 @@ def compile_sequential(
     compiled = compile_columns(
         design,
         model,
-        persisted_prefixes=persisted_prefixes,
         persisted_anchors=persisted_anchors,
     )
     values = _treatment_rows(design, model, compiled._anchors)

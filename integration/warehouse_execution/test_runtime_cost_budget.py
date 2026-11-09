@@ -41,7 +41,13 @@ def test_duckdb_runtime_reports_unknown_scan_and_observed_compiler_output(column
                     if task.layer == "frame"
                 }
                 return backend.publish_generation(
-                    StagedGeneration(plan.dataset, "g1", frames, run_id=run_id),
+                    StagedGeneration(
+                        plan.dataset,
+                        "g1",
+                        frames,
+                        run_id=run_id,
+                        execution_revision=plan.definition.execution_revision,
+                    ),
                     expected_manifest=None,
                     lease=lease,
                 )

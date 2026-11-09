@@ -411,6 +411,7 @@ Inspect authoritative run state. Replay unchanged requests; replan changed input
 | `terrine.runtime.request_key_conflict` | Provisional | <code>Request key is already bound to a different plan or destination.</code> | None | [terrine/runtime/execute.py](../../terrine/runtime/execute.py) |
 | `terrine.runtime.request_key_conflict` | Provisional | <code>Request key is already bound to a different plan.</code> | None | [terrine/runtime/api.py](../../terrine/runtime/api.py) |
 | `terrine.runtime.run_unavailable` | Provisional | <code>Run status is unavailable for the requested run.</code> | None | [terrine/runtime/status.py](../../terrine/runtime/status.py) |
+| `terrine.runtime.saved_plan_mismatch` | Provisional | <code>Execution identity failed verification ({reason}); rebuild the plan and refresh.</code> | `reason` | [terrine/runtime/backends/base.py](../../terrine/runtime/backends/base.py) |
 | `terrine.runtime.saved_plan_mismatch` | Provisional | <code>Saved plan input {field} is invalid: {reason}.</code> | `field`, `reason` | [terrine/runtime/saved_plan.py](../../terrine/runtime/saved_plan.py) |
 | `terrine.runtime.saved_plan_mismatch` | Provisional | <code>Saved plan reconstruction failed verification (retained snapshot Model declaration differs).</code> | None | [terrine/runtime/api.py](../../terrine/runtime/api.py) |
 | `terrine.runtime.saved_plan_mismatch` | Provisional | <code>Saved plan reconstruction failed verification ({reason}).</code> | `reason` | [terrine/runtime/planner.py](../../terrine/runtime/planner.py) |

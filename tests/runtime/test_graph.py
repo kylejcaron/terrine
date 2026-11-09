@@ -1,30 +1,30 @@
 from terrine.runtime.graph import dependency_graph
 
 
-def test_dependency_graph_orders_daily_prefix_anchor_frame():
+def test_dependency_graph_orders_anchor_before_frame():
     graph = dependency_graph(
         sources=("events",),
         definition_hash="definition",
         partitions=("2025-01",),
     )
     ordered = tuple(node.layer for node in graph.topological_order())
-    assert ordered == ("daily", "prefix", "anchor", "frame")
+    assert ordered == ("anchor", "frame")
     assert graph.dependencies(next(node for node in graph.nodes if node.layer == "frame")) == (
         next(node for node in graph.nodes if node.layer == "anchor"),
     )
 
 
-def test_design_graph_connects_prefixes_straight_to_anchors():
+def test_design_graph_retains_independent_anchor_partitions():
     from types import SimpleNamespace
 
     design = SimpleNamespace(spec_hash="d", shape="cross_section")
     graph = dependency_graph(design=design, sources=("events",), partitions=("p1", "p2"))
-    assert {node.layer for node in graph.nodes} == {"daily", "prefix", "anchor", "frame"}
+    assert {node.layer for node in graph.nodes} == {"anchor", "frame"}
     for partition in ("p1", "p2"):
         anchor = next(
             node for node in graph.nodes if node.layer == "anchor" and node.partition == partition
         )
-        assert [node.layer for node in graph.dependencies(anchor)] == ["prefix"]
+        assert graph.dependencies(anchor) == ()
 
 
 def test_state_panel_graph_tracks_point_period_and_frame_dependencies():
@@ -108,7 +108,7 @@ def test_partition_iterator_is_reused_for_every_source():
         definition_hash="definition",
         partitions=iter(("2025-01", "2025-02")),
     )
-    partitions = {(node.source, node.partition) for node in graph.nodes if node.layer == "daily"}
+    partitions = {(node.source, node.partition) for node in graph.nodes if node.layer == "anchor"}
     assert partitions == {
         ("events", "2025-01"),
         ("events", "2025-02"),

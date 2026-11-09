@@ -208,7 +208,7 @@ def test_execution_rechecks_unknown_budget_before_callbacks(owner):
     unsafe = replace(plan, budget=Budget(max_scan_bytes=owner.size))
     with pytest.raises(TerrineError) as error:
         run(unsafe, owner, duckdb.connect())
-    assert error.value.code == "terrine.budget.scan_unknown"
+    assert error.value.code == "terrine.runtime.saved_plan_mismatch"
     assert owner.calls == []
 
 
@@ -246,7 +246,7 @@ def test_partial_retry_can_resume_within_total_bound(owner):
 
 def test_cost_evidence_serializes_and_changes_fingerprint(owner):
     plan = make_plan(owner)
-    assert json.loads(plan.serialize())["schema_version"] == 2
+    assert json.loads(plan.serialize())["schema_version"] == 3
     assert RefreshPlan.deserialize(plan.serialize()) == plan
     owner.status = "forecast"
     changed = make_plan(owner)
@@ -257,6 +257,10 @@ def test_cost_evidence_serializes_and_changes_fingerprint(owner):
         RefreshPlan.deserialize(json.dumps(altered))
     altered = json.loads(plan.serialize())
     altered["schema_version"] = 1
+    with pytest.raises(ValueError):
+        RefreshPlan.deserialize(json.dumps(altered))
+    altered = json.loads(plan.serialize())
+    altered["execution_identity"] = "ignored"
     with pytest.raises(ValueError):
         RefreshPlan.deserialize(json.dumps(altered))
 

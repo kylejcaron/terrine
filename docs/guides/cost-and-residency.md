@@ -54,6 +54,14 @@ integrity checks can still scan upstream data. The runtime records estimates,
 authorization and observed completed-artifact costs separately; absent values
 remain unknown. See [runtime cost evidence](materialization-runtime.md#cost-evidence-and-scan-budgets).
 
+Retained execution stores anchors and final results, not cumulative numeric
+prefixes. Its task estimates and observed intermediate-byte counters therefore
+cover only the remaining graph. This removes prefix-spool transfer/storage; it
+does not certify a lower source scan bound. A reduced or no-change refresh
+requires complete current-revision evidence from the exact base generation,
+checked again under the dataset lease. Older/unknown evidence keeps the full
+graph and its ordinary unknown-cost refusals, even with an empty ChangeSet.
+
 ## Recovery and measured evidence
 
 The [runtime guide](materialization-runtime.md) explains destination-scoped

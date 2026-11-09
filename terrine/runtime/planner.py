@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
+from terrine.compile.provenance import EXECUTION_REVISION
 from terrine.data import Budget
 from terrine.errors import RefusalSpec, TerrineError
 from terrine.runtime.changes import ChangeSet
@@ -61,6 +62,10 @@ class PlanDefinition:
     expected_base_manifest: str | None = None
     expected_base_manifest_bound: bool = False
     reconstruction_hash: str | None = None
+    execution_revision: int = 0
+    reuse_base_generation: str | None = None
+    reuse_base_revision: int | None = None
+    _legacy_fields: frozenset[str] | None = field(default=None, repr=False, compare=False)
 
     def to_json(self) -> str:
         payload = {
@@ -76,8 +81,18 @@ class PlanDefinition:
             "expected_base_manifest_bound": self.expected_base_manifest_bound,
             "fingerprint": self.fingerprint,
         }
-        if self.reconstruction_hash is not None:
+        if self.reconstruction_hash is not None or (
+            self._legacy_fields is not None and "reconstruction_hash" in self._legacy_fields
+        ):
             payload["reconstruction_hash"] = self.reconstruction_hash
+        if self.schema_version >= 3:
+            payload.update(
+                execution_revision=self.execution_revision,
+                reuse_base_generation=self.reuse_base_generation,
+                reuse_base_revision=self.reuse_base_revision,
+            )
+        if self._legacy_fields is not None:
+            payload = {key: value for key, value in payload.items() if key in self._legacy_fields}
         return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
 
@@ -174,7 +189,7 @@ class RefreshPlan:
             fingerprint = data["fingerprint"]
             if (
                 type(schema_version) is not int
-                or schema_version != 2
+                or schema_version not in {2, 3}
                 or not isinstance(raw_tasks, list)
             ):
                 raise _UNVERIFIABLE.error(reason="unsupported_plan_version")
@@ -211,10 +226,41 @@ class RefreshPlan:
                 "expected_base_manifest": expected_base_manifest,
                 "expected_base_manifest_bound": expected_base_manifest_bound,
             }
+            execution_revision = data.get("execution_revision", 0)
+            reuse_base_generation = data.get("reuse_base_generation")
+            reuse_base_revision = data.get("reuse_base_revision")
+            if schema_version == 3:
+                if (
+                    type(execution_revision) is not int
+                    or execution_revision <= 0
+                    or (reuse_base_generation is None) != (reuse_base_revision is None)
+                    or (
+                        reuse_base_generation is not None
+                        and (
+                            not isinstance(reuse_base_generation, str)
+                            or not reuse_base_generation
+                            or type(reuse_base_revision) is not int
+                            or reuse_base_revision <= 0
+                        )
+                    )
+                ):
+                    raise _UNVERIFIABLE.error(reason="invalid_execution_identity")
+                payload.update(
+                    execution_revision=execution_revision,
+                    reuse_base_generation=reuse_base_generation,
+                    reuse_base_revision=reuse_base_revision,
+                )
             if reconstruction_hash is not None:
                 if not isinstance(reconstruction_hash, str) or len(reconstruction_hash) != 64:
                     raise _UNVERIFIABLE.error(reason="invalid_reconstruction_binding")
                 payload["reconstruction_hash"] = reconstruction_hash
+            known_fields = set(payload) | {"fingerprint", "reconstruction_hash"}
+            if set(data) - known_fields or (
+                schema_version == 3 and set(data) != set(payload) | {"fingerprint"}
+            ):
+                raise _UNVERIFIABLE.error(reason="noncanonical_plan_fields")
+            if schema_version == 2:
+                payload = {key: value for key, value in data.items() if key != "fingerprint"}
             expected = hashlib.sha256(
                 json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
             ).hexdigest()
@@ -244,6 +290,10 @@ class RefreshPlan:
             expected_base_manifest,
             expected_base_manifest_bound,
             reconstruction_hash,
+            execution_revision,
+            reuse_base_generation,
+            reuse_base_revision,
+            _legacy_fields=frozenset(data) if schema_version == 2 else None,
         )
         return cls(
             namespace,
@@ -272,6 +322,7 @@ class RefreshPlan:
             raise ValueError("runtime plan fields differ from its canonical definition")
         definition = replace(
             self.definition,
+            _legacy_fields=None,
             expected_base_manifest=generation,
             expected_base_manifest_bound=True,
             reconstruction_hash=(
@@ -304,6 +355,8 @@ def plan_refresh(
     budget: Budget | None = None,
     max_tasks: int = 4096,
     cost_provider: CostProvider | None = None,
+    reuse_base_generation: str | None = None,
+    reuse_base_revision: int | None = None,
 ) -> RefreshPlan:
     """Create a deterministic metadata-only plan with explicit unknown costs."""
     if not all((namespace, dataset, definition_hash, snapshot_id)):
@@ -312,7 +365,18 @@ def plan_refresh(
         raise ValueError("max_tasks must be positive")
     ordered = graph.topological_order()
     has_state_panel = any(node.layer in {"state_point", "state_period"} for node in ordered)
-    if changes is not None and changes.evidence != "conservative_rebuild" and not has_state_panel:
+    verified_base = (
+        isinstance(reuse_base_generation, str)
+        and bool(reuse_base_generation)
+        and type(reuse_base_revision) is int
+        and reuse_base_revision == EXECUTION_REVISION
+    )
+    if (
+        changes is not None
+        and changes.evidence != "conservative_rebuild"
+        and not has_state_panel
+        and verified_base
+    ):
         if any(change.kind == "definition" for change in changes.changes):
             pass
         elif not changes.changes:
@@ -395,7 +459,7 @@ def plan_refresh(
         else None
     )
     fingerprint_payload = {
-        "schema_version": 2,
+        "schema_version": 3,
         "namespace": namespace,
         "dataset": dataset,
         "definition_hash": definition_hash,
@@ -403,14 +467,17 @@ def plan_refresh(
         "tasks": bodies,
         "change_evidence": change_evidence,
         "budget": budget_record,
-        "expected_base_manifest": None,
-        "expected_base_manifest_bound": False,
+        "expected_base_manifest": reuse_base_generation if verified_base else None,
+        "expected_base_manifest_bound": verified_base,
+        "execution_revision": EXECUTION_REVISION,
+        "reuse_base_generation": reuse_base_generation if verified_base else None,
+        "reuse_base_revision": reuse_base_revision if verified_base else None,
     }
     fingerprint = hashlib.sha256(
         json.dumps(fingerprint_payload, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
     definition = PlanDefinition(
-        2,
+        3,
         namespace,
         dataset,
         definition_hash,
@@ -419,6 +486,11 @@ def plan_refresh(
         budget_record,
         change_evidence,
         fingerprint,
+        expected_base_manifest=reuse_base_generation if verified_base else None,
+        expected_base_manifest_bound=verified_base,
+        execution_revision=EXECUTION_REVISION,
+        reuse_base_generation=reuse_base_generation if verified_base else None,
+        reuse_base_revision=reuse_base_revision if verified_base else None,
     )
     return RefreshPlan(
         namespace,
@@ -430,7 +502,38 @@ def plan_refresh(
         budget,
         scan_bytes=scan_bytes,
         budget_warnings=warnings,
+        expected_base_manifest=reuse_base_generation if verified_base else None,
+        expected_base_manifest_bound=verified_base,
     )
+
+
+def admit_execution(
+    plan: RefreshPlan, *, namespace: str, saved_plan_version: int | None = None
+) -> None:
+    """Verify executable identity before replay, owner callbacks or retained effects."""
+    if RefreshPlan.deserialize(plan.serialize()) != plan:
+        raise _UNVERIFIABLE.error(reason="noncanonical_plan")
+    if (
+        plan.namespace != namespace
+        or plan.definition.schema_version != 3
+        or plan.definition.execution_revision != EXECUTION_REVISION
+        or (saved_plan_version is not None and saved_plan_version != 2)
+    ):
+        raise _UNVERIFIABLE.error(
+            reason="execution_revision_mismatch",
+            execution_revision=plan.definition.execution_revision,
+            required_revision=EXECUTION_REVISION,
+            route="Rebuild the plan from its dataset definition and refresh.",
+        )
+    if (not plan.tasks and plan.definition.reuse_base_generation is None) or (
+        plan.definition.reuse_base_generation is not None
+        and (
+            not plan.expected_base_manifest_bound
+            or plan.definition.reuse_base_generation != plan.expected_base_manifest
+            or plan.definition.reuse_base_revision != plan.definition.execution_revision
+        )
+    ):
+        raise _UNVERIFIABLE.error(reason="invalid_reuse_binding")
 
 
 def _change_dict(change: Any) -> dict[str, Any]:

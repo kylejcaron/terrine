@@ -939,6 +939,7 @@ class Frame:
                     if name in self._design.shape.group_by
                 }
             provenance = Provenance(
+                execution_revision=_provenance.EXECUTION_REVISION,
                 feature_cutoffs=feature_cutoffs,
                 eligibility_cutoffs=compiled.eligibility_cutoffs,
                 design_hash=self._design.spec_hash,

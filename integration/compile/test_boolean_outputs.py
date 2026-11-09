@@ -300,7 +300,7 @@ def test_time_split_assigns_boolean_label_by_its_window():
 
 def test_predicate_runtime_layers_match_direct_values():
     from terrine.runtime.materialize import compose_runtime_frame
-    from tests.compile.test_persisted_layers import _persisted_prefixes
+    from tests.compile.test_persisted_layers import _persisted_anchors
 
     con, model, design = _inputs()
     week = tr.agg("items", window=("0s", "7d"))
@@ -319,7 +319,7 @@ def test_predicate_runtime_layers_match_direct_values():
     )
     try:
         direct = design.build(model)._compiled
-        runtime = compose_runtime_frame(design, model, persisted=_persisted_prefixes(design, model))
+        runtime = compose_runtime_frame(design, model, persisted=_persisted_anchors(design, model))
         expected = con.to_pyarrow(direct.table.order_by("unit"))
         actual = con.to_pyarrow(runtime.table.order_by("unit"))
         assert actual.equals(expected)

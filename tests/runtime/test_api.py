@@ -14,7 +14,8 @@ from terrine.runtime.saved_plan import DestinationRef
 
 
 class _Executor:
-    def __init__(self):
+    def __init__(self, con=None):
+        self.con = con
         self.calls = 0
 
     def run_task(self, task, dependencies):
@@ -22,7 +23,23 @@ class _Executor:
         return pa.table({"id": [self.calls]})
 
     def publish(self, plan, outputs, lease, run_id):
-        return "g1"
+        if self.con is None:
+            return "g1"
+        from terrine.runtime.backends.duckdb import DuckDBBackend, StagedGeneration
+
+        backend = DuckDBBackend(self.con, namespace=plan.namespace)
+        return backend.publish_generation(
+            StagedGeneration(
+                plan.dataset,
+                "g1",
+                outputs,
+                run_id=run_id,
+                snapshot_id=plan.snapshot_id,
+                execution_revision=plan.definition.execution_revision,
+            ),
+            expected_manifest=None,
+            lease=lease,
+        )
 
 
 def _plan():
@@ -59,6 +76,42 @@ def test_run_serialized_plan_executes_through_python_facade():
     assert isinstance(receipt, RunReceipt)
     assert receipt.state == "succeeded"
     assert executor.calls == len(_plan().tasks)
+
+
+def test_stale_revision_cannot_replay_a_matching_request_key():
+    import json
+    from pathlib import Path
+
+    from terrine.runtime.planner import RefreshPlan
+    from terrine.runtime.saved_plan import SavedPlan
+    from terrine.runtime.state import RuntimeStore
+
+    saved = SavedPlan.from_json(
+        (Path(__file__).parents[1] / "fixtures/retained_plan_v1.json").read_text()
+    )
+    plan = RefreshPlan.deserialize(saved.plan_json)
+    con = duckdb.connect(":memory:")
+    store = RuntimeStore(con, namespace="owner")
+    store.initialize()
+    con.execute(
+        "INSERT INTO owner.runtime_runs "
+        "(run_id,dataset,fingerprint,state,published_generation,request_key,destination_json) "
+        "VALUES ('old','orders',?,'succeeded','g0','request',?)",
+        [
+            plan.definition.fingerprint,
+            json.dumps(saved.destination.to_dict(), sort_keys=True, separators=(",", ":")),
+        ],
+    )
+    with pytest.raises(TerrineError) as error:
+        runtime.run_plan(
+            plan,
+            con=con,
+            namespace="owner",
+            request_key="request",
+            destination=saved.destination,
+        )
+    assert error.value.code == "terrine.runtime.saved_plan_mismatch"
+    assert error.value.context["execution_revision"] == 0
 
 
 def test_custom_saved_plan_executor_is_not_limited_by_builtin_shape_preflight(tmp_path):
@@ -175,19 +228,63 @@ def test_published_generation_uses_receipt_generation_not_current_manifest():
                     {task_id: output for task_id, output in outputs.items()},
                     run_id=run_id,
                     snapshot_id=plan.snapshot_id,
+                    execution_revision=plan.definition.execution_revision,
                 ),
                 expected_manifest="g1" if generation == "g2" else None,
                 lease=lease,
             )
 
     publisher = Publisher()
-    first = runtime.run_plan(_plan(), con=con, namespace="owner", executor=publisher)
+    destination = DestinationRef("out.duckdb", "analytics", "orders")
+    first = runtime.run_plan(
+        _plan(),
+        con=con,
+        namespace="owner",
+        executor=publisher,
+        request_key="superseded",
+        destination=destination,
+    )
     second = runtime.run_plan(_plan(), con=con, namespace="owner", executor=publisher)
     exact = runtime.open_published_generation(first, con=con, namespace="owner")
 
     assert isinstance(exact, ibis.Table)
     assert exact.execute().to_dict(orient="records") == [{"id": len(_plan().tasks)}]
     assert second.published_generation == "g2"
+    schema = (
+        pa.schema(
+            [("id", pa.int64())],
+            metadata={b"terrine.execution": b'{"version":1,"execution_revision":2}'},
+        )
+        .serialize()
+        .to_pybytes()
+    )
+    con.execute(
+        "UPDATE owner.runtime_partition_metadata SET schema_metadata=? WHERE generation='g2'",
+        [schema],
+    )
+    assert (
+        runtime.run_plan(
+            _plan(),
+            con=con,
+            namespace="owner",
+            request_key="superseded",
+            destination=destination,
+        )
+        == first
+    )
+    con.execute(
+        "UPDATE owner.runtime_partition_metadata SET schema_metadata=? WHERE generation='g1'",
+        [pa.schema([("id", pa.int64())]).serialize().to_pybytes()],
+    )
+    with pytest.raises(TerrineError) as error:
+        runtime.run_plan(
+            _plan(),
+            con=con,
+            namespace="owner",
+            request_key="superseded",
+            destination=destination,
+        )
+    assert error.value.code == "terrine.runtime.saved_plan_mismatch"
 
 
 def test_published_frame_reader_roundtrips_exact_generation_metadata():
@@ -262,7 +359,7 @@ def test_published_frame_reader_roundtrips_exact_generation_metadata():
 def test_request_key_replay_is_available_without_executor():
     con = duckdb.connect(":memory:")
     destination = DestinationRef("out.duckdb", "analytics", "orders")
-    executor = _Executor()
+    executor = _Executor(con)
     first = runtime.run_plan(
         _plan(),
         con=con,
@@ -282,6 +379,17 @@ def test_request_key_replay_is_available_without_executor():
 
     assert replay == first
     assert executor.calls == len(_plan().tasks)
+    from dataclasses import replace
+
+    with pytest.raises(TerrineError) as error:
+        runtime.run_plan(
+            replace(_plan(), dataset="other"),
+            con=con,
+            namespace="owner",
+            request_key="response-lost",
+            destination=destination,
+        )
+    assert error.value.code == "terrine.runtime.saved_plan_mismatch"
 
 
 def test_public_request_replay_refuses_a_different_plan_without_executor():
@@ -333,17 +441,13 @@ def test_empty_refresh_plan_reuses_current_generation_result_selection():
         def publish(self, plan, outputs, lease, run_id):
             backend = DuckDBBackend(con, namespace="owner")
             if not outputs:
-                row = con.execute(
-                    'SELECT generation,version FROM "owner".runtime_manifests WHERE dataset=?',
-                    [plan.dataset],
-                ).fetchone()
-                assert row is not None
-                generation, version = row
-                con.execute(
-                    'INSERT INTO "owner".runtime_run_publications VALUES (?, ?, ?, ?)',
-                    [run_id, plan.dataset, generation, version],
+                return backend.reuse_generation(
+                    plan.dataset,
+                    expected_manifest=plan.expected_base_manifest,
+                    lease=lease,
+                    run_id=run_id,
+                    execution_revision=plan.definition.execution_revision,
                 )
-                return generation
             self.generation += 1
             generation = f"g{self.generation}"
             return backend.publish_generation(
@@ -353,6 +457,7 @@ def test_empty_refresh_plan_reuses_current_generation_result_selection():
                     outputs,
                     run_id=run_id,
                     snapshot_id=plan.snapshot_id,
+                    execution_revision=plan.definition.execution_revision,
                 ),
                 expected_manifest="g1" if generation == "g2" else None,
                 lease=lease,
@@ -394,6 +499,8 @@ def test_empty_refresh_plan_reuses_current_generation_result_selection():
         snapshot_id="snapshot",
         graph=changed_graph,
         changes=ChangeSet((), "revision"),
+        reuse_base_generation="g2",
+        reuse_base_revision=1,
     )
     receipt = runtime.run_plan(
         no_op,
@@ -429,10 +536,26 @@ def test_empty_refresh_plan_reuses_current_generation_result_selection():
     ) == sorted(expected_second, key=lambda row: row["id"])
 
 
-def test_empty_plan_with_string_publisher_remains_successful():
+def test_empty_plan_cannot_report_an_arbitrary_generation_as_verified_reuse():
     from terrine.runtime.changes import ChangeSet
 
     con = duckdb.connect(":memory:")
+    from datetime import UTC, datetime, timedelta
+
+    from terrine.runtime.backends.duckdb import DuckDBBackend, StagedGeneration
+    from terrine.runtime.leases import LeaseStore
+
+    backend = DuckDBBackend(con, namespace="owner")
+    leases = LeaseStore(con, namespace="owner")
+    lease = leases.acquire(
+        "dataset:orders", "setup", ttl=timedelta(minutes=1), now=datetime.now(UTC)
+    )
+    backend.publish_generation(
+        StagedGeneration("orders", "base", {"p": pa.table({"id": [1]})}, execution_revision=1),
+        expected_manifest=None,
+        lease=lease,
+    )
+    leases.release(lease)
     no_op = plan_refresh(
         namespace="owner",
         dataset="orders",
@@ -442,6 +565,8 @@ def test_empty_plan_with_string_publisher_remains_successful():
             sources=("events",), definition_hash="definition", partitions=("p1",)
         ),
         changes=ChangeSet((), "revision"),
+        reuse_base_generation="base",
+        reuse_base_revision=1,
     )
 
     class NoOpExecutor:
@@ -452,10 +577,9 @@ def test_empty_plan_with_string_publisher_remains_successful():
             assert not outputs
             return "g0"
 
-    receipt = runtime.run_plan(no_op, con=con, namespace="owner", executor=NoOpExecutor())
-
-    assert receipt.state == "succeeded"
-    assert receipt.published_generation == "g0"
+    with pytest.raises(TerrineError):
+        runtime.run_plan(no_op, con=con, namespace="owner", executor=NoOpExecutor())
+    assert backend.current_generation("orders") == "base"
 
 
 def test_design_executor_refuses_multiple_output_partitions():

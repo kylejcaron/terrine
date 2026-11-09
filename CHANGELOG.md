@@ -38,6 +38,19 @@
 
 ### Breaking changes
 
+- Retained execution no longer produces or substitutes daily/prefix
+  intermediates. New saved plans use envelope version 2, runtime plan
+  definition version 3 and execution revision 1; the ordinary inline compiler
+  remains in use. Historical plans retain original checksum verification for
+  inspection, status/events/cancellation and snapshot-pin cleanup, but refuse
+  execution or request-key replay with `terrine.runtime.saved_plan_mismatch`.
+- Published partition schemas carry immutable execution-revision evidence,
+  including plain Arrow and typed-empty output. Reduced/no-change refresh,
+  replay and recovery require matching complete evidence for the exact base
+  or committed generation, with fenced reuse. Unknown or older bases rebuild;
+  historical final data and metadata remain readable without relabeling.
+  Runtime namespaces and DatasetManifest schemas remain version 1; no runtime
+  schema upgrade is required.
 - Python 3.12 is the minimum supported version; CPython 3.12, 3.13 and 3.14
   are supported.
 - Float sums and means use native arithmetic unless `exact=True`.
@@ -68,8 +81,8 @@
 - Design and dataset-definition documents require `schema_version: 4` and write
   durations as canonical text such as `gap: 1w` and `every: 1mo`; version 3 and
   older documents refuse: reconstruct and save the design or definition.
-  Catalog documents use version 3; manifest and saved-plan outer envelopes stay
-  at version 1, with version-4 nested designs and definitions.
+  Catalog documents use version 3; manifest envelopes stay at version 1,
+  with version-4 nested designs and definitions.
 - Design, dataset-definition and Catalog documents omit fields equal to their
   defaults (a minimal Design saves only `unit` and `anchor`), including the
   training and scoring views, split policies and winsorization records inside a

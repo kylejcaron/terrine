@@ -260,6 +260,16 @@ class OwnerPlanner:
             [request.destination.dataset],
         ).fetchone()
         expected_manifest = expected[0] if expected is not None else None
+        from terrine.runtime.backends.duckdb import DuckDBBackend
+
+        base_revision = None
+        if expected_manifest is not None:
+            try:
+                base_revision = DuckDBBackend(
+                    con, namespace=namespace
+                ).generation_execution_revision(request.destination.dataset, expected_manifest)
+            except TerrineError:
+                pass
         if request.bind_base_manifest and expected_manifest != request.expected_base_manifest:
             raise _INVALID_REQUEST.error(reason="pinned base generation is no longer current")
         ensure_runtime_shape_supported(request.design.shape, anchor=request.design.anchor)
@@ -336,6 +346,8 @@ class OwnerPlanner:
             graph=graph,
             changes=request.changes,
             budget=request.budget,
+            reuse_base_generation=expected_manifest,
+            reuse_base_revision=base_revision,
         )
         saved_plan = SavedPlan.create(
             plan_json=plan.serialize(),

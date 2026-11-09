@@ -10,7 +10,7 @@ from typing import Any, Protocol
 from terrine.errors import RefusalSpec, TerrineError
 from terrine.model import Model
 from terrine.runtime.materialize import ensure_runtime_expressions_supported
-from terrine.runtime.planner import RefreshPlan
+from terrine.runtime.planner import RefreshPlan, admit_execution
 from terrine.runtime.state import RuntimeStore
 from terrine.semantic.io import catalog_payload
 from terrine.spec.dataset import DatasetDefinition
@@ -165,7 +165,7 @@ class SavedPlan:
             dataset_definition.canonical_json().decode() if dataset_definition is not None else None
         )
         provisional = cls(
-            1,
+            2,
             canonical_plan,
             design_json,
             design_hash,
@@ -288,7 +288,7 @@ class SavedPlan:
             raise
         except (ValueError, TypeError, KeyError) as exc:
             raise _INVALID.error(reason="saved plan is malformed") from exc
-        if saved_plan.schema_version != 1:
+        if type(saved_plan.schema_version) is not int or saved_plan.schema_version not in {1, 2}:
             raise _INVALID.error(reason="unsupported schema version")
         expected = hashlib.sha256(_canonical(saved_plan._data(include_hash=False))).hexdigest()
         if not isinstance(saved_plan.plan_hash, str) or not hmac.compare_digest(
@@ -342,12 +342,13 @@ def resolve_plan(
     restored = SavedPlan.from_json(saved_plan.to_json())
     if namespace != restored.namespace:
         raise _INVALID.error(reason="owner namespace mismatch")
+    plan = _bind_saved_plan(restored, namespace=namespace)
+    admit_execution(plan, namespace=namespace, saved_plan_version=restored.schema_version)
     model = resolver.resolve(restored.model)
     if (
         not isinstance(model, Model)
         or ModelReference.from_model(model, owner_key=restored.model.owner_key) != restored.model
     ):
         raise _INVALID.error(reason="owner Model declaration does not match reference")
-    plan = _bind_saved_plan(restored, namespace=namespace)
     design = from_json(restored.design_json)
     return plan, model, restored.restore_dataset_definition() or design, restored.destination

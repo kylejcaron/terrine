@@ -28,7 +28,6 @@ def compile_design(
     design: Design,
     model: Model,
     *,
-    persisted_prefixes: Mapping[tuple[str, str, str, str], ibis.Table] | None = None,
     persisted_anchors: ibis.Table | None = None,
 ) -> CompiledStudy:
     """Compile a shape, propagating supported verified logical substitutions.
@@ -42,7 +41,6 @@ def compile_design(
         compiled = _compile_design(
             design,
             model,
-            persisted_prefixes=persisted_prefixes,
             persisted_anchors=persisted_anchors,
         )
     return compiled.with_output(prune_columns(compiled.table))
@@ -52,10 +50,9 @@ def _compile_design(
     design: Design,
     model: Model,
     *,
-    persisted_prefixes: Mapping[tuple[str, str, str, str], ibis.Table] | None = None,
     persisted_anchors: ibis.Table | None = None,
 ) -> CompiledStudy:
-    if persisted_prefixes is not None or persisted_anchors is not None:
+    if persisted_anchors is not None:
         ensure_runtime_shape_supported(design.shape, anchor=design.anchor)
     if isinstance(design.shape, EventSequence):
         from terrine.compile.shapes.event_sequence import compile_event_sequence
@@ -67,7 +64,6 @@ def _compile_design(
         return compile_state_panel(
             design,
             model,
-            persisted_prefixes=persisted_prefixes,
             persisted_anchors=persisted_anchors,
         )
     from terrine.spec.panels import EventPanelSpec, SequentialSpec
@@ -78,7 +74,6 @@ def _compile_design(
         return compile_sequential(
             design,
             model,
-            persisted_prefixes=persisted_prefixes,
             persisted_anchors=persisted_anchors,
         )
 
@@ -88,7 +83,6 @@ def _compile_design(
         return compile_event_panel(
             design,
             model,
-            persisted_prefixes=persisted_prefixes,
             persisted_anchors=persisted_anchors,
         )
     from terrine.spec.panels import CalendarComparisonSpec
@@ -122,7 +116,6 @@ def _compile_design(
     return compile_columns(
         design,
         model,
-        persisted_prefixes=persisted_prefixes,
         persisted_anchors=persisted_anchors,
     )
 

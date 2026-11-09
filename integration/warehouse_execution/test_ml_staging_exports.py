@@ -662,8 +662,9 @@ def test_scoring_refresh_preserves_as_of_and_never_reads_unused_labels(events_wo
     con.disconnect()
 
 
+@pytest.mark.parametrize("legacy", [False, True])
 def test_refresh_nochange_reuses_only_same_definition_and_rejects_stale_base(
-    events_world, tmp_path
+    events_world, tmp_path, legacy
 ):
     import pytest
 
@@ -672,11 +673,65 @@ def test_refresh_nochange_reuses_only_same_definition_and_rejects_stale_base(
     frame, con = _durable_frame(events_world, tmp_path)
     budget = Budget(strict_scan=False)
     dataset = frame.stage("training", budget=budget)
+    if legacy:
+        from terrine.errors import thaw
+
+        metadata = thaw(dataset.manifest.frame_metadata)
+        del metadata["provenance"]["execution_revision"]
+        manifest = replace(dataset.manifest, frame_metadata=metadata)
+        raw = con.con
+        for partition, schema_bytes in raw.execute(
+            "SELECT partition,schema_metadata FROM terrine_runtime.runtime_partition_metadata"
+        ).fetchall():
+            schema = pa.ipc.read_schema(pa.BufferReader(schema_bytes))
+            arrow_metadata = dict(schema.metadata)
+            del arrow_metadata[b"terrine.execution"]
+            if b"terrine.materialized_frame.v2" in arrow_metadata:
+                frame_payload = json.loads(arrow_metadata[b"terrine.materialized_frame.v2"])
+                del frame_payload["provenance"]["execution_revision"]
+                arrow_metadata[b"terrine.materialized_frame.v2"] = json.dumps(
+                    frame_payload, sort_keys=True, separators=(",", ":")
+                ).encode()
+            raw.execute(
+                "UPDATE terrine_runtime.runtime_partition_metadata SET schema_metadata=? "
+                "WHERE partition=?",
+                [schema.with_metadata(arrow_metadata).serialize().to_pybytes(), partition],
+            )
+        raw.execute(
+            "UPDATE terrine_runtime.runtime_dataset_recipes SET manifest_json=?",
+            [manifest.to_json()],
+        )
+        dataset = Dataset.from_manifest(manifest, con=con)
+    before = pa.Table.from_batches(list(dataset.to_arrow_batches()))
+    saved_manifest = dataset.manifest.to_json()
+    saved_schema = con.con.execute(
+        "SELECT schema_metadata FROM terrine_runtime.runtime_partition_metadata WHERE generation=?",
+        [dataset.manifest.generation.generation_id],
+    ).fetchall()
     empty = ChangeSet((), "operator")
-    assert not dataset.plan_refresh(frame._model, changes=empty, budget=budget).tasks
-    assert dataset.refresh(frame._model, changes=empty, budget=budget).manifest == dataset.manifest
-    newer = dataset.refresh(frame._model, budget=budget)
-    assert newer.manifest.generation != dataset.manifest.generation
+    plan = dataset.plan_refresh(frame._model, changes=empty, budget=budget)
+    assert bool(plan.tasks) is legacy
+    refreshed = dataset.refresh(frame._model, changes=empty, budget=budget)
+    if legacy:
+        assert refreshed.manifest.generation != dataset.manifest.generation
+        assert refreshed.manifest.frame_metadata["provenance"]["execution_revision"] == 1
+        assert "execution_revision" not in dataset.manifest.frame_metadata["provenance"]
+    else:
+        assert refreshed.manifest == dataset.manifest
+    assert Dataset.from_manifest(dataset.manifest, con=con).manifest.to_json() == saved_manifest
+    assert pa.Table.from_batches(list(dataset.to_arrow_batches())).equals(
+        before, check_metadata=True
+    )
+    assert (
+        con.con.execute(
+            "SELECT schema_metadata FROM terrine_runtime.runtime_partition_metadata "
+            "WHERE generation=?",
+            [dataset.manifest.generation.generation_id],
+        ).fetchall()
+        == saved_schema
+    )
+    newer = refreshed.refresh(frame._model, budget=budget)
+    assert newer.manifest.generation != refreshed.manifest.generation
     with pytest.raises(TerrineError) as error:
         dataset.refresh(frame._model, changes=empty, budget=budget)
     assert error.value.code == "terrine.dataset.stale_generation"
@@ -684,7 +739,7 @@ def test_refresh_nochange_reuses_only_same_definition_and_rejects_stale_base(
 
 
 def test_refresh_after_mode_change_rebuilds_layers_and_matches_fresh_build(tmp_path):
-    """Switching a float sum from exact to native arithmetic rebuilds its persisted layers.
+    """Switching a float sum from exact to native arithmetic rebuilds the computation.
 
     A refresh without source changes replans every task for the changed declaration, and the
     refreshed rows equal a fresh build of the native declaration. This checks invalidation and
@@ -693,7 +748,6 @@ def test_refresh_after_mode_change_rebuilds_layers_and_matches_fresh_build(tmp_p
     import ibis
 
     import terrine as tr
-    from terrine.compile.layers import plan_layers
 
     con = ibis.duckdb.connect(str(tmp_path / "owner.duckdb"))
     con.create_table("customers", pa.table({"customer_id": ["alice", "bob"]}))
@@ -728,15 +782,6 @@ def test_refresh_after_mode_change_rebuilds_layers_and_matches_fresh_build(tmp_p
     design = Design(
         "customer", FixedDate("2025-01-31"), features={"spend": agg("spend", window=("-30d", "0s"))}
     )
-    prefixes = {
-        mode: {key for key in plan_layers(design, model).keys if key.layer == "prefix"}
-        for mode, model in models.items()
-    }
-    assert prefixes["exact"] and prefixes["native"]
-    assert prefixes["exact"].isdisjoint(prefixes["native"])
-    assert {key.measure for key in prefixes["exact"]}.isdisjoint(
-        {key.measure for key in prefixes["native"]}
-    )
     budget = Budget(strict_scan=False)
     dataset = design.build(models["exact"]).stage("spend", budget=budget)
     unchanged = ChangeSet((), "operator")
@@ -746,7 +791,9 @@ def test_refresh_after_mode_change_rebuilds_layers_and_matches_fresh_build(tmp_p
     assert refreshed.manifest.model_hash == models["native"].model_hash
     assert refreshed.manifest.model_hash != dataset.manifest.model_hash
     fresh = (
-        design.build(models["native"]).materialize(budget=budget).table.replace_schema_metadata(None)
+        design.build(models["native"])
+        .materialize(budget=budget)
+        .table.replace_schema_metadata(None)
     )
     rows = pa.Table.from_batches(list(refreshed.to_arrow_batches()))
     order = [("unit", "ascending"), ("anchor_id", "ascending")]
@@ -760,15 +807,10 @@ def test_refresh_after_mode_change_rebuilds_layers_and_matches_fresh_build(tmp_p
 
 
 def test_native_and_exact_measures_on_same_column_stage_and_refresh(tmp_path):
-    """Native and exact sums of one float column keep distinct persisted layers.
-
-    Staging composes the frame from both prefix layers and a refresh after an insert rebuilds
-    them; both generations equal fresh builds and keep each column's arithmetic.
-    """
+    """Native and exact sums retain their arithmetic through staging and correction."""
     import ibis
 
     import terrine as tr
-    from terrine.compile.layers import plan_layers
     from terrine.data import MaterializedFrame
 
     con = ibis.duckdb.connect(str(tmp_path / "owner.duckdb"))
@@ -802,8 +844,6 @@ def test_native_and_exact_measures_on_same_column_stage_and_refresh(tmp_path):
         FixedDate("2025-01-31"),
         features={name: agg(name, window=("-30d", "0s")) for name in ("native", "exact")},
     )
-    prefixes = [key for key in plan_layers(design, model).keys if key.layer == "prefix"]
-    assert len({key.measure for key in prefixes}) == 2
     budget = Budget(strict_scan=False)
     order = [("unit", "ascending"), ("anchor_id", "ascending")]
 

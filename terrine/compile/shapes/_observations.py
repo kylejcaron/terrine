@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import UTC
 from typing import TYPE_CHECKING
@@ -219,7 +219,6 @@ def compile_observed_state_panel(
     model: Model,
     panel: StatePanel,
     *,
-    persisted_prefixes: Mapping[tuple[str, str, str, str], ibis.Table] | None = None,
     persisted_anchors: ibis.Table | None = None,
 ) -> CompiledStudy:
     """Compile exact point lookups, independently usable states, and terminal suffixes."""
@@ -290,7 +289,6 @@ def compile_observed_state_panel(
     compiled = compile_columns(
         output_design,
         model,
-        persisted_prefixes=persisted_prefixes,
         persisted_anchors=persisted_anchors,
     )
     interval = ibis.interval(seconds=schedule.every.seconds)
@@ -351,7 +349,6 @@ def compile_observed_state_panel(
             baseline_design,
             model,
             include_membership=False,
-            persisted_prefixes=persisted_prefixes,
         )
         base = baseline_compiled.table
         projection = {"unit": base.unit}

@@ -401,7 +401,6 @@ def compile_columns(
     *,
     include_membership: bool = True,
     _anchor_table: AnchorTable | None = None,
-    persisted_prefixes: Mapping[tuple[str, str, str, str], ibis.Table] | None = None,
     persisted_anchors: ibis.Table | None = None,
 ) -> CompiledStudy:
     """Compile candidates and distinct expressions once without reading source rows."""
@@ -426,14 +425,6 @@ def compile_columns(
     sketch_aliases: dict[str, list[str]] = {}
     selector_identity_checks = []
     checked_selector_sources = set()
-    for (source_name, measure_key, unit, resolution), relation in (
-        persisted_prefixes or {}
-    ).items():
-        if unit != design.unit:
-            raise ValueError("persisted prefix unit does not match design")
-        if not isinstance(relation, ibis.Table):
-            raise TypeError("persisted prefix relations must be Ibis tables")
-        states[(source_name, measure_key, unit, resolution)] = relation
     columns, feature_cutoffs, eligibility_cutoffs, strategies = {}, {}, {}, {}
     public: dict[str, str] = {}
     selector_identity_columns: dict[str, str] = {}
