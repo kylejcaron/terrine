@@ -29,7 +29,7 @@ from terrine.backends.numeric import (
     float_is_finite,
     float_ratio,
 )
-from terrine.backends.timestamps import compare_timestamps, day_start
+from terrine.backends.timestamps import compare_timestamps, day_start, local_day
 from terrine.data import ColumnMeta, RowCheck
 from terrine.errors import RefusalSpec
 from terrine.semantic.bind import _SCHEMA
@@ -1106,14 +1106,13 @@ class _BucketPrimitive:
 
 
 def _day_consumed(bucket, points, contexts):
-    """An available request contains the entire fixed-offset bucket."""
+    """An available aligned request contains the fixed-offset bucket."""
     consumed = ibis.literal(False)
-    end = bucket + ibis.interval(seconds=86400)
     for context in contexts:
         consumed |= (
             points[context.available]
             & (bucket >= points[context.start])
-            & (end <= points[context.end])
+            & (bucket < points[context.end])
         )
     return consumed
 
@@ -1131,7 +1130,7 @@ def _reduce_daily_source(
     bucket, scope_unit, scope_bucket, unit, anchor_id = (
         builder.name(name) for name in ("bucket", "scope_unit", "scope_bucket", "unit", "anchor_id")
     )
-    events = events.mutate(**{bucket: day_start(events._timestamp, minutes)})
+    events = events.mutate(**{bucket: local_day(events._timestamp, minutes)[1]})
     identities = events.select(
         events._unit.name(scope_unit), events[bucket].name(scope_bucket)
     ).distinct()

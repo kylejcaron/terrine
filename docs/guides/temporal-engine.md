@@ -556,6 +556,15 @@ conversion, finite checks, exact quantization or arithmetic. Duplicate anchors
 and overlapping requests cannot multiply events within a primitive/bucket.
 Only wholly contained fixed-offset local days are usable, including offsets
 such as `UTC+05:30`; partial edge buckets are never reconstructed.
+Source buckets use the precision-preserving local-day conversion, so an event one
+nanosecond before a pre-epoch local midnight remains in the preceding day. For
+aligned windows, bucket-start membership `start <= bucket < end` is equivalent
+to full-bucket containment. Scope selection never adds a day to an unused source
+bucket: an event on the backend's final supported day cannot overflow merely
+while deciding whether a distant requested window consumes it.
+DuckDB compares mixed naive/aware timestamps through exact timestamp parts,
+without attaching a zone to wide naive source instants. This preserves raw
+selection over valid finite endpoints even when the session is not UTC.
 
 The internal `compile.numeric.lower_aggregates` chooses raw input for a single
 distinct fixed origin, relative windows, partial days or unproven alignment.

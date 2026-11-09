@@ -1,8 +1,10 @@
+from datetime import UTC, datetime, timedelta
 from typing import cast
 
 import ibis
 import ibis.expr.datatypes as dt
 import ibis.expr.types as ir
+import pyarrow as pa
 import pytest
 
 from terrine.backends.dialect import current_dialect, dialect_scope
@@ -183,6 +185,64 @@ def test_duckdb_microsecond_comparisons_order_infinities_nulls_and_naive_utc_clo
         if missing in (a, b):
             expected = dict.fromkeys(ops)
         assert {op: row[op] for op in ops} == expected, (a, b)
+
+
+def test_duckdb_mixed_utc_comparisons_preserve_finite_timestamp_endpoints():
+    """Naive UTC clocks keep their full domain when compared to aware instants."""
+    anchor = datetime(2025, 1, 2, tzinfo=UTC)
+    anchor_us = (anchor - datetime(1970, 1, 1, tzinfo=UTC)) // timedelta(microseconds=1)
+    coordinates = [
+        -9_223_372_022_400_000_000,
+        -1,
+        0,
+        1,
+        anchor_us - 1,
+        anchor_us,
+        anchor_us + 1,
+        2**63 - 2,
+        None,
+    ]
+    con, _ = _new_york_session()
+    operations = ("lt", "le", "gt", "ge", "eq")
+    try:
+        table = con.create_table(
+            "finite_endpoints",
+            pa.table(
+                {
+                    "i": list(range(len(coordinates))),
+                    "at": pa.array(coordinates, pa.int64()).cast(pa.timestamp("us")),
+                }
+            ),
+        )
+        point = cast(ir.TimestampValue, ibis.literal(anchor))
+        rows = con.to_pyarrow(
+            table.select(
+                "i",
+                **{op: compare_timestamps(table.at, point, op) for op in operations},
+                **{f"reverse_{op}": compare_timestamps(point, table.at, op) for op in operations},
+            )
+        ).to_pylist()
+    finally:
+        con.disconnect()
+    assert len(rows) == len(coordinates)
+    for row in rows:
+        coordinate = coordinates[row["i"]]
+        for prefix, left, right in (
+            ("", coordinate, anchor_us),
+            ("reverse_", anchor_us, coordinate),
+        ):
+            expected = (
+                dict.fromkeys(operations)
+                if left is None or right is None
+                else {
+                    "lt": left < right,
+                    "le": left <= right,
+                    "gt": left > right,
+                    "ge": left >= right,
+                    "eq": left == right,
+                }
+            )
+            assert {op: row[prefix + op] for op in operations} == expected
 
 
 @pytest.mark.parametrize(

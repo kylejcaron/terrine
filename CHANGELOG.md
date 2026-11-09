@@ -23,6 +23,12 @@
   at their named-column dependency depth, so wide batches compile without a
   projection chain that grows with output count. Existing masks, arithmetic
   guards and metadata remain unchanged; the public compiler migration is later.
+- Preserve pre-epoch nanosecond event membership in local-day batches, including
+  fixed offsets, and avoid timestamp overflow from unused final-day source events
+  by comparing bucket starts against aligned half-open window bounds.
+- Keep DuckDB mixed naive/aware comparisons within their original timestamp
+  domains using exact timestamp parts, so unused finite endpoint events do not
+  overflow UTC attachment during raw-window selection.
 
 ### Breaking changes
 

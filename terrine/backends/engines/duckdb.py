@@ -304,12 +304,18 @@ class DuckDBDialect(Dialect):
     def comparison_keys(
         self, left: ir.TimestampValue, right: ir.TimestampValue
     ) -> tuple[ir.Value, ir.Value] | None:
-        """Microsecond instants, infinities included, compare natively as lookups do."""
-        if all(
-            isinstance(dtype, dt.Timestamp) and dtype.scale in (None, 6)
-            for dtype in (left.type(), right.type())
+        """Equal-zone microsecond instants compare without changing their domain."""
+        left_type, right_type = left.type(), right.type()
+        if (
+            isinstance(left_type, dt.Timestamp)
+            and isinstance(right_type, dt.Timestamp)
+            and left_type.scale in (None, 6)
+            and right_type.scale in (None, 6)
+            and left_type.timezone == right_type.timezone
         ):
             return self.lookup_keys(left, right)
+        # Attaching UTC to a naive endpoint can exceed ICU's conversion range.
+        # Mixed declarations use exact timestamp parts, as nanosecond pairs do.
         return None
 
     def reverse_time_key(self, value: ir.TimestampValue) -> ir.Value:

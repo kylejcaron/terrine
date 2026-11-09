@@ -6,6 +6,7 @@ from decimal import Decimal
 from fractions import Fraction
 
 import ibis
+import pyarrow as pa
 import pytest
 
 from terrine.backends.numeric import exact_literal
@@ -37,6 +38,88 @@ def con():
         yield connection
     finally:
         connection.disconnect()
+
+
+def _timestamp_source(con, instants, amounts, *, boundary="UTC"):
+    raw = con.create_table(
+        "timestamp_edges",
+        pa.table({"user_id": ["a"] * len(amounts), "occurred_at": instants, "amount": amounts}),
+    )
+    source = BoundSource(
+        "timestamp_edges",
+        TableRef(kind="table", name="timestamp_edges"),
+        "occurred_at",
+        {"user": "user_id"},
+        {"revenue": "amount"},
+        {},
+        (),
+        "duckdb",
+        boundary,
+    )
+    events = normalize_events(raw, source, "user_id")
+    measure = resolve_measure(
+        events, BoundMeasure("revenue", source.name, "sum", (), None, None), source=source
+    )
+    return measure, (events, source)
+
+
+@pytest.mark.parametrize("boundary,minutes", [("UTC", 0), ("UTC+05:30", 330), ("UTC-05:00", -300)])
+def test_local_day_batch_preserves_nanosecond_midnight_edges(con, boundary, minutes):
+    # A negative fractional microsecond must stay in its original local day.
+    t0 = datetime(1970, 1, 1, tzinfo=UTC) - timedelta(minutes=minutes)
+    midnight_ns = -minutes * 60 * 10**9
+    instants = pa.array([midnight_ns - 1, midnight_ns, midnight_ns + 1], pa.int64()).cast(
+        pa.timestamp("ns")
+    )
+    pair = _timestamp_source(con, instants, [1, 2, 4], boundary=boundary)
+    count = (replace(pair[0], aggregation="count"), pair[1])
+    readiness = Readiness(
+        {"timestamp_edges": BoundCoverage(t0 - timedelta(days=2), t0 + timedelta(days=2))}
+    )
+    for resolution in ("event", "day"):
+        result = _batch(
+            _anchors(con, time=t0.isoformat()),
+            [
+                ("before_sum", [pair], Window("-1d", 0), "mean"),
+                ("before_count", [count], Window("-1d", 0), "mean"),
+                ("after_sum", [pair], Window(0, "1d"), "mean"),
+                ("after_count", [count], Window(0, "1d"), "mean"),
+            ],
+            readiness=readiness,
+            boundary=boundary,
+            resolution=resolution,
+        )
+        (row,) = _rows(con, result)
+        assert tuple(row[name] for name in result.columns) == (Decimal(1), 1, Decimal(6), 2), (
+            resolution
+        )
+        assert (row["unit"], row["anchor_id"], row["t0"]) == ("a", "0", t0)
+        for meta in result.columns.values():
+            assert row[meta.reason_column] is None
+            assert row[meta.complete_column] is True
+
+
+def test_local_day_batch_ignores_unused_event_on_final_supported_day(con):
+    # DuckDB's finite TIMESTAMP endpoint exceeds Python's datetime domain.
+    requested = datetime(2025, 1, 2, 12, tzinfo=UTC)
+    requested_us = (requested - datetime(1970, 1, 1, tzinfo=UTC)) // timedelta(microseconds=1)
+    instants = pa.array([requested_us, 2**63 - 2], pa.int64()).cast(pa.timestamp("us"))
+    pair = _timestamp_source(con, instants, [3, 100])
+    count = (replace(pair[0], aggregation="count"), pair[1])
+    for resolution in ("event", "day"):
+        result = _batch(
+            _anchors(con),
+            [
+                ("sum", [pair], Window(0, "1d"), "mean"),
+                ("count", [count], Window(0, "1d"), "mean"),
+            ],
+            resolution=resolution,
+        )
+        (row,) = _rows(con, result)
+        assert (row["sum"], row["count"]) == (Decimal(3), 1)
+        for meta in result.columns.values():
+            assert row[meta.reason_column] is None
+            assert row[meta.complete_column] is True
 
 
 @pytest.mark.parametrize("resolution", ["event", "day"])
