@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from types import MappingProxyType
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from terrine.data import BoundCoverage
 from terrine.runtime.leases import _INVALID_NAMESPACE, Lease, LeaseStore
@@ -21,6 +21,9 @@ __all__ = [
     "SourceSnapshot",
     "snapshot_manifest_reference",
 ]
+
+if TYPE_CHECKING:
+    from terrine.runtime.planner import RefreshPlan
 
 
 @dataclass(frozen=True, slots=True)
@@ -343,21 +346,61 @@ class RuntimeStore:
         ).fetchall()
         return tuple((kind, reference) for kind, reference in rows)
 
-    def release_terminal_run_snapshot_references(self, *, _in_transaction: bool = False) -> None:
+    def _snapshot_pinned_runs(self) -> dict[str, tuple[str, str, list[tuple[str, str]]]]:
+        references = {}
+        for snapshot_id, reference in self.con.execute(
+            f"SELECT snapshot_id,reference FROM {self._schema}.runtime_snapshot_references "
+            "WHERE kind='active_run'"
+        ).fetchall():
+            try:
+                run_id, _fence = json.loads(reference)
+            except (TypeError, ValueError):
+                run_id = reference
+            if isinstance(run_id, str):
+                references.setdefault(run_id, []).append((snapshot_id, reference))
+        if not references:
+            return {}
+        parameters = ",".join("?" for _ in references)
+        return {
+            run_id: (state, fingerprint, references[run_id])
+            for run_id, state, fingerprint in self.con.execute(
+                f"SELECT run_id,state,fingerprint FROM {self._schema}.runtime_runs "
+                f"WHERE run_id IN ({parameters})",
+                list(references),
+            ).fetchall()
+        }
+
+    def release_terminal_run_snapshot_references(
+        self,
+        *,
+        _in_transaction: bool = False,
+        _plan_identities: Mapping[str, tuple[RefreshPlan, int | None]] | None = None,
+    ) -> None:
         """Release terminal pins, retaining failures unless exact identity forbids retry."""
+        pinned = self._snapshot_pinned_runs()
+        if not pinned:
+            return
         from terrine.errors import TerrineError
         from terrine.runtime.planner import admit_execution
-        from terrine.runtime.saved_plan import _stored_plan_identity
+        from terrine.runtime.saved_plan import _stored_plan_identities
 
-        terminal = set()
-        for run_id, state, fingerprint in self.con.execute(
-            f"SELECT run_id,state,fingerprint FROM {self._schema}.runtime_runs "
-            "WHERE state IN ('succeeded', 'cancelled', 'failed')"
-        ).fetchall():
+        identities = (
+            _stored_plan_identities(
+                self.con,
+                schema=self._schema,
+                namespace=self.namespace,
+                fingerprints={
+                    fingerprint
+                    for state, fingerprint, _references in pinned.values()
+                    if state == "failed"
+                },
+            )
+            if _plan_identities is None
+            else _plan_identities
+        )
+        for state, fingerprint, references in pinned.values():
             if state == "failed":
-                identity = _stored_plan_identity(
-                    self.con, schema=self._schema, namespace=self.namespace, fingerprint=fingerprint
-                )
+                identity = identities.get(fingerprint)
                 if identity is None:
                     continue
                 plan, saved_version = identity
@@ -372,19 +415,9 @@ class RuntimeStore:
                     continue
                 else:
                     continue
-            terminal.add(run_id)
-        if not terminal:
-            return
-        references = self.con.execute(
-            f"SELECT snapshot_id, reference FROM {self._schema}.runtime_snapshot_references "
-            "WHERE kind='active_run'"
-        ).fetchall()
-        for snapshot_id, reference in references:
-            try:
-                run_id, _fence = json.loads(reference)
-            except (TypeError, ValueError):
-                run_id = reference
-            if run_id in terminal:
+            elif state not in {"succeeded", "cancelled"}:
+                continue
+            for snapshot_id, reference in references:
                 try:
                     self.unpin_snapshot(
                         snapshot_id,

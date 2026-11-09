@@ -62,6 +62,8 @@
   Recovery and snapshot collection release active-run pins for verified obsolete
   execution identities, while missing identity, invalid publication evidence
   and ordinary retryable failures retain their input snapshots.
+  Cleanup ignores unpinned failed history and shares one invocation-local
+  stored-identity pass with startup recovery.
 - Python 3.12 is the minimum supported version; CPython 3.12, 3.13 and 3.14
   are supported.
 - Float sums and means use native arithmetic unless `exact=True`.

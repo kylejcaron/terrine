@@ -217,32 +217,45 @@ def _recover_interrupted_runs(con: Any, *, namespace: str, plan: RefreshPlan | N
     schema = store._schema
     with event_transaction(con, namespace=namespace):
         stale = con.execute(
-            f"SELECT r.run_id,r.state,r.attempt_fence,r.fingerprint FROM {schema}.runtime_runs r "
+            f"SELECT r.run_id,r.state,r.attempt_fence,r.fingerprint,p.dataset,p.generation "
+            f"FROM {schema}.runtime_runs r "
             f"LEFT JOIN {schema}.runtime_leases l ON l.resource='dataset:' || r.dataset "
             "AND l.owner=r.run_id AND l.fence=r.attempt_fence "
+            f"LEFT JOIN {schema}.runtime_run_publications p ON p.run_id=r.run_id "
             "WHERE r.state IN ('queued','running','cancel_requested') "
             "AND (r.state<>'queued' OR "
             "(r.attempt_fence IS NOT NULL AND r.updated_at IS NOT NULL)) "
             "AND (l.resource IS NULL OR l.expires_at<=(current_timestamp AT TIME ZONE 'UTC')) "
             "ORDER BY r.run_id"
         ).fetchall()
-        for run_id, old_state, fence, fingerprint in stale:
-            publication = con.execute(
-                f"SELECT dataset,generation FROM {schema}.runtime_run_publications WHERE run_id=?",
-                [run_id],
-            ).fetchone()
+        if not stale:
+            return
+        from terrine.runtime.execute import _verify_generation
+        from terrine.runtime.planner import admit_execution
+        from terrine.runtime.saved_plan import _stored_plan_identities
+
+        stale_ids = {run_id for run_id, *_rest in stale}
+        fingerprints = {
+            fingerprint
+            for _run_id, _state, _fence, fingerprint, dataset, _generation in stale
+            if dataset is not None
+        }
+        fingerprints.update(
+            fingerprint
+            for run_id, (state, fingerprint, _references) in store._snapshot_pinned_runs().items()
+            if state == "failed" or (run_id in stale_ids and state != "cancel_requested")
+        )
+        identities = _stored_plan_identities(
+            con, schema=schema, namespace=namespace, fingerprints=fingerprints
+        )
+        for run_id, old_state, fence, fingerprint, dataset, published_generation in stale:
+            publication = (dataset, published_generation) if dataset is not None else None
             publication_error = None
             if publication is not None:
-                from terrine.runtime.execute import _verify_generation
-                from terrine.runtime.planner import admit_execution
-                from terrine.runtime.saved_plan import _stored_plan_identity
-
                 identity = (
                     (plan, None)
                     if plan is not None and plan.definition.fingerprint == fingerprint
-                    else _stored_plan_identity(
-                        con, schema=schema, namespace=namespace, fingerprint=fingerprint
-                    )
+                    else identities.get(fingerprint)
                 )
                 try:
                     if identity is None:
@@ -309,5 +322,6 @@ def _recover_interrupted_runs(con: Any, *, namespace: str, plan: RefreshPlan | N
                     namespace=namespace,
                     _in_transaction=True,
                 )
-        if stale:
-            store.release_terminal_run_snapshot_references(_in_transaction=True)
+        store.release_terminal_run_snapshot_references(
+            _in_transaction=True, _plan_identities=identities
+        )

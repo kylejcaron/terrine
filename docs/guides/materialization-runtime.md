@@ -246,6 +246,9 @@ admissible. Missing identity or invalid publication evidence alone does not
 authorize release. Snapshot collection also reconciles obsolete failed-run
 pins left by earlier owners; saved-plan and current-publication references
 still protect the inputs until separately released or superseded.
+Only runs still owning active snapshot references need cleanup identity checks;
+each recovery or collection invocation resolves its required fingerprints in a
+single stored-plan pass, without retaining an identity cache between invocations.
 
 Run-state transitions distinguish recoverable failure from terminal results. A `failed` run may retry only after acquiring a newer lease fencing token; an expired writer cannot resume or publish. `succeeded` and `cancelled` runs are terminal and never regress.
 

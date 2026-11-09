@@ -336,10 +336,13 @@ def _bind_saved_plan(saved_plan: SavedPlan, *, namespace: str) -> RefreshPlan:
     )
 
 
-def _stored_plan_identity(
-    con: Any, *, schema: str, namespace: str, fingerprint: str
-) -> tuple[RefreshPlan, int | None] | None:
-    """Restore exact checksummed identity without granting execution admission."""
+def _stored_plan_identities(
+    con: Any, *, schema: str, namespace: str, fingerprints: set[str]
+) -> dict[str, tuple[RefreshPlan, int | None]]:
+    """Restore requested checksummed identities in one metadata pass."""
+    identities = {}
+    if not fingerprints:
+        return identities
     for payload, invocation in con.execute(
         f"SELECT invocation_json,TRUE FROM {schema}.runtime_plan_invocations "
         f"UNION ALL SELECT recipe_json,FALSE FROM {schema}.runtime_dataset_requests"
@@ -359,9 +362,12 @@ def _stored_plan_identity(
                 saved_version = saved.schema_version
         except (KeyError, TypeError, ValueError, TerrineError):
             continue
-        if bound.definition.fingerprint == fingerprint:
-            return bound, saved_version
-    return None
+        fingerprint = bound.definition.fingerprint
+        if fingerprint in fingerprints and fingerprint not in identities:
+            identities[fingerprint] = bound, saved_version
+            if len(identities) == len(fingerprints):
+                break
+    return identities
 
 
 def resolve_plan(
