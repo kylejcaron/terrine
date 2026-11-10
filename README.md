@@ -1,7 +1,7 @@
 # terrine
 
 > [!WARNING]
-> Terrine is experimental. This is an early alpha (0.1.0a1): the API can change between releases without a
+> Terrine is experimental. This is an early alpha (0.1.0a2): the API can change between releases without a
 > deprecation period, it has not been used in production, and some backends and dataset shapes are still being
 > verified. Each change is listed in the [changelog](https://github.com/kylejcaron/terrine/blob/main/CHANGELOG.md).
 
