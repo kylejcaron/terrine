@@ -630,7 +630,7 @@ SQL is still large, so this demonstrates shared lowering and correct execution,
 not an end-to-end speedup. Retained staging and correction use the same compiler;
 no-change refresh reuses only a verified current-revision generation.
 
-The separate [matched literal-SQL comparison](../research/2026-11-09-compact-generated-sql.md)
+The separate [archived matched literal-SQL comparison](https://github.com/kylejcaron/terrine/blob/771e9d55ba62bca5b6d512f9109e598a32a0e9cd/docs/research/2026-11-09-compact-generated-sql.md)
 measures five unprofiled repeats at 10,000 units/300,000 events. Its wide query
 median is 1.839× the literal query with identical typed modeling/quality output,
 while the richer public call is 30.013×. README/scaled queries still exceed the

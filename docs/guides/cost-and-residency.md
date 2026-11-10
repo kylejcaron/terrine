@@ -126,7 +126,7 @@ That historical run measured README SQL at 19,663 characters and the BigQuery
 
 ### Current bounded comparison (2026-11-09)
 
-The [compact generated SQL report](../research/2026-11-09-compact-generated-sql.md)
+The [archived compact generated SQL report](https://github.com/kylejcaron/terrine/blob/771e9d55ba62bca5b6d512f9109e598a32a0e9cd/docs/research/2026-11-09-compact-generated-sql.md)
 preserves the same literal inputs, schemas and quality columns for a separate
 five-repeat SQL-to-Arrow comparator, not the historical fastest-of-seven CTAS
 method above. At production `24e0573`, one-thread DuckDB query/literal median

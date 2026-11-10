@@ -492,7 +492,7 @@ PostgreSQL rounds in unconstrained `NUMERIC` at scale 9, so a conversion
 that rounds an admitted boundary input up to $10^{29}$ cannot overflow an
 intermediate fixed-precision cast.
 
-The [2026-11-09 final integration evidence](../research/2026-11-09-compact-generated-sql.md#preserved-semantics-and-verification)
+The [archived 2026-11-09 final integration evidence](https://github.com/kylejcaron/terrine/blob/771e9d55ba62bca5b6d512f9109e598a32a0e9cd/docs/research/2026-11-09-compact-generated-sql.md#preserved-semantics-and-verification)
 exercised PostgreSQL 16.15 timestamp parts and shifted comparisons, counts/sums,
 averages/ratios, distinct strings/dates/Booleans and conformance on a throwaway
 local server, plus forced-portable timestamp/numeric/conformance probes. An
