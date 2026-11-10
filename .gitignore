@@ -16,6 +16,7 @@ build/
 *.egg-info/
 .superpowers/
 docs/superpowers/
+docs/research/
 .worktrees/
 
 # Local mutation campaigns

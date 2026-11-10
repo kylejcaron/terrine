@@ -63,7 +63,7 @@ ordinary materialization. Run the same driver and fixture against both commits
 for end-to-end ratios. Prototype timings are not a public-Frame baseline.
 
 Integrated results and the pathway/compatibility ledger:
-[local window aggregation](../docs/research/2026-11-09-local-window-aggregation.md).
+[local window aggregation](https://github.com/kylejcaron/terrine/blob/771e9d55ba62bca5b6d512f9109e598a32a0e9cd/docs/research/2026-11-09-local-window-aggregation.md).
 
 ## Inputs, references and bounds
 
@@ -170,7 +170,7 @@ hashes the comparator, imported benchmark helpers (including `run_overhead.py`),
 fixture and production sources. Keep the comparator and helper revisions
 frozen across milestone comparisons; record production revisions separately.
 
-The [2026-11-09 compact-SQL report](../docs/research/2026-11-09-compact-generated-sql.md)
+The [archived 2026-11-09 compact-SQL report](https://github.com/kylejcaron/terrine/blob/771e9d55ba62bca5b6d512f9109e598a32a0e9cd/docs/research/2026-11-09-compact-generated-sql.md)
 and [combined final manifest](results/compact-sql-continuation-final-20261109.json)
 bind the reused five-repeat, unprofiled results at production `24e0573`, all
 prior milestones and the unchanged v2 baseline. Matched query/literal medians

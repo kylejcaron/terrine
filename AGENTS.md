@@ -61,6 +61,12 @@ Reached schedules and deadlines use notify.* for the current owner, or the autho
 
 # Contributor guidelines
 
+## Repository content
+
+- Keep exploratory research reports and agent plans/specifications on working
+  branches, not `main`. Never force-add ignored research or planning files to a
+  change intended for `main`.
+
 ## Development commands
 
 - `uv sync --extra duckdb --extra pandas --extra polars` installs the local
