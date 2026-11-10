@@ -1,0 +1,39 @@
+{
+  "production_revision": "24e057377953b11828035a20bfe44e1b3805f058",
+  "commands": [
+    {
+      "command": "make check TESTS=\"tests/backends/test_timestamps.py tests/temporal tests/compile tests/test_frame.py tests/test_frame_runtime.py integration/temporal integration/compile integration/test_frame.py integration/backends integration/execution integration/conformance integration/state_panels integration/warehouse_execution/test_saved_plan_restart.py::test_state_panel_consumes_frozen_snapshot_and_scheduled_anchors integration/warehouse_execution/test_saved_plan_restart.py::test_state_panel_composition_matches_full_rebuild tests/semantic/test_from_tables.py::test_readme_model_builds_the_readme_rows\"",
+      "exit": 0,
+      "result": "907 passed,1 skipped,71 deselected,3449 warnings in238.86s; all static gates pass; run exactly once"
+    },
+    {
+      "command": "uv run pytest integration/test_cost_budget.py -m scale -k 'characters or readme or bigquery'",
+      "exit": 0,
+      "result": "8 passed,16 deselected,2 xfailed,28 warnings in10.77s"
+    },
+    {
+      "command": "uv run pytest integration/conformance --generic-dialect",
+      "exit": 0,
+      "result": "16 passed,45 deselected,69 warnings in4.74s"
+    },
+    {
+      "command": "env UV_NO_SYNC=1 PYTHONPATH=/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql uv run python benchmarks/results/compact-sql-continuation-verification-20261109/public-smokes.py.txt",
+      "exit": 0,
+      "result": "Installed1.5.6:dailyus/ns4rows each; state20krows/20columns exactpublicschema/values/support/ColumnMeta/invariantprovenance/reference/4controls allpass; first3diagnosticattempts preserved separately"
+    },
+    {
+      "command": "make check TESTS=\"tests/test_documentation.py\" && uv run --group docs python -m tests.documentation --build",
+      "exit": 0,
+      "result": "All static gates passed;6 documentation tests passed in1.05s; strict docs build no output; command wall6.88s"
+    }
+  ],
+  "postgres_evidence": "postgres-checks.json (exact commands/stdout/stderr/exits; native18passed1skipped,portable37passed,actualpublicdaily4rows,stop0)",
+  "floor_evidence": "duckdb-floor.json (exact overlay command/stdout/stderr/exit;11passedplusactualpublicsmokes); installed-version.json confirms1.5.6unchanged",
+  "budgets": {
+    "readme_private_consumer": 19520,
+    "bigquery_metadata_consumer": 514334,
+    "state_private_consumer": 18525
+  },
+  "benchmark_execution": "No fresh timings. Reused independently captured exact24e threecase/fivesample unprofiled milestone; validated155current source hashes/case +literal/input/schema/allcontrols/trials.",
+  "cloud": "Live unrun/unauthorized; BigQuery metadata compilation only; both parity matrices preserved."
+}

@@ -1,0 +1,60 @@
+{
+  "anchors_per_unit": 21,
+  "build_seconds": {
+    "current": 1.8631212078034878,
+    "direct": 0.0856894999742508,
+    "local_day": 1.786080416990444,
+    "local_raw": 1.592646999983117
+  },
+  "case": "duckdb-integer-anchors21",
+  "comparison_reference": "direct",
+  "events": 300000,
+  "full_frame_materialization_seconds": null,
+  "joined_rows_including_empty": 1976690,
+  "matched_events": 1976690,
+  "oracle_values_checked": 1050000,
+  "output_rows": 21000,
+  "outputs": 50,
+  "same_values_and_metadata": true,
+  "units": 1000,
+  "variants": {
+    "local_day": {
+      "compact_sql_chars": 167322,
+      "compile_seconds": 1.2011246250476688,
+      "formatted_sql_chars": 237140,
+      "output_arrow_bytes": 31414597,
+      "server_median_seconds": 0.5895865838974714,
+      "server_seconds": [
+        0.5895865838974714,
+        0.5484822909347713,
+        0.7186806248500943
+      ],
+      "submitted_sql_chars": 167322,
+      "validation_to_arrow_median_seconds": 3.758541125105694,
+      "validation_to_arrow_seconds": [
+        3.8293816670775414,
+        3.758541125105694,
+        3.440968583105132
+      ]
+    },
+    "local_raw": {
+      "compact_sql_chars": 163071,
+      "compile_seconds": 0.634383250027895,
+      "formatted_sql_chars": 240553,
+      "output_arrow_bytes": 31414597,
+      "server_median_seconds": 3.7837742078118026,
+      "server_seconds": [
+        3.590394957922399,
+        3.7837742078118026,
+        4.6760968749877065
+      ],
+      "submitted_sql_chars": 163071,
+      "validation_to_arrow_median_seconds": 9.66965475003235,
+      "validation_to_arrow_seconds": [
+        9.66965475003235,
+        9.966410750057548,
+        9.143262624973431
+      ]
+    }
+  }
+}

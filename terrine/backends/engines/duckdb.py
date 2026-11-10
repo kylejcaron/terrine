@@ -1,5 +1,6 @@
 """DuckDB expression types and native identity admission."""
 
+from datetime import UTC, datetime, timedelta
 from importlib.metadata import version
 from typing import Any, cast
 
@@ -115,6 +116,8 @@ def _timestamp_isfinite(value) -> bool:
 class DuckDBDialect(Dialect):
     __slots__ = ()
     bounds_accumulations = False
+    # Value coefficients use BIGNUM; counts remain bounded native integers.
+    _unbounded_coefficients = True
     # Binary64 arithmetic follows IEEE 754: overflow yields an infinity and a
     # quotient underflows to zero, so results are checked finite after the fact.
     bounds_float_arithmetic = False
@@ -327,6 +330,35 @@ class DuckDBDialect(Dialect):
         # Attaching UTC to a naive endpoint can exceed ICU's conversion range.
         # Mixed declarations use exact timestamp parts, as nanosecond pairs do.
         return None
+
+    def native_shifted_comparison_keys(
+        self,
+        left: ir.TimestampValue,
+        right: ir.TimestampValue,
+        *,
+        offset_seconds: int,
+        right_bounds: tuple[datetime, datetime],
+    ) -> tuple[ir.Value, ir.Value] | None:
+        """UTC microseconds plus representable elapsed seconds within host bounds."""
+        if any(
+            not isinstance(dtype, dt.Timestamp)
+            or dtype.timezone != "UTC"
+            or dtype.scale not in (None, 6)
+            for dtype in (left.type(), right.type())
+        ):
+            return None
+        if not -(2**63) <= offset_seconds * 10**6 <= 2**63 - 1:
+            return None
+        try:
+            shift = timedelta(seconds=offset_seconds)
+            for bound in right_bounds:
+                if bound.tzinfo is None or bound.utcoffset() is None:
+                    return None
+                # UTC conversion and addition both check the conservative year range.
+                bound.astimezone(UTC) + shift
+        except OverflowError:
+            return None
+        return left, right + ibis.interval(seconds=offset_seconds)
 
     def reverse_time_key(self, value: ir.TimestampValue) -> ir.Value:
         key = self.timestamp_order_key(value)

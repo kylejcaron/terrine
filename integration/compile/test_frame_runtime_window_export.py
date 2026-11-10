@@ -145,11 +145,15 @@ def test_first_refusal_follows_registration_order_across_check_kinds(con, order)
     spend = agg("spend", window=("-1d", "0s"))
     distinct = agg("web_distinct", window=("-1d", "0s"))
     features = (
-        {"b_spend": spend, "c_distinct": distinct}
+        {"b_spend": spend, "c_spend_alias": spend, "d_distinct": distinct}
         if order == "metric_first"
-        else {"b_distinct": distinct, "c_spend": spend}
+        else {"b_distinct": distinct, "c_spend": spend, "d_spend_alias": spend}
     )
-    features = {"a_empty": agg("spend", window=("-2d", "-1d")), **features}
+    features = {
+        "a_unavailable": agg("spend", window=("-40d", "0s")),
+        "a_empty": agg("spend", window=("-2d", "-1d")),
+        **features,
+    }
     error = _refusal(Design("user", FixedDate("2025-01-02"), features=features), model)
     assert error.code == (
         "terrine.temporal.float64_precision"
@@ -157,6 +161,8 @@ def test_first_refusal_follows_registration_order_across_check_kinds(con, order)
         else "terrine.filter.unknown"
     )
     assert error.context["failed_count"] == 1
+    assert error.context["source"] == "orders"
+    assert error.context["measure"] == ("amount" if order == "metric_first" else "qty")
 
 
 @pytest.mark.parametrize(

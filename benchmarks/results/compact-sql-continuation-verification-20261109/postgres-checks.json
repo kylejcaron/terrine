@@ -1,0 +1,38 @@
+{
+  "start": {
+    "command": "uv run python -m tests.integration.postgres_scratch start",
+    "exit": 0,
+    "stdout": "export TERRINE_TEST_POSTGRES_HOST='127.0.0.1'\nexport TERRINE_TEST_POSTGRES_PORT='57203'\nexport TERRINE_TEST_POSTGRES_USER='postgres'\nexport TERRINE_TEST_POSTGRES_PASSWORD=''\nexport TERRINE_TEST_POSTGRES_DB='terrine_test'\n",
+    "stderr": ""
+  },
+  "version": {
+    "command": "uv run --extra postgres python -c 'from integration.warehouse_execution.postgres_fixtures import connect_postgres; c=connect_postgres(); q=c.raw_sql(\"select version()\"); print(q.fetchone()[0]); q.close(); c.disconnect()'",
+    "exit": 0,
+    "stdout": "PostgreSQL 16.15 (Homebrew) on aarch64-apple-darwin24.6.0, compiled by Apple clang version 17.0.0 (clang-1700.6.4.2), 64-bit\n",
+    "stderr": ""
+  },
+  "native": {
+    "command": "uv run --extra duckdb --extra postgres pytest -m postgres integration/warehouse_execution/test_postgres_timestamps.py::test_parts_and_comparisons_match_the_reference integration/warehouse_execution/test_postgres_windows.py::test_counts_and_sums_match_duckdb integration/warehouse_execution/test_postgres_windows.py::test_averages_and_ratios_match_duckdb_within_tolerance integration/temporal/test_aggregate.py::test_count_distinct_strings_dates_and_booleans_on_postgres integration/conformance/test_engines.py",
+    "exit": 0,
+    "stdout": "============================= test session starts ==============================\nplatform darwin -- Python 3.12.11, pytest-8.4.2, pluggy-1.7.0\nrootdir: /Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql\nconfigfile: pyproject.toml\nplugins: tach-0.35.3, hypothesis-6.170.1, xdist-3.8.0, split-0.11.0, platformdirs-4.13.4, anyio-4.15.1\ncollected 65 items / 46 deselected / 19 selected\n\nintegration/warehouse_execution/test_postgres_timestamps.py .            [  5%]\nintegration/warehouse_execution/test_postgres_windows.py ..              [ 15%]\nintegration/temporal/test_aggregate.py .                                 [ 21%]\nintegration/conformance/test_engines.py ......s........                  [100%]\n\n=============================== warnings summary ===============================\nintegration/warehouse_execution/test_postgres_windows.py::test_counts_and_sums_match_duckdb\nintegration/warehouse_execution/test_postgres_windows.py::test_counts_and_sums_match_duckdb\nintegration/warehouse_execution/test_postgres_windows.py::test_counts_and_sums_match_duckdb\nintegration/warehouse_execution/test_postgres_windows.py::test_counts_and_sums_match_duckdb\nintegration/warehouse_execution/test_postgres_windows.py::test_averages_and_ratios_match_duckdb_within_tolerance\nintegration/warehouse_execution/test_postgres_windows.py::test_averages_and_ratios_match_duckdb_within_tolerance\nintegration/warehouse_execution/test_postgres_windows.py::test_averages_and_ratios_match_duckdb_within_tolerance\nintegration/warehouse_execution/test_postgres_windows.py::test_averages_and_ratios_match_duckdb_within_tolerance\n  /Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/.venv/lib/python3.12/site-packages/ibis/backends/duckdb/__init__.py:332: DeprecationWarning: fetch_arrow_table() is deprecated, use to_arrow_table() instead.\n    meta = result.fetch_arrow_table()\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n============================== slowest durations ===============================\n\n(57 durations < 5s hidden.)\n=========================== short test summary info ============================\nSKIPPED [1] integration/conformance/test_engines.py:259: The native coefficient domain admits this sum.\n========== 18 passed, 1 skipped, 46 deselected, 8 warnings in 14.74s ===========\n",
+    "stderr": ""
+  },
+  "generic": {
+    "command": "uv run --extra duckdb --extra postgres pytest -m postgres --generic-dialect integration/backends/test_generic.py integration/conformance/test_engines.py",
+    "exit": 0,
+    "stdout": "============================= test session starts ==============================\nplatform darwin -- Python 3.12.11, pytest-8.4.2, pluggy-1.7.0\nrootdir: /Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql\nconfigfile: pyproject.toml\nplugins: tach-0.35.3, hypothesis-6.170.1, xdist-3.8.0, split-0.11.0, platformdirs-4.13.4, anyio-4.15.1\ncollected 105 items / 68 deselected / 37 selected\n\nintegration/backends/test_generic.py ......................              [ 59%]\nintegration/conformance/test_engines.py ...............                  [100%]\n\n============================== slowest durations ===============================\n\n(111 durations < 5s hidden.)\n====================== 37 passed, 68 deselected in 21.97s ======================\n",
+    "stderr": ""
+  },
+  "public_daily": {
+    "command": "uv run python benchmarks/results/compact-sql-continuation-verification-20261109/public-smokes.py.txt --postgres",
+    "exit": 0,
+    "stdout": "{\n  \"duckdb\": \"1.5.6\",\n  \"ibis\": \"12.0.0\",\n  \"module\": \"/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/terrine/__init__.py\",\n  \"postgres-us\": {\n    \"boundary\": \"half-open two-day schedule; naive source, pre-epoch lower/upper/adjacent ticks; NY caller session unchanged\",\n    \"source_unit\": \"us\",\n    \"strategies\": {\n      \"counted\": \"local_day/exact\",\n      \"total\": \"local_day/exact\"\n    },\n    \"public\": {\n      \"rows\": 4,\n      \"schema\": \"unit: string\\nanchor_id: string\\nt0: timestamp[us, tz=UTC]\\ncounted: int64\\ncounted__complete: bool\\ncounted__reason: string\\ntotal: decimal128(38, 2)\\ntotal__complete: bool\\ntotal__reason: string\\n_observed_from: timestamp[us, tz=UTC]\\n_observed_until: timestamp[us, tz=UTC]\\nanchor_provenance: string\\n__terrine_value_0_observed_from: timestamp[us, tz=UTC]\\n__terrine_value_0_observed_until: timestamp[us, tz=UTC]\\n__terrine_value_1_observed_from: timestamp[us, tz=UTC]\\n__terrine_value_1_observed_until: timestamp[us, tz=UTC]\",\n      \"arrow_stream_sha256\": \"9f4fbd7715599b08e44acaaf87d00924c7285f05873b077c3e5aa3fc3950c806\"\n    },\n    \"rows\": \"[{'unit': 'a', 'counted': 2, 'total': Decimal('5.00'), 'counted__complete': True, 'total__complete': True, 'counted__reason': None, 'total__reason': None}, {'unit': 'a', 'counted': 2, 'total': Decimal('9.00'), 'counted__complete': True, 'total__complete': True, 'counted__reason': None, 'total__reason': None}, {'unit': 'empty', 'counted': 0, 'total': Decimal('0.00'), 'counted__complete': True, 'total__complete': True, 'counted__reason': None, 'total__reason': None}, {'unit': 'empty', 'counted': 0, 'total': Decimal('0.00'), 'counted__complete': True, 'total__complete': True, 'counted__reason': None, 'total__reason': None}]\"\n  }\n}\n",
+    "stderr": ""
+  },
+  "stop": {
+    "command": "uv run python -m tests.integration.postgres_scratch stop",
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  }
+}

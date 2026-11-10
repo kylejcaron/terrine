@@ -1,0 +1,19 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.11, pytest-8.4.2, pluggy-1.7.0
+rootdir: /Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql
+configfile: pyproject.toml
+plugins: tach-0.35.3, hypothesis-6.170.1, xdist-3.8.0, split-0.11.0, platformdirs-4.13.4, anyio-4.15.1
+collected 61 items / 45 deselected / 16 selected
+
+integration/conformance/test_engines.py ................                 [100%]
+
+=============================== warnings summary ===============================
+integration/conformance/test_engines.py: 69 warnings
+  /Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/.venv/lib/python3.12/site-packages/ibis/backends/duckdb/__init__.py:332: DeprecationWarning: fetch_arrow_table() is deprecated, use to_arrow_table() instead.
+    meta = result.fetch_arrow_table()
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================== slowest durations ===============================
+
+(48 durations < 5s hidden.)
+================ 16 passed, 45 deselected, 69 warnings in 5.71s ================

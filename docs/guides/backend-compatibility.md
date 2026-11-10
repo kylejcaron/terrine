@@ -206,6 +206,11 @@ intervals that rebuild the instant at microsecond resolution at best;
 microsecond and unscaled values convert exactly, and signed sub-second parts
 keep nanosecond support.
 
+Unshifted portable timestamp comparisons use integer rank/second/remainder
+parts when native ordering is unavailable; they do not introduce a decimal
+coordinate merely to compare two instants. String as-of reads therefore keep
+timestamp admission without acquiring an unrelated `exact_state` witness.
+
 ### Shared numerical contract
 
 Float measures have two arithmetic modes, chosen per metric declaration
@@ -486,6 +491,17 @@ empty sum remains zero.
 PostgreSQL rounds in unconstrained `NUMERIC` at scale 9, so a conversion
 that rounds an admitted boundary input up to $10^{29}$ cannot overflow an
 intermediate fixed-precision cast.
+
+The [2026-11-09 final integration evidence](../research/2026-11-09-compact-generated-sql.md#preserved-semantics-and-verification)
+exercised PostgreSQL 16.15 timestamp parts and shifted comparisons, counts/sums,
+averages/ratios, distinct strings/dates/Booleans and conformance on a throwaway
+local server, plus forced-portable timestamp/numeric/conformance probes. An
+actual public two-day daily count/sum study also checks naive microseconds at
+pre-epoch half-open boundaries with an America/New_York caller session, whose
+timezone remains unchanged. All scratch servers are torn down.
+This is correctness evidence, not a new PostgreSQL performance result. BigQuery
+and Snowflake live parity matrices remain intact but unrun in this experiment;
+metadata-only BigQuery SQL compilation is not live warehouse parity.
 
 Refused on PostgreSQL, with a route: retained input capture, Dataset staging,
 publication and reopening (`terrine.backend.capability_unavailable`; these live

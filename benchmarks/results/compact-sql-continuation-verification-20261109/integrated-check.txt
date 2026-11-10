@@ -1,0 +1,330 @@
+uv run ruff check terrine tests integration benchmarks
+All checks passed!
+uv run vulture terrine
+# Isolated: pydoclint's docstring-parser-fork and dagster's docstring-parser
+# install the same module and would overwrite each other.
+uv run --isolated --no-project --with pydoclint==0.11.1 pydoclint terrine
+Skipping files that match this pattern: \.git|\.tox
+terrine/__init__.py
+terrine/_refusal_codes.py
+terrine/_time.py
+terrine/adapters/__init__.py
+terrine/adapters/increment.py
+terrine/adapters/opentelemetry.py
+terrine/agent/__init__.py
+terrine/agent/definitions.py
+terrine/agent/design_schema.py
+terrine/agent/policy.py
+terrine/agent/schemas.py
+terrine/agent/tools.py
+terrine/backends/__init__.py
+terrine/backends/capabilities.py
+terrine/backends/dialect.py
+terrine/backends/engines/__init__.py
+terrine/backends/engines/bigquery.py
+terrine/backends/engines/duckdb.py
+terrine/backends/engines/postgres.py
+terrine/backends/engines/snowflake.py
+terrine/backends/extrema.py
+terrine/backends/joins.py
+terrine/backends/numeric.py
+terrine/backends/registry.py
+terrine/backends/sequences.py
+terrine/backends/timestamps.py
+terrine/compile/__init__.py
+terrine/compile/_asof.py
+terrine/compile/_predicates.py
+terrine/compile/anchors.py
+terrine/compile/columns.py
+terrine/compile/cost.py
+terrine/compile/dispatch.py
+terrine/compile/layers.py
+terrine/compile/materialize.py
+terrine/compile/numeric.py
+terrine/compile/provenance.py
+terrine/compile/prune.py
+terrine/compile/ranges.py
+terrine/compile/retention.py
+terrine/compile/shapes/__init__.py
+terrine/compile/shapes/_observations.py
+terrine/compile/shapes/calendar_comparison.py
+terrine/compile/shapes/cohorts.py
+terrine/compile/shapes/event_panel.py
+terrine/compile/shapes/event_sequence.py
+terrine/compile/shapes/life_table.py
+terrine/compile/shapes/ltv.py
+terrine/compile/shapes/matched_t0.py
+terrine/compile/shapes/sequential.py
+terrine/compile/shapes/state_panel.py
+terrine/compile/shapes/time_to_event.py
+terrine/data.py
+terrine/dataset/__init__.py
+terrine/dataset/export.py
+terrine/dataset/manifest.py
+terrine/dataset/reference.py
+terrine/dataset/splits.py
+terrine/dataset/training.py
+terrine/dataset/transforms.py
+terrine/errors.py
+terrine/execution/__init__.py
+terrine/execution/_bigquery.py
+terrine/execution/_generic.py
+terrine/execution/_metadata.py
+terrine/execution/_native.py
+terrine/execution/_postgres.py
+terrine/execution/_publish.py
+terrine/execution/_snowflake.py
+terrine/execution/backend.py
+terrine/execution/gates.py
+terrine/execution/inputs.py
+terrine/export/__init__.py
+terrine/export/diff_diff.py
+terrine/export/lifelines.py
+terrine/export/preflight.py
+terrine/export/surrogate.py
+terrine/frame.py
+terrine/metrics.py
+terrine/model.py
+terrine/orchestration/__init__.py
+terrine/orchestration/airflow.py
+terrine/orchestration/dagster.py
+terrine/reasons.py
+terrine/recipes.py
+terrine/runtime/__init__.py
+terrine/runtime/api.py
+terrine/runtime/arrow.py
+terrine/runtime/backends/base.py
+terrine/runtime/backends/duckdb.py
+terrine/runtime/changes.py
+terrine/runtime/cli.py
+terrine/runtime/control.py
+terrine/runtime/cost.py
+terrine/runtime/events.py
+terrine/runtime/execute.py
+terrine/runtime/gc.py
+terrine/runtime/graph.py
+terrine/runtime/layers.py
+terrine/runtime/leases.py
+terrine/runtime/materialize.py
+terrine/runtime/owner.py
+terrine/runtime/planner.py
+terrine/runtime/planning.py
+terrine/runtime/saved_plan.py
+terrine/runtime/schema.py
+terrine/runtime/snapshot.py
+terrine/runtime/state.py
+terrine/runtime/status.py
+terrine/runtime/synchronization.py
+terrine/semantic/__init__.py
+terrine/semantic/attributes.py
+terrine/semantic/bind.py
+terrine/semantic/io.py
+terrine/semantic/models.py
+terrine/semantic/predicates.py
+terrine/semantic/rules.py
+terrine/semantic/sql.py
+terrine/semantic/time.py
+terrine/simulate/__init__.py
+terrine/simulate/generate.py
+terrine/simulate/scale.py
+terrine/simulate/world.py
+terrine/spec/__init__.py
+terrine/spec/_columns.py
+terrine/spec/anchors.py
+terrine/spec/dataset.py
+terrine/spec/describe.py
+terrine/spec/design.py
+terrine/spec/expressions.py
+terrine/spec/io.py
+terrine/spec/panels.py
+terrine/spec/sequence.py
+terrine/spec/state_panel.py
+terrine/spec/trajectory.py
+terrine/spec/transforms.py
+terrine/spec/validate.py
+terrine/temporal/__init__.py
+terrine/temporal/aggregate.py
+terrine/temporal/attributes.py
+terrine/temporal/daily.py
+terrine/temporal/first.py
+terrine/temporal/nonadditive.py
+terrine/temporal/ranges.py
+terrine/temporal/readiness.py
+terrine/temporal/retention.py
+terrine/temporal/sequence.py
+terrine/temporal/sessionize.py
+terrine/temporal/sketches.py
+terrine/windows.py
+🎉 No violations 🎉
+uv run tach check
+✅ All modules validated!
+uv run ty check terrine tests integration benchmarks
+All checks passed!
+uv run pytest -n 0 tests/backends/test_timestamps.py tests/temporal tests/compile tests/test_frame.py tests/test_frame_runtime.py integration/temporal integration/compile integration/test_frame.py integration/backends integration/execution integration/conformance integration/state_panels integration/warehouse_execution/test_saved_plan_restart.py::test_state_panel_consumes_frozen_snapshot_and_scheduled_anchors integration/warehouse_execution/test_saved_plan_restart.py::test_state_panel_composition_matches_full_rebuild tests/semantic/test_from_tables.py::test_readme_model_builds_the_readme_rows
+============================= test session starts ==============================
+platform darwin -- Python 3.12.11, pytest-8.4.2, pluggy-1.7.0
+rootdir: /Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql
+configfile: pyproject.toml
+plugins: tach-0.35.3, hypothesis-6.170.1, xdist-3.8.0, split-0.11.0, platformdirs-4.13.4, anyio-4.15.1
+collected 979 items / 71 deselected / 908 selected
+[Tach] 1 test in 8 files unaffected by changes (~0.1s could be saved). Skip with: pytest --tach
+[Tach] To disable: pytest -p no:tach (https://docs.gauge.sh/usage/commands#using-the-pytest-plugin-directly)
+
+tests/backends/test_timestamps.py ...............                        [  1%]
+tests/temporal/test_first_occurrence.py ...............                  [  3%]
+tests/temporal/test_nonadditive.py ......                                [  3%]
+tests/temporal/test_range_scaling.py ..........                          [  5%]
+tests/temporal/test_readiness.py .                                       [  5%]
+tests/temporal/test_retention.py ...........                             [  6%]
+tests/temporal/test_scd2_attributes.py ......................            [  8%]
+tests/temporal/test_semantic_binding.py ..................               [ 10%]
+tests/temporal/test_sequence.py ..........                               [ 11%]
+tests/temporal/test_sessionize.py ......                                 [ 12%]
+tests/temporal/test_sketches.py .....                                    [ 13%]
+tests/temporal/test_sparse_state.py .................................... [ 17%]
+....................                                                     [ 19%]
+tests/temporal/test_window_aggregates.py ............................... [ 22%]
+..............................................................           [ 29%]
+tests/compile/test_anchors.py .......................................... [ 34%]
+                                                                         [ 34%]
+tests/compile/test_cohorts.py .........................                  [ 36%]
+tests/compile/test_columns.py .......................................... [ 41%]
+.............................                                            [ 44%]
+tests/compile/test_completeness_columns.py .....                         [ 45%]
+tests/compile/test_cost_estimates.py .                                   [ 45%]
+tests/compile/test_event_sequence.py ..................................  [ 49%]
+tests/compile/test_ltv.py ............                                   [ 50%]
+tests/compile/test_matched_t0.py .....                                   [ 50%]
+tests/compile/test_nonadditive.py ................                       [ 52%]
+tests/compile/test_panels.py .........................                   [ 55%]
+tests/compile/test_persisted_layers.py ......................            [ 57%]
+tests/compile/test_predicates.py .........                               [ 58%]
+tests/compile/test_prune.py ..                                           [ 59%]
+tests/compile/test_range_scaling.py ............                         [ 60%]
+tests/compile/test_retention.py ....                                     [ 60%]
+tests/compile/test_state_panel.py ...................................... [ 65%]
+.............                                                            [ 66%]
+tests/compile/test_survival_bounds.py ...                                [ 66%]
+tests/compile/test_time_to_event.py ...........                          [ 68%]
+tests/compile/test_winsorization.py .......                              [ 68%]
+tests/test_frame.py ....................                                 [ 71%]
+tests/test_frame_runtime.py ...............                              [ 72%]
+integration/temporal/test_aggregate.py .                                 [ 72%]
+integration/temporal/test_retention_bands.py ....                        [ 73%]
+integration/temporal/test_window_quotient_composition.py ............... [ 74%]
+..................                                                       [ 76%]
+integration/compile/test_boolean_outputs.py ............                 [ 78%]
+integration/compile/test_column_runtime_contracts.py ...............     [ 79%]
+integration/compile/test_design_describe.py .........................    [ 82%]
+integration/compile/test_frame_runtime_window_export.py .............    [ 84%]
+integration/compile/test_ltv.py .....                                    [ 84%]
+integration/compile/test_numeric_lowering.py ..............              [ 86%]
+integration/compile/test_retention.py ..                                 [ 86%]
+integration/compile/test_time_to_event.py ........................       [ 88%]
+integration/test_frame.py ......                                         [ 89%]
+integration/backends/test_duckdb_version.py .....                        [ 90%]
+integration/backends/test_engine_registry.py .                           [ 90%]
+integration/backends/test_generic.py ......................              [ 92%]
+integration/backends/test_numeric.py ...                                 [ 93%]
+integration/execution/test_generic_provider.py ...................       [ 95%]
+integration/execution/test_native_admission.py ...                       [ 95%]
+integration/conformance/test_engines.py .......s........                 [ 97%]
+integration/state_panels/test_state_panel_workflows.py ................. [ 99%]
+..                                                                       [ 99%]
+integration/warehouse_execution/test_saved_plan_restart.py .....         [ 99%]
+tests/semantic/test_from_tables.py .                                     [100%]
+
+=============================== warnings summary ===============================
+tests/backends/test_timestamps.py: 8 warnings
+tests/temporal/test_first_occurrence.py: 24 warnings
+tests/temporal/test_range_scaling.py: 19 warnings
+tests/temporal/test_retention.py: 16 warnings
+tests/temporal/test_scd2_attributes.py: 1 warning
+tests/temporal/test_semantic_binding.py: 48 warnings
+tests/temporal/test_sessionize.py: 4 warnings
+tests/temporal/test_sparse_state.py: 81 warnings
+tests/temporal/test_window_aggregates.py: 118 warnings
+tests/compile/test_anchors.py: 191 warnings
+tests/compile/test_cohorts.py: 33 warnings
+tests/compile/test_columns.py: 145 warnings
+tests/compile/test_cost_estimates.py: 2 warnings
+tests/compile/test_event_sequence.py: 106 warnings
+tests/compile/test_ltv.py: 36 warnings
+tests/compile/test_matched_t0.py: 39 warnings
+tests/compile/test_nonadditive.py: 96 warnings
+tests/compile/test_panels.py: 150 warnings
+tests/compile/test_persisted_layers.py: 52 warnings
+tests/compile/test_prune.py: 2 warnings
+tests/compile/test_range_scaling.py: 68 warnings
+tests/compile/test_retention.py: 30 warnings
+tests/compile/test_state_panel.py: 394 warnings
+tests/compile/test_time_to_event.py: 41 warnings
+tests/compile/test_winsorization.py: 6 warnings
+tests/test_frame.py: 107 warnings
+tests/test_frame_runtime.py: 87 warnings
+integration/temporal/test_aggregate.py: 6 warnings
+integration/temporal/test_retention_bands.py: 8 warnings
+integration/temporal/test_window_quotient_composition.py: 58 warnings
+integration/compile/test_boolean_outputs.py: 29 warnings
+integration/compile/test_column_runtime_contracts.py: 71 warnings
+integration/compile/test_design_describe.py: 129 warnings
+integration/compile/test_frame_runtime_window_export.py: 113 warnings
+integration/compile/test_ltv.py: 10 warnings
+integration/compile/test_numeric_lowering.py: 103 warnings
+integration/compile/test_retention.py: 8 warnings
+integration/compile/test_time_to_event.py: 144 warnings
+integration/test_frame.py: 64 warnings
+integration/backends/test_duckdb_version.py: 50 warnings
+integration/backends/test_generic.py: 101 warnings
+integration/backends/test_numeric.py: 3 warnings
+integration/execution/test_generic_provider.py: 46 warnings
+integration/execution/test_native_admission.py: 20 warnings
+integration/conformance/test_engines.py: 63 warnings
+integration/state_panels/test_state_panel_workflows.py: 209 warnings
+integration/warehouse_execution/test_saved_plan_restart.py: 49 warnings
+tests/semantic/test_from_tables.py: 7 warnings
+  /Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/.venv/lib/python3.12/site-packages/ibis/backends/duckdb/__init__.py:332: DeprecationWarning: fetch_arrow_table() is deprecated, use to_arrow_table() instead.
+    meta = result.fetch_arrow_table()
+
+tests/backends/test_timestamps.py: 1 warning
+tests/temporal/test_first_occurrence.py: 9 warnings
+tests/temporal/test_scd2_attributes.py: 8 warnings
+tests/temporal/test_semantic_binding.py: 2 warnings
+tests/temporal/test_sparse_state.py: 4 warnings
+tests/temporal/test_window_aggregates.py: 109 warnings
+tests/compile/test_columns.py: 1 warning
+tests/compile/test_predicates.py: 1 warning
+tests/compile/test_range_scaling.py: 1 warning
+tests/compile/test_survival_bounds.py: 3 warnings
+tests/test_frame_runtime.py: 3 warnings
+integration/temporal/test_window_quotient_composition.py: 49 warnings
+integration/compile/test_column_runtime_contracts.py: 1 warning
+integration/compile/test_numeric_lowering.py: 8 warnings
+  /Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/.venv/lib/python3.12/site-packages/ibis/backends/duckdb/__init__.py:1718: DeprecationWarning: fetch_arrow_table() is deprecated, use to_arrow_table() instead.
+    rows = cur.fetch_arrow_table()
+
+tests/compile/test_nonadditive.py::test_approximate_quantile_frame_matches_type7_tolerance_and_is_reproducible
+tests/compile/test_nonadditive.py::test_approximate_quantile_frame_matches_type7_tolerance_and_is_reproducible
+tests/compile/test_nonadditive.py::test_approximate_quantile_preserves_incomplete_window_nulls
+tests/compile/test_nonadditive.py::test_approximate_quantile_populates_reused_expression_aliases
+integration/compile/test_column_runtime_contracts.py::test_approx_quantile_needs_no_sketch_settings
+  /Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/.venv/lib/python3.12/site-packages/ibis/backends/duckdb/__init__.py:1380: DeprecationWarning: fetch_record_batch() is deprecated, use to_arrow_reader() instead.
+    yield from cur.fetch_record_batch(rows_per_batch=chunk_size)
+
+tests/compile/test_state_panel.py: 38 warnings
+integration/state_panels/test_state_panel_workflows.py: 10 warnings
+  /Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/.venv/lib/python3.12/site-packages/ibis/backends/duckdb/__init__.py:901: DeprecationWarning: fetch_arrow_table() is deprecated, use to_arrow_table() instead.
+    out = self.con.execute(sql).fetch_arrow_table()
+
+tests/test_frame_runtime.py::test_strict_scan_policy_precedes_integrity_reads
+  /Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/terrine/frame.py:720: RuntimeWarning: Source scan bytes are unknown; output limits do not bound upstream scan or work.
+    return self._materialize(budget)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================== slowest durations ===============================
+5.50s call     integration/compile/test_boolean_outputs.py::test_time_split_assigns_boolean_label_by_its_window
+
+(2723 durations < 5s hidden.)
+=========================== short test summary info ============================
+SKIPPED [1] integration/conformance/test_engines.py:259: The native coefficient domain admits this sum.
+=== 907 passed, 1 skipped, 71 deselected, 3449 warnings in 238.86s (0:03:58) ===

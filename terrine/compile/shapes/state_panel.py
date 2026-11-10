@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import replace
+from datetime import UTC, date, timedelta
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
@@ -11,8 +12,9 @@ import ibis
 import ibis.expr.datatypes as dt
 
 import terrine.reasons as reason_codes
+from terrine.backends.dialect import dialect_for_name
 from terrine.compile.anchors import AnchorTable
-from terrine.compile.columns import CompiledStudy, compile_columns
+from terrine.compile.columns import CompiledStudy, compile_columns, expression_policy
 from terrine.data import ColumnMeta, Roles
 from terrine.spec._columns import IDENTITY, STATE_PANEL
 from terrine.spec.anchors import FixedDate, Schedule
@@ -129,11 +131,34 @@ def _state_value(relation, state: BinnedMetricState):
     return value.cast("string"), (available & label.notnull()), reason
 
 
-def _union_state_periods(
+def _compact_state_schedule(schedule: Schedule, model: Model) -> Schedule | None:
+    """Include the endpoint only when the elapsed and calendar clocks coincide."""
+    if not isinstance(schedule.every, Duration) or schedule.every.seconds % 86_400:
+        return None
+    step = schedule.every.seconds
+    try:
+        old_count = schedule.count(model.day_boundary)
+        start_utc = model.day_boundary(schedule.start).astimezone(UTC)
+        endpoint_utc = model.day_boundary(schedule.end_exclusive).astimezone(UTC)
+        if start_utc + timedelta(seconds=old_count * step) != endpoint_utc:
+            return None
+        extended_end = schedule.end + timedelta(days=step // 86_400)
+        # Schedule includes its end day, so its exclusive end must also exist.
+        if extended_end == date.max:
+            return None
+        extended = Schedule(schedule.every, schedule.start, extended_end)
+        if extended.count(model.day_boundary) != old_count + 1:
+            return None
+    except OverflowError:
+        return None
+    return extended
+
+
+def _state_period_relation(
     design: Design,
     model: Model,
     metric: str,
-):
+) -> tuple[ibis.Table, CompiledStudy, CompiledStudy]:
     schedule = design.anchor
     assert isinstance(schedule, Schedule) and isinstance(schedule.every, Duration)
     period = Window(Duration(-schedule.every.seconds), 0)
@@ -149,7 +174,44 @@ def _union_state_periods(
         gap=Duration(0),
     )
     final = compile_columns(endpoint, model, include_membership=False)
-    return compiled.table.union(final.table), compiled, final
+    resolved = model.metrics[metric]
+    policy = dialect_for_name(expression_policy(model))
+    if (
+        resolved.kind != "mean"
+        or len(resolved.measures) != 1
+        or resolved.measures[0].aggregation != "sum"
+        or resolved.transforms
+        or compiled.table.schema()["_state_period"] != dt.Decimal(38, 0)
+        or not policy._unbounded_coefficients
+    ):
+        return compiled.table.union(final.table), compiled, final
+    extended = _compact_state_schedule(schedule, model)
+    if extended is None:
+        return compiled.table.union(final.table), compiled, final
+    # Scale-zero coefficients add exactly in an unbounded domain. Count payloads
+    # stay below physical source rows < 2**63 (see the policy's count_type).
+    # Keep both original studies: their checks retain separate failure domains
+    # and certify the same quantities and final checked narrowing.
+    compact = compile_columns(
+        _state_panel_design(
+            design, anchor=extended, features={"_state_period": node}, gap=Duration(0)
+        ),
+        model,
+        include_membership=False,
+    )
+    projection = {name: compact.table[name] for name in ("unit", "t0", "_state_period")}
+    original_meta = compiled.columns["_state_period"]
+    compact_meta = compact.columns["_state_period"]
+    for attribute in (
+        "complete_column",
+        "reason_column",
+        "observed_from_column",
+        "observed_until_column",
+    ):
+        original = getattr(original_meta, attribute)
+        if original is not None:
+            projection[original] = compact.table[getattr(compact_meta, attribute)]
+    return compact.table.select(**projection), compiled, final
 
 
 def _binned(
@@ -164,10 +226,11 @@ def _binned(
     schedule = design.anchor
     assert isinstance(schedule, Schedule) and isinstance(schedule.every, Duration)
     every = schedule.every.seconds
-    period_relation, period_compiled, endpoint_compiled = _union_state_periods(
+    period_relation, period_compiled, endpoint_compiled = _state_period_relation(
         design, model, spec.metric
     )
     state_meta = period_compiled.columns["_state_period"]
+    assert state_meta.complete_column is not None and state_meta.reason_column is not None
     period_relation = period_relation.mutate(
         __terrine_state_complete=period_relation[state_meta.complete_column].fill_null(False),
         __terrine_state_reason=period_relation[state_meta.reason_column],

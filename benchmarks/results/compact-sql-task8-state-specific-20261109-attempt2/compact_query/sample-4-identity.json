@@ -1,0 +1,10 @@
+{
+  "dynamic_snapshot_identities": {
+    "input_binding_id": null,
+    "snapshot_id": null
+  },
+  "plain_public_arrow_stream_sha256": "787a01992623dc38ecba4c2d373be084af7134b588ab898474f49c2a1317cbe4",
+  "precompiled_full_arrow_stream_sha256": "787a01992623dc38ecba4c2d373be084af7134b588ab898474f49c2a1317cbe4",
+  "precompiled_raw_arrow_stream_sha256": "895a8173ec4e83d9438bd3885140a2589a1752e389d98896816a721bd466b576",
+  "private_flag_during_complete_public_pass": true
+}

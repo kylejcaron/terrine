@@ -1,0 +1,621 @@
+{
+  "scope": "Separate instrumented tiny-wide diagnostics; not final timing samples. Inclusive cumulative times overlap. Binary pstats retained in original /tmp directories, not committed.",
+  "cases": {
+    "before": {
+      "original_directory": "/tmp/terrine-compact-sql-before-narrow-20261109",
+      "file_sha256": {
+        "diagnostic.pstats": "aff96ff572fbe263d285bc2cbbae73424a0c95c3f40583388670ae05d24e0d30",
+        "diagnostics.json": "a8603af1478e7de1ca69727ea8a193da69741139c1ec64ab0ac839443db3946e",
+        "environment.json": "a14f1c3dd510dd66ad16d95491169a300cdbfd8f779aef3ac513b40ca4b4e9a3",
+        "handwritten.sql": "a868d91726036f8d80289be58114b0b1dc02d5d00d0dc3a4b1e578ddfb326bde",
+        "public-study-statement-0.sql": "4d1abefc36d52f1cab52e599796b25019b6b9e237022b562602ba3bf4f599471",
+        "public-study-statement-1.sql": "cc023b0087b69b9c7cb42613d366314834b8338a4e59bb8c967b3279c867ed08",
+        "public-study-statement-2.sql": "72e7467ab1544e7a3251bc3eb19d3bc70efd789366de336cf19bc3b5e6b2176a",
+        "result.json": "53bb4317ccaa5ab54fff6222287b8e786f09862b4c53bdb751e3aa39e1e5cf5a",
+        "terrine-full-expression.sql": "2bccf10701cc36e0e721021975e66b241f8ead8ffe3998e1a4906498e110eca4",
+        "terrine-projected.sql": "5aa36aec815fce2a0413f349b1b044b7567d0dabf6372ec08a2766c4ef1ca91c"
+      },
+      "phase_inclusive_seconds": {
+        "build": 6.1030087501276284,
+        "compile_design": 12.450928583741188,
+        "expression_construction": 11.930880832951516,
+        "metadata_probe": 0.05700137582607567,
+        "public_materialize": 10.603368999902159,
+        "native_function_admission": 0.0614532099571079,
+        "execution_model_rebind": 0.00856891693547368,
+        "primitive_admission": 0.07369629200547934,
+        "validation_schedule": 0.037968166870996356,
+        "statement_render_check": 3.7123787498567253,
+        "sql_render": 3.6657807077281177,
+        "statement_admission": 0.04614229197613895,
+        "study_execute": 0.0022450420074164867,
+        "gated_expression_construction": 0.04876433406025171,
+        "study_stream_open": 0.20388245792128146,
+        "stream_gate_resolve": 0.12650391599163413,
+        "stream_next": 0.126857457915321
+      },
+      "profile_total_seconds": 16.63228807299995,
+      "profile_total_calls": 67196658,
+      "top_inclusive_functions": [
+        {
+          "filename": "/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/terrine/compile/dispatch.py",
+          "line": 49,
+          "function": "_compile_design",
+          "primitive_calls": 2,
+          "total_calls": 2,
+          "self_seconds": 8.2877e-05,
+          "inclusive_seconds": 11.930920876
+        },
+        {
+          "filename": "/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/terrine/compile/columns.py",
+          "line": 398,
+          "function": "compile_columns",
+          "primitive_calls": 2,
+          "total_calls": 2,
+          "self_seconds": 0.001836776,
+          "inclusive_seconds": 11.930837291000001
+        },
+        {
+          "filename": "/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/terrine/compile/columns.py",
+          "line": 978,
+          "function": "expression",
+          "primitive_calls": 100,
+          "total_calls": 102,
+          "self_seconds": 0.00016069600000000002,
+          "inclusive_seconds": 11.527084504000001
+        },
+        {
+          "filename": "/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/terrine/compile/columns.py",
+          "line": 870,
+          "function": "compile_additives",
+          "primitive_calls": 2,
+          "total_calls": 2,
+          "self_seconds": 0.000619927,
+          "inclusive_seconds": 11.526239291000001
+        },
+        {
+          "filename": "/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/terrine/compile/numeric.py",
+          "line": 91,
+          "function": "lower_aggregates",
+          "primitive_calls": 2,
+          "total_calls": 2,
+          "self_seconds": 0.022231177,
+          "inclusive_seconds": 11.360258833000001
+        },
+        {
+          "filename": "/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/terrine/temporal/aggregate.py",
+          "line": 1071,
+          "function": "aggregate_windows",
+          "primitive_calls": 2,
+          "total_calls": 2,
+          "self_seconds": 0.022628243000000003,
+          "inclusive_seconds": 11.260225499
+        },
+        {
+          "filename": "/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/.venv/lib/python3.12/site-packages/ibis/common/bases.py",
+          "line": 52,
+          "function": "__call__",
+          "primitive_calls": 467274,
+          "total_calls": 473884,
+          "self_seconds": 0.17145321600000002,
+          "inclusive_seconds": 6.769715308
+        },
+        {
+          "filename": "/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/.venv/lib/python3.12/site-packages/ibis/expr/types/relations.py",
+          "line": 2340,
+          "function": "mutate",
+          "primitive_calls": 836,
+          "total_calls": 836,
+          "self_seconds": 0.019643778,
+          "inclusive_seconds": 6.569076108
+        },
+        {
+          "filename": "/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/terrine/temporal/aggregate.py",
+          "line": 337,
+          "function": "_finalize_window",
+          "primitive_calls": 100,
+          "total_calls": 100,
+          "self_seconds": 0.0048190920000000005,
+          "inclusive_seconds": 6.307910247000001
+        },
+        {
+          "filename": "/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/.venv/lib/python3.12/site-packages/ibis/common/grounds.py",
+          "line": 116,
+          "function": "__create__",
+          "primitive_calls": 290800,
+          "total_calls": 294658,
+          "self_seconds": 0.22620746700000002,
+          "inclusive_seconds": 6.1692288280000005
+        },
+        {
+          "filename": "/Users/kylejcaron/.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/contextlib.py",
+          "line": 78,
+          "function": "inner",
+          "primitive_calls": 1,
+          "total_calls": 4,
+          "self_seconds": 2.0084000000000003e-05,
+          "inclusive_seconds": 6.103009084
+        },
+        {
+          "filename": "/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/terrine/compile/dispatch.py",
+          "line": 26,
+          "function": "compile_design",
+          "primitive_calls": 1,
+          "total_calls": 1,
+          "self_seconds": 1.1209e-05,
+          "inclusive_seconds": 6.102982625
+        },
+        {
+          "filename": "/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/.venv/lib/python3.12/site-packages/ibis/expr/types/relations.py",
+          "line": 655,
+          "function": "bind",
+          "primitive_calls": 1054,
+          "total_calls": 1054,
+          "self_seconds": 0.011484927,
+          "inclusive_seconds": 4.553955425000001
+        },
+        {
+          "filename": "/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/terrine/temporal/aggregate.py",
+          "line": 185,
+          "function": "table",
+          "primitive_calls": 748,
+          "total_calls": 748,
+          "self_seconds": 0.002142593,
+          "inclusive_seconds": 4.090075825
+        },
+        {
+          "filename": "/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/.venv/lib/python3.12/site-packages/ibis/expr/rewrites.py",
+          "line": 155,
+          "function": "dereference",
+          "primitive_calls": 25540,
+          "total_calls": 25540,
+          "self_seconds": 0.024092543,
+          "inclusive_seconds": 4.047367107
+        },
+        {
+          "filename": "/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/.venv/lib/python3.12/site-packages/ibis/common/graph.py",
+          "line": 479,
+          "function": "replace",
+          "primitive_calls": 30154,
+          "total_calls": 34913,
+          "self_seconds": 0.15343894100000002,
+          "inclusive_seconds": 4.046561924000001
+        },
+        {
+          "filename": "/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/.venv/lib/python3.12/site-packages/ibis/expr/types/relations.py",
+          "line": 677,
+          "function": "<genexpr>",
+          "primitive_calls": 24490,
+          "total_calls": 24490,
+          "self_seconds": 0.013994673000000001,
+          "inclusive_seconds": 3.9410542000000004
+        },
+        {
+          "filename": "/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/.venv/lib/python3.12/site-packages/ibis/expr/rewrites.py",
+          "line": 127,
+          "function": "_fill_substitution_mappings",
+          "primitive_calls": 920,
+          "total_calls": 920,
+          "self_seconds": 0.40828059800000005,
+          "inclusive_seconds": 3.905968306
+        },
+        {
+          "filename": "/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/.venv/lib/python3.12/site-packages/ibis/common/annotations.py",
+          "line": 461,
+          "function": "validate",
+          "primitive_calls": 293390,
+          "total_calls": 294658,
+          "self_seconds": 0.48155216100000003,
+          "inclusive_seconds": 3.809085485
+        },
+        {
+          "filename": "/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/terrine/execution/inputs.py",
+          "line": 672,
+          "function": "_check_query",
+          "primitive_calls": 3,
+          "total_calls": 3,
+          "self_seconds": 1.2874e-05,
+          "inclusive_seconds": 3.7121307490000004
+        },
+        {
+          "filename": "/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/terrine/execution/inputs.py",
+          "line": 600,
+          "function": "check_query",
+          "primitive_calls": 3,
+          "total_calls": 3,
+          "self_seconds": 1.3500000000000001e-05,
+          "inclusive_seconds": 3.7119420840000004
+        },
+        {
+          "filename": "/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/benchmarks/run_overhead.py",
+          "line": 256,
+          "function": "compile",
+          "primitive_calls": 3,
+          "total_calls": 3,
+          "self_seconds": 3.3249e-05,
+          "inclusive_seconds": 3.665611875
+        },
+        {
+          "filename": "/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/.venv/lib/python3.12/site-packages/ibis/backends/sql/__init__.py",
+          "line": 93,
+          "function": "compile",
+          "primitive_calls": 3,
+          "total_calls": 3,
+          "self_seconds": 1.9541e-05,
+          "inclusive_seconds": 3.6654017910000003
+        },
+        {
+          "filename": "/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/.venv/lib/python3.12/site-packages/ibis/backends/sql/compilers/duckdb.py",
+          "line": 111,
+          "function": "to_sqlglot",
+          "primitive_calls": 3,
+          "total_calls": 3,
+          "self_seconds": 1.9041000000000003e-05,
+          "inclusive_seconds": 3.4166592920000003
+        },
+        {
+          "filename": "/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/.venv/lib/python3.12/site-packages/ibis/backends/sql/compilers/base.py",
+          "line": 579,
+          "function": "to_sqlglot",
+          "primitive_calls": 3,
+          "total_calls": 3,
+          "self_seconds": 0.002087266,
+          "inclusive_seconds": 3.4166275
+        },
+        {
+          "filename": "/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/.venv/lib/python3.12/site-packages/ibis/backends/sql/compilers/base.py",
+          "line": 607,
+          "function": "translate",
+          "primitive_calls": 3,
+          "total_calls": 3,
+          "self_seconds": 0.0031370580000000003,
+          "inclusive_seconds": 3.4113827490000004
+        },
+        {
+          "filename": "/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/terrine/temporal/aggregate.py",
+          "line": 227,
+          "function": "col",
+          "primitive_calls": 1940,
+          "total_calls": 1940,
+          "self_seconds": 0.0009981150000000002,
+          "inclusive_seconds": 3.4001422900000002
+        },
+        {
+          "filename": "/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/terrine/temporal/daily.py",
+          "line": 193,
+          "function": "_batch_projections",
+          "primitive_calls": 6,
+          "total_calls": 6,
+          "self_seconds": 0.125039534,
+          "inclusive_seconds": 3.209323624
+        },
+        {
+          "filename": "/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/.venv/lib/python3.12/site-packages/ibis/common/grounds.py",
+          "line": 195,
+          "function": "__init__",
+          "primitive_calls": 327982,
+          "total_calls": 338657,
+          "self_seconds": 0.7463685120000001,
+          "inclusive_seconds": 2.751663299
+        },
+        {
+          "filename": "/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/.venv/lib/python3.12/site-packages/ibis/backends/sql/rewrites.py",
+          "line": 350,
+          "function": "sqlize",
+          "primitive_calls": 3,
+          "total_calls": 3,
+          "self_seconds": 0.006643217000000001,
+          "inclusive_seconds": 2.6484022090000003
+        }
+      ]
+    },
+    "after": {
+      "original_directory": "/tmp/terrine-compact-sql-after-narrow-20261109",
+      "file_sha256": {
+        "diagnostic.pstats": "1eac05ebaa0fcdd4e06a6bbf6f8a891e8806664f66118fad3af7cf1034c43673",
+        "diagnostics.json": "9066b70bf28cc7b243df52ecb0351523f868b45517ae20f80a4ec8e21e5a6c3f",
+        "environment.json": "46d95d383a2381e4352f7567f63e2a227c17cfdae7278f61703835dda9ba1d42",
+        "handwritten.sql": "a868d91726036f8d80289be58114b0b1dc02d5d00d0dc3a4b1e578ddfb326bde",
+        "public-study-statement-0.sql": "4d1abefc36d52f1cab52e599796b25019b6b9e237022b562602ba3bf4f599471",
+        "public-study-statement-1.sql": "cc023b0087b69b9c7cb42613d366314834b8338a4e59bb8c967b3279c867ed08",
+        "public-study-statement-2.sql": "460948602b4174cd25f2090c445cdc492b4e6c120f20a628652c9ab5fa10f4cc",
+        "result.json": "6ac6d8ac28eddd8997e0b242847cc528cb287a232b2a05ad29c7bfc94ae8a57c",
+        "terrine-full-expression.sql": "2bccf10701cc36e0e721021975e66b241f8ead8ffe3998e1a4906498e110eca4",
+        "terrine-projected.sql": "5aa36aec815fce2a0413f349b1b044b7567d0dabf6372ec08a2766c4ef1ca91c"
+      },
+      "phase_inclusive_seconds": {
+        "build": 2.3494010840076953,
+        "compile_design": 4.806684624869376,
+        "expression_construction": 4.29992499994114,
+        "metadata_probe": 0.059154125628992915,
+        "public_materialize": 6.76153704081662,
+        "native_function_admission": 0.06407612515613437,
+        "execution_model_rebind": 0.007276874966919422,
+        "primitive_admission": 0.06910041719675064,
+        "validation_schedule": 0.04131749994121492,
+        "statement_render_check": 3.768552624154836,
+        "sql_render": 3.7189212921075523,
+        "statement_admission": 0.0491862918715924,
+        "study_execute": 0.0024677091278135777,
+        "gated_expression_construction": 0.05713224993087351,
+        "study_stream_open": 0.19314724998548627,
+        "stream_gate_resolve": 0.1306938750203699,
+        "stream_next": 0.13084216602146626
+      },
+      "profile_total_seconds": 9.043525842000001,
+      "profile_total_calls": 36894945,
+      "top_inclusive_functions": [
+        {
+          "filename": "/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/terrine/compile/dispatch.py",
+          "line": 49,
+          "function": "_compile_design",
+          "primitive_calls": 2,
+          "total_calls": 2,
+          "self_seconds": 5.7457e-05,
+          "inclusive_seconds": 4.299956959
+        },
+        {
+          "filename": "/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/terrine/compile/columns.py",
+          "line": 398,
+          "function": "compile_columns",
+          "primitive_calls": 2,
+          "total_calls": 2,
+          "self_seconds": 0.0015297160000000002,
+          "inclusive_seconds": 4.299898751000001
+        },
+        {
+          "filename": "/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/terrine/compile/columns.py",
+          "line": 978,
+          "function": "expression",
+          "primitive_calls": 100,
+          "total_calls": 102,
+          "self_seconds": 0.00012787600000000002,
+          "inclusive_seconds": 3.904917041
+        },
+        {
+          "filename": "/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/terrine/compile/columns.py",
+          "line": 870,
+          "function": "compile_additives",
+          "primitive_calls": 2,
+          "total_calls": 2,
+          "self_seconds": 0.0006319790000000001,
+          "inclusive_seconds": 3.9043081660000003
+        },
+        {
+          "filename": "/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/.venv/lib/python3.12/site-packages/ibis/common/graph.py",
+          "line": 479,
+          "function": "replace",
+          "primitive_calls": 18754,
+          "total_calls": 23513,
+          "self_seconds": 0.129517153,
+          "inclusive_seconds": 3.7897529330000004
+        },
+        {
+          "filename": "/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/terrine/execution/inputs.py",
+          "line": 672,
+          "function": "_check_query",
+          "primitive_calls": 3,
+          "total_calls": 3,
+          "self_seconds": 1.0999000000000001e-05,
+          "inclusive_seconds": 3.7683125000000004
+        },
+        {
+          "filename": "/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/terrine/execution/inputs.py",
+          "line": 600,
+          "function": "check_query",
+          "primitive_calls": 3,
+          "total_calls": 3,
+          "self_seconds": 1.3165e-05,
+          "inclusive_seconds": 3.768125416
+        },
+        {
+          "filename": "/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/terrine/compile/numeric.py",
+          "line": 91,
+          "function": "lower_aggregates",
+          "primitive_calls": 2,
+          "total_calls": 2,
+          "self_seconds": 0.005041595,
+          "inclusive_seconds": 3.746043959
+        },
+        {
+          "filename": "/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/benchmarks/run_overhead.py",
+          "line": 256,
+          "function": "compile",
+          "primitive_calls": 3,
+          "total_calls": 3,
+          "self_seconds": 3.0333000000000002e-05,
+          "inclusive_seconds": 3.718761375
+        },
+        {
+          "filename": "/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/.venv/lib/python3.12/site-packages/ibis/backends/sql/__init__.py",
+          "line": 93,
+          "function": "compile",
+          "primitive_calls": 3,
+          "total_calls": 3,
+          "self_seconds": 2.054e-05,
+          "inclusive_seconds": 3.7185615000000003
+        },
+        {
+          "filename": "/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/terrine/temporal/aggregate.py",
+          "line": 1094,
+          "function": "aggregate_windows",
+          "primitive_calls": 2,
+          "total_calls": 2,
+          "self_seconds": 0.008247215,
+          "inclusive_seconds": 3.69540675
+        },
+        {
+          "filename": "/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/.venv/lib/python3.12/site-packages/ibis/backends/sql/compilers/duckdb.py",
+          "line": 111,
+          "function": "to_sqlglot",
+          "primitive_calls": 3,
+          "total_calls": 3,
+          "self_seconds": 1.8499e-05,
+          "inclusive_seconds": 3.481859334
+        },
+        {
+          "filename": "/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/.venv/lib/python3.12/site-packages/ibis/backends/sql/compilers/base.py",
+          "line": 579,
+          "function": "to_sqlglot",
+          "primitive_calls": 3,
+          "total_calls": 3,
+          "self_seconds": 0.002003038,
+          "inclusive_seconds": 3.481825583
+        },
+        {
+          "filename": "/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/.venv/lib/python3.12/site-packages/ibis/backends/sql/compilers/base.py",
+          "line": 607,
+          "function": "translate",
+          "primitive_calls": 3,
+          "total_calls": 3,
+          "self_seconds": 0.002761281,
+          "inclusive_seconds": 3.476877666
+        },
+        {
+          "filename": "/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/.venv/lib/python3.12/site-packages/ibis/common/bases.py",
+          "line": 52,
+          "function": "__call__",
+          "primitive_calls": 197834,
+          "total_calls": 204744,
+          "self_seconds": 0.076236443,
+          "inclusive_seconds": 2.782920694
+        },
+        {
+          "filename": "/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/.venv/lib/python3.12/site-packages/ibis/backends/sql/rewrites.py",
+          "line": 350,
+          "function": "sqlize",
+          "primitive_calls": 3,
+          "total_calls": 3,
+          "self_seconds": 0.005820052,
+          "inclusive_seconds": 2.682744167
+        },
+        {
+          "filename": "/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/.venv/lib/python3.12/site-packages/ibis/common/grounds.py",
+          "line": 116,
+          "function": "__create__",
+          "primitive_calls": 101060,
+          "total_calls": 105018,
+          "self_seconds": 0.083141218,
+          "inclusive_seconds": 2.425470175
+        },
+        {
+          "filename": "/Users/kylejcaron/.local/share/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/contextlib.py",
+          "line": 78,
+          "function": "inner",
+          "primitive_calls": 1,
+          "total_calls": 4,
+          "self_seconds": 1.8499e-05,
+          "inclusive_seconds": 2.349400542
+        },
+        {
+          "filename": "/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/terrine/compile/dispatch.py",
+          "line": 26,
+          "function": "compile_design",
+          "primitive_calls": 1,
+          "total_calls": 1,
+          "self_seconds": 1.1084000000000001e-05,
+          "inclusive_seconds": 2.349378917
+        },
+        {
+          "filename": "/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/.venv/lib/python3.12/site-packages/ibis/common/graph.py",
+          "line": 220,
+          "function": "fn",
+          "primitive_calls": 70457,
+          "total_calls": 70457,
+          "self_seconds": 0.020164949,
+          "inclusive_seconds": 2.1126465640000003
+        },
+        {
+          "filename": "/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/.venv/lib/python3.12/site-packages/ibis/expr/types/relations.py",
+          "line": 2340,
+          "function": "mutate",
+          "primitive_calls": 836,
+          "total_calls": 836,
+          "self_seconds": 0.009348155,
+          "inclusive_seconds": 2.010073884
+        },
+        {
+          "filename": "/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/.venv/lib/python3.12/site-packages/ibis/common/graph.py",
+          "line": 552,
+          "function": "from_bfs",
+          "primitive_calls": 40320,
+          "total_calls": 40320,
+          "self_seconds": 0.022977899000000003,
+          "inclusive_seconds": 1.588223187
+        },
+        {
+          "filename": "/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/.venv/lib/python3.12/site-packages/ibis/common/annotations.py",
+          "line": 461,
+          "function": "validate",
+          "primitive_calls": 103750,
+          "total_calls": 105018,
+          "self_seconds": 0.172276001,
+          "inclusive_seconds": 1.522953852
+        },
+        {
+          "filename": "/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/.venv/lib/python3.12/site-packages/ibis/common/patterns.py",
+          "line": 387,
+          "function": "match",
+          "primitive_calls": 260114,
+          "total_calls": 260114,
+          "self_seconds": 0.047560334,
+          "inclusive_seconds": 1.464169462
+        },
+        {
+          "filename": "/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/.venv/lib/python3.12/site-packages/ibis/expr/types/relations.py",
+          "line": 655,
+          "function": "bind",
+          "primitive_calls": 1154,
+          "total_calls": 1154,
+          "self_seconds": 0.007189864000000001,
+          "inclusive_seconds": 1.3384750120000002
+        },
+        {
+          "filename": "/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/.venv/lib/python3.12/site-packages/ibis/common/deferred.py",
+          "line": 332,
+          "function": "resolve",
+          "primitive_calls": 616,
+          "total_calls": 616,
+          "self_seconds": 0.0019429970000000001,
+          "inclusive_seconds": 1.327708318
+        },
+        {
+          "filename": "/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/.venv/lib/python3.12/site-packages/ibis/common/grounds.py",
+          "line": 195,
+          "function": "__init__",
+          "primitive_calls": 138142,
+          "total_calls": 148917,
+          "self_seconds": 0.334467434,
+          "inclusive_seconds": 1.318830148
+        },
+        {
+          "filename": "/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/.venv/lib/python3.12/site-packages/ibis/backends/sql/rewrites.py",
+          "line": 243,
+          "function": "merge_select_select",
+          "primitive_calls": 37,
+          "total_calls": 37,
+          "self_seconds": 0.005400325,
+          "inclusive_seconds": 1.282458455
+        },
+        {
+          "filename": "/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/terrine/temporal/daily.py",
+          "line": 193,
+          "function": "_batch_projections",
+          "primitive_calls": 6,
+          "total_calls": 6,
+          "self_seconds": 0.030799032,
+          "inclusive_seconds": 1.1967803320000001
+        },
+        {
+          "filename": "/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/terrine/temporal/aggregate.py",
+          "line": 337,
+          "function": "_finalize_window",
+          "primitive_calls": 100,
+          "total_calls": 100,
+          "self_seconds": 0.003308849,
+          "inclusive_seconds": 1.176526084
+        }
+      ]
+    }
+  }
+}

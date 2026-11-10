@@ -1,0 +1,1 @@
+SELECT COUNT(*) AS "invalid_count" FROM (SELECT * FROM (SELECT "t1"."_anchor_check_key", COUNT(*) AS "_anchor_check_count" FROM (SELECT "t0"."customer_id" AS "_anchor_check_key" FROM "customers" AS "t0") AS "t1" GROUP BY 1) AS "t2" WHERE "t2"."_anchor_check_count" > 1) AS "t3"

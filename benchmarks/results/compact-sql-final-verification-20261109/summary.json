@@ -1,0 +1,45 @@
+{
+  "commands": [
+    {
+      "command": "make check TESTS=\"tests/backends/test_timestamps.py tests/temporal tests/compile tests/test_frame.py tests/test_frame_runtime.py integration/temporal integration/compile integration/test_frame.py integration/backends integration/execution integration/conformance\"",
+      "exit": 2,
+      "result": "4 failed, 868 passed, 1 skipped, 71 deselected, 3127 warnings in 260.11s; all static gates passed",
+      "disposition": "Four admission failures fixed in 8013692; focused green selection below. Full selection not repeated."
+    },
+    {
+      "command": "uv run pytest integration/conformance --generic-dialect",
+      "exit": 0,
+      "result": "16 passed, 45 deselected, 69 warnings in 5.71s"
+    },
+    {
+      "command": "uv run pytest integration/test_cost_budget.py -m scale -k 'characters or readme or bigquery'",
+      "exit": 1,
+      "result": "3 failed, 5 passed, 16 deselected, 2 xfailed, 28 warnings in 14.70s",
+      "disposition": "BigQuery strict XPASS mark removed only after real pass; residual README/state_panel budget failures retained."
+    },
+    {
+      "command": "make check TESTS=\"integration/execution/test_generic_provider.py tests/backends/test_timestamps.py tests/temporal/test_range_scaling.py\"",
+      "exit": 0,
+      "result": "44 passed, 74 warnings in 6.73s; all static gates passed"
+    },
+    {
+      "command": "uv run python -c 'import ibis, pytest\noriginal = ibis.to_sql\ndef recording(*args, **kwargs):\n    sql = original(*args, **kwargs)\n    print(\"SQL_BUDGET_FORMATTED\", kwargs.get(\"dialect\", \"duckdb\"), len(sql), flush=True)\n    return sql\nibis.to_sql = recording\nraise SystemExit(pytest.main([\"-n\", \"0\", \"-s\", \"integration/test_cost_budget.py\", \"-m\", \"scale\", \"-k\", \"readme or bigquery or (characters and (state_panel or ltv or life_table))\"]))\n'",
+      "exit": 1,
+      "result": "2 failed, 1 passed, 21 deselected, 2 xfailed, 28 warnings in 12.71s",
+      "disposition": "Remaining two are inherited README/state_panel budgets; BigQuery passes515634."
+    },
+    {
+      "command": "uv run --group docs python -m tests.documentation --build",
+      "exit": 0,
+      "result": "No output; strict=True MkDocs build entrypoint completed."
+    },
+    {
+      "command": "uv run pytest -n 0 tests/test_documentation.py",
+      "exit": 0,
+      "result": "6 passed in 1.29s"
+    }
+  ],
+  "scratch_postgres": "See postgres.json, native18passed1skipped+forcedgeneric37passed; teardown0",
+  "failing_budget_gate_disposition": "Not waived. Owner decision required; no architecture expansion authorized.",
+  "cloud": "Live BigQuery/Snowflake not authorized/unrun; unchanged matrices hashed in aggregate manifest; BigQuery metadata compilation only."
+}

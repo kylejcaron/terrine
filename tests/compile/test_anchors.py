@@ -5,6 +5,7 @@ import pyarrow as pa
 import pytest
 
 from terrine.compile.anchors import compile_anchors
+from terrine.compile.numeric import _declared_origin_bounds
 from terrine.data import Coverage, UnitSource
 from terrine.errors import TerrineError
 from terrine.model import Model
@@ -95,7 +96,10 @@ def candidate_rows(design, model):
 
 
 def test_fixed_date_uses_declared_roster_not_event_population(native_model):
-    result = candidate_rows(Design(unit="user", anchor=FixedDate(date(2025, 1, 3))), native_model)
+    design = Design(unit="user", anchor=FixedDate(date(2025, 1, 3)))
+    result = candidate_rows(design, native_model)
+    resolved = datetime(2025, 1, 3, 5, tzinfo=UTC)
+    assert _declared_origin_bounds(design, native_model) == (resolved, resolved)
     assert sorted(row["unit"] for row in result) == ["a", "b", "c"]
     assert {row["t0"] for row in result} == {datetime(2025, 1, 3, 5, tzinfo=UTC)}
     assert {row["anchor_id"] for row in result} == {"fixed"}
@@ -167,11 +171,25 @@ def test_schedule_end_is_the_last_scheduled_day_and_roster_lifetime_half_open(na
         Design(unit="user", anchor=Schedule("1d", "2025-01-02", "2025-01-02")), native_model
     )
     assert {row["t0"] for row in single} == {datetime(2025, 1, 2, 5, tzinfo=UTC)}
+    # A schedule with no living roster units still has conservative declared bounds.
+    native_model.con.raw_sql(
+        "UPDATE users SET entered = TIMESTAMPTZ '2026-01-01 00:00:00+00', exited = NULL"
+    )
+    assert candidate_rows(design, native_model) == []
+    assert _declared_origin_bounds(design, native_model) == (
+        datetime(2025, 1, 2, 5, tzinfo=UTC),
+        datetime(2025, 1, 3, 5, tzinfo=UTC),
+    )
 
 
 def test_month_schedule_candidate_rows_match_python_instants(native_model):
     schedule = Schedule("1mo", "2025-01-31", "2025-03-31")
-    result = candidate_rows(Design(unit="user", anchor=schedule), native_model)
+    design = Design(unit="user", anchor=schedule)
+    result = candidate_rows(design, native_model)
+    assert _declared_origin_bounds(design, native_model) == (
+        datetime(2025, 1, 31, 5, tzinfo=UTC),
+        datetime(2025, 3, 31, 5, tzinfo=UTC),
+    )
     expected = schedule.instants(native_model.day_boundary)
     assert expected == tuple(
         datetime(2025, month, day, 5, tzinfo=UTC) for month, day in ((1, 31), (2, 28), (3, 31))
@@ -202,6 +220,7 @@ def test_date_anchor_range_end_includes_that_whole_local_day(native_model):
 
 def test_event_first_uses_exact_t0_and_stable_id_for_ties(native_model):
     design = Design(unit="user", anchor=EventAnchor("occurred", "first"))
+    assert _declared_origin_bounds(design, native_model) is None
     result = candidate_rows(design, native_model)
     user_a = next(row for row in result if row["unit"] == "a")
     assert user_a["t0"] == datetime(2025, 1, 2, tzinfo=UTC)

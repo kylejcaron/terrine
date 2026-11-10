@@ -1,0 +1,54 @@
+{
+  "changed_type": {
+    "assertion": "('Dataset schema differs', unit: string\nt0: timestamp[us, tz=UTC]\nfrom_state: large_string\nto_state: string, unit: string\nt0: timestamp[us, tz=UTC]\nfrom_state: string\nto_state: string)",
+    "constructed_table": {
+      "arrow_bytes": 847355,
+      "arrow_stream_sha256": "0af05e65c1272f3853d16b0683b83ad4f8da8370025a8ead19d7cce9621f8be9",
+      "columns": 4,
+      "rows": 20000,
+      "schema": "unit: string\nt0: timestamp[us, tz=UTC]\nfrom_state: large_string\nto_state: string",
+      "schema_sha256": "5c636e955285c0ef4248f1d9def8b4ea57886918e6488b44e500a26a3b3c617d"
+    },
+    "oracle_invoked": true,
+    "rejected": true
+  },
+  "changed_value": {
+    "assertion": "('unit-000000', 'from_state', '__corrupted_state__', 'low')",
+    "constructed_table": {
+      "arrow_bytes": 759871,
+      "arrow_stream_sha256": "cf16e60643961972cc9bf0ee851ffe747324efb83a8990108c9985c72fbbaa7b",
+      "columns": 4,
+      "rows": 20000,
+      "schema": "unit: string\nt0: timestamp[us, tz=UTC]\nfrom_state: string\nto_state: string",
+      "schema_sha256": "f0616df269e8c9a753f0ad81f0affce7a8bf8416980609923104a2baf78a4bef"
+    },
+    "oracle_invoked": true,
+    "rejected": true
+  },
+  "duplicate": {
+    "assertion": "Missing, duplicated or unordered dataset origins",
+    "constructed_table": {
+      "arrow_bytes": 767395,
+      "arrow_stream_sha256": "f3dc3edd5fa725ef2d8b7a76b91fde570b4287af17eb99acedcccaa0eda0ba23",
+      "columns": 4,
+      "rows": 20001,
+      "schema": "unit: string\nt0: timestamp[us, tz=UTC]\nfrom_state: string\nto_state: string",
+      "schema_sha256": "f0616df269e8c9a753f0ad81f0affce7a8bf8416980609923104a2baf78a4bef"
+    },
+    "oracle_invoked": true,
+    "rejected": true
+  },
+  "missing": {
+    "assertion": "Missing, duplicated or unordered dataset origins",
+    "constructed_table": {
+      "arrow_bytes": 767318,
+      "arrow_stream_sha256": "03e4383b939c1106f6117b2d90c3e329ead4d41a627904a7e4739fdb7cef56c4",
+      "columns": 4,
+      "rows": 19999,
+      "schema": "unit: string\nt0: timestamp[us, tz=UTC]\nfrom_state: string\nto_state: string",
+      "schema_sha256": "f0616df269e8c9a753f0ad81f0affce7a8bf8416980609923104a2baf78a4bef"
+    },
+    "oracle_invoked": true,
+    "rejected": true
+  }
+}

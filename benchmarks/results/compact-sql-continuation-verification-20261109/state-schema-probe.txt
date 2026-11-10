@@ -1,0 +1,30 @@
+uv run python -c 'import runpy,json,traceback
+from pathlib import Path
+p=Path("benchmarks/results/compact-sql-continuation-verification-20261109/public-smokes.py.txt")
+d=runpy.run_path(str(p))
+try:
+ d["state"]()
+except AssertionError as error:
+ t=error.__traceback__
+ while t.tb_next: t=t.tb_next
+ v=t.tb_frame.f_locals
+ current=v["table"]; old=v["before"]; result=v["result"]
+ details={"current_schema":str(current.schema),"prior_schema":str(old.schema),"same_fields_without_schema_metadata":current.schema.remove_metadata().equals(old.schema.remove_metadata(),check_metadata=True),"current_metadata":str(current.schema.metadata),"prior_metadata":str(old.schema.metadata),"public_to_pyarrow_schema_equal":result.to_pyarrow().schema.serialize().to_pybytes()==old.schema.serialize().to_pybytes()}
+ print(json.dumps(details,indent=2)); raise
+'
+{
+  "current_schema": "unit: string\nanchor_id: string\nt0: timestamp[us, tz=UTC]\nfrom_time: timestamp[us, tz=UTC]\nto_time: timestamp[us, tz=UTC]\nscheduled_to: timestamp[us, tz=UTC]\nperiod_index: int64\ngap: duration[us]\nfrom_state: string\nfrom_state__complete: bool\nfrom_state__reason: string\nto_state: string\nto_state__complete: bool\nto_state__reason: string\nterminal: bool\nfrom_state_observed_from: timestamp[us, tz=UTC]\nfrom_state_observed_until: timestamp[us, tz=UTC]\nto_state_observed_from: timestamp[us, tz=UTC]\nto_state_observed_until: timestamp[us, tz=UTC]\n__terrine_panel_start: timestamp[us, tz=UTC]",
+  "prior_schema": "unit: string\nanchor_id: string\nt0: timestamp[us, tz=UTC]\nfrom_time: timestamp[us, tz=UTC]\nto_time: timestamp[us, tz=UTC]\nscheduled_to: timestamp[us, tz=UTC]\nperiod_index: int64\ngap: duration[us]\nfrom_state: string\nfrom_state__complete: bool\nfrom_state__reason: string\nto_state: string\nto_state__complete: bool\nto_state__reason: string\nterminal: bool\nfrom_state_observed_from: timestamp[us, tz=UTC]\nfrom_state_observed_until: timestamp[us, tz=UTC]\nto_state_observed_from: timestamp[us, tz=UTC]\nto_state_observed_until: timestamp[us, tz=UTC]\n__terrine_panel_start: timestamp[us, tz=UTC]\n-- schema metadata --\nterrine.materialized_frame.v2: '{\"bookkeeping_columns\":[\"from_state_obser' + 2780",
+  "same_fields_without_schema_metadata": true,
+  "current_metadata": "None",
+  "prior_metadata": "{b'terrine.materialized_frame.v2': b'{\"bookkeeping_columns\":[\"from_state_observed_from\",\"from_state_observed_until\",\"to_state_observed_from\",\"to_state_observed_until\",\"__terrine_panel_start\"],\"columns\":{\"from_state\":{\"approximation\":null,\"arithmetic\":null,\"complete_column\":\"from_state__complete\",\"measure\":null,\"numeric_policy\":null,\"observed_from_column\":\"from_state_observed_from\",\"observed_until_column\":\"from_state_observed_until\",\"reason_column\":\"from_state__reason\",\"role\":\"prior_state\",\"transformation\":null,\"window\":{\"$window\":[-604800,0]}},\"to_state\":{\"approximation\":null,\"arithmetic\":null,\"complete_column\":\"to_state__complete\",\"measure\":null,\"numeric_policy\":null,\"observed_from_column\":\"to_state_observed_from\",\"observed_until_column\":\"to_state_observed_until\",\"reason_column\":\"to_state__reason\",\"role\":\"outcome\",\"transformation\":null,\"window\":{\"$window\":[0,604800]}}},\"provenance\":{\"administrative_cutoff\":null,\"calendar_comparison\":null,\"cohort_operation\":null,\"dataset_view\":null,\"design_hash\":\"cd6dbbfb5fc4cb01052d93de0cb5c9e718cf461a319ea929df3c56c5146e608f\",\"dialect\":\"duckdb\",\"eligibility_cutoffs\":{},\"eligibility_summary\":{\"candidate\":20000,\"excluded_false\":0,\"retained\":20000,\"unknown\":0},\"engine_name\":\"duckdb\",\"engine_status\":\"verified\",\"execution_revision\":2,\"execution_snapshot\":{\"backend\":\"duckdb\",\"input_binding_id\":null,\"replay_equivalence\":\"unverified\",\"snapshot_id\":null,\"source_generations\":{\"[\\\\\"roster\\\\\",\\\\\"user\\\\\"]\":null,\"[\\\\\"source\\\\\",\\\\\"events\\\\\"]\":null,\"[\\\\\"source\\\\\",\\\\\"targets\\\\\"]\":null}},\"expression_timings\":{},\"feature_cutoffs\":{},\"measurement_knowledge\":null,\"model_hash\":\"9c13ab359a2f08f34ab0720226175bef52c49f011ac2e6dc98362ab3e51d51b5\",\"panel\":null,\"sampling\":null,\"sequence_meta\":null,\"shape\":\"state_panel\",\"source_generations\":{\"[\\\\\"roster\\\\\",\\\\\"user\\\\\"]\":null,\"[\\\\\"source\\\\\",\\\\\"events\\\\\"]\":null,\"[\\\\\"source\\\\\",\\\\\"targets\\\\\"]\":null},\"state_panel\":{\"absorbing\":[],\"administrative_end\":{\"$datetime\":\"2025-01-22T00:00:00+00:00\"},\"baseline_features\":[],\"from_time_column\":\"from_time\",\"gap_column\":\"gap\",\"levels\":[\"low\",\"high\"],\"ordered\":true,\"panel_start\":{\"$datetime\":\"2025-01-08T00:00:00+00:00\"},\"period_column\":\"period_index\",\"period_seconds\":604800,\"prior_state_timing\":\"strict_period\",\"scheduled_to_column\":\"scheduled_to\",\"state_source\":{\"cutpoints\":[{\"type\":\"int\",\"value\":\"0\"}],\"kind\":\"binned_metric\",\"metric\":\"total\"},\"terminal_column\":\"terminal\",\"time_varying_features\":[],\"to_time_column\":\"to_time\"},\"treatment_design\":null,\"treatment_knowledge\":null,\"treatment_known_at_t0\":false,\"weight_cutoff\":null,\"weight_depends_on_treatment\":null,\"weight_kind\":null},\"roles\":{\"anchor\":\"anchor_id\",\"assignment_probability\":null,\"cluster_unit\":\"unit\",\"features\":[],\"outcomes\":[\"to_state\"],\"prior_state\":\"from_state\",\"t0\":\"t0\",\"target_weight\":null,\"treatment\":null,\"trial\":null,\"trial_weight\":null,\"unit\":\"unit\",\"weight\":null},\"version\":2}'}",
+  "public_to_pyarrow_schema_equal": true
+}
+Traceback (most recent call last):
+  File "<string>", line 6, in <module>
+  File "benchmarks/results/compact-sql-continuation-verification-20261109/public-smokes.py.txt", line 109, in state
+    assert table.schema.serialize().to_pybytes() == before.schema.serialize().to_pybytes(), mode
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: original_union_fallback
+
+EXIT 1

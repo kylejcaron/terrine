@@ -1,0 +1,54 @@
+{
+  "status": "superseded; wide handwritten activity columns were decimal rather than boolean",
+  "superseded_by": "direct-sql-comparison-20261109-v2.json",
+  "production_revision": "64d7caf4f7925a8bd744b9ceafd4731d1eb67015",
+  "mode": "native float64 measures; exact counts",
+  "cases": {
+    "readme": {
+      "directory": "benchmarks/results/direct-sql-readme-20261109",
+      "file_sha256": {
+        "result.json": "a3aa43c6064774b179b468adcf3f62cd4f52ec05b6bed214c31532793cec6ce0",
+        "environment.json": "fe903532a433d89d57363bd6371cfcfc0b59f9a2a3edde53b756b7fecfeb7528",
+        "handwritten.sql": "9fdfc1319ab7bcf9a3862ea1b3a433b6dc310529259a0cdeebaa8aa30a1eede8",
+        "terrine-projected.sql": "b6feb51088a22a132f70e5ff3b49f8151d2fd76e506925105dd829c05a7b8d37",
+        "terrine-full-expression.sql": "b15cd8dace72ec96996f98785e3e7d3776c2323b5b5ca862ebbd2310a06326f7",
+        "public-study-statement-0.sql": "f65b6ce2fed90cd3ec3328a21fc55424534c16e793dfc27f51b665bc1a8c78f6",
+        "public-study-statement-1.sql": "119c43cb3904a6a45a41130fd006157b48bf752a249b24e2f041aefd0b85e679",
+        "public-study-statement-2.sql": "da6a4f1b1d296e20d1772947dc16a6d573789010655366398af4239a28390bb3"
+      },
+      "query_time_ratio": 17.489584962404454,
+      "submitted_sql_byte_ratio": 26.235802469135802
+    },
+    "scaled": {
+      "directory": "benchmarks/results/direct-sql-scaled-20261109",
+      "file_sha256": {
+        "result.json": "6c5d1b678c78be263c43d957109534c74546bad810fefe625f894eac1b8ef857",
+        "environment.json": "de2701edd91e0136a42a0ad23ab4fdb4580ccb9bfeb4b00aacab2433446de2cc",
+        "handwritten.sql": "9fdfc1319ab7bcf9a3862ea1b3a433b6dc310529259a0cdeebaa8aa30a1eede8",
+        "terrine-projected.sql": "283d46589cb1d613130825b1e92ddcf897545517c109e9403ed273578ee9b3c8",
+        "terrine-full-expression.sql": "89e77fe088a4d71cd3d996f96515cd01e93680163200b21cd7a5450225c2d009",
+        "public-study-statement-0.sql": "f65b6ce2fed90cd3ec3328a21fc55424534c16e793dfc27f51b665bc1a8c78f6",
+        "public-study-statement-1.sql": "119c43cb3904a6a45a41130fd006157b48bf752a249b24e2f041aefd0b85e679",
+        "public-study-statement-2.sql": "caca9bc9cbcd60ae9bef9750cb612628707025c376be243b95abb4aeb7239964"
+      },
+      "query_time_ratio": 4.539263532843238,
+      "submitted_sql_byte_ratio": 12.054320987654322
+    },
+    "wide": {
+      "directory": "benchmarks/results/direct-sql-wide-20261109",
+      "file_sha256": {
+        "result.json": "3ec32d82290216a3e0f5c877c01b15bb7c55d4a999bf56bef422f8edaae776fe",
+        "environment.json": "dce7c947ed7ee3fb080b7eedc433124579ceb6c9084cddaa2e3c5f21c05a9d5e",
+        "handwritten.sql": "bf04899c449996402ca60fbc04b5635c2da6090efbbecc0b45f030f23297340a",
+        "terrine-projected.sql": "d3e88bf13defaf88dd5e63547bda18be719dfcf3d57d36379fa105726b7de935",
+        "terrine-full-expression.sql": "edb6bed6e187d58b518ada1e599c7c4500d7e905949b5c925557b7e3b7429aef",
+        "public-study-statement-0.sql": "4d1abefc36d52f1cab52e599796b25019b6b9e237022b562602ba3bf4f599471",
+        "public-study-statement-1.sql": "cc023b0087b69b9c7cb42613d366314834b8338a4e59bb8c967b3279c867ed08",
+        "public-study-statement-2.sql": "ccb77d327ffdce5c0d4dd664be4d856258f99aed6d5063d4e34269417005dc0f"
+      },
+      "query_time_ratio": 50.510257782048306,
+      "submitted_sql_byte_ratio": 95.1676807444524
+    }
+  },
+  "scope": "Matched unit/time, values, completeness and reasons; full public metadata/guards reported separately. DuckDB only."
+}

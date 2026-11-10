@@ -4,13 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
-from datetime import datetime
+from datetime import UTC, datetime
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal
 
 import ibis
 
 from terrine.semantic.rules import calendar_average_alignment
+from terrine.spec.anchors import FixedDate, Schedule
 from terrine.temporal.aggregate import (
     AggregateRequest,
     TemporalResult,
@@ -21,6 +22,7 @@ from terrine.windows import Window
 
 if TYPE_CHECKING:
     from terrine.model import Model
+    from terrine.spec.design import Design
 
 __all__ = ["CompileContext", "LoweredAggregates", "lower_aggregates"]
 
@@ -32,7 +34,29 @@ class CompileContext:
     model: Model
     unit: str
     fixed_anchors: Sequence[datetime] | None
+    origin_bounds: tuple[datetime, datetime] | None
     events_for: Callable[[str], ibis.Table]
+
+
+def _declared_origin_bounds(design: Design, model: Model) -> tuple[datetime, datetime] | None:
+    """Conservative UTC extrema from ordinary origin declarations, without reading rows."""
+    anchor = design.anchor
+    try:
+        if isinstance(anchor, FixedDate):
+            value = anchor.date
+            resolved = value if isinstance(value, datetime) else model.day_boundary(value)
+            instant = resolved.astimezone(UTC)
+            return instant, instant
+        if isinstance(anchor, Schedule):
+            count = anchor.count(model.day_boundary)
+            if count:
+                return (
+                    anchor.instant(0, model.day_boundary).astimezone(UTC),
+                    anchor.instant(count - 1, model.day_boundary).astimezone(UTC),
+                )
+    except OverflowError:
+        return None
+    return None
 
 
 def _resolution(ctx: CompileContext, window: Window, *, relative: bool) -> Literal["day", "event"]:
@@ -101,6 +125,7 @@ def lower_aggregates(
             ctx.model.readiness,
             boundary=ctx.model.catalog.day_boundary,
             resolution=resolution,
+            _origin_bounds=None if relative else ctx.origin_bounds,
         )
         table = result.table
         columns.update(result.columns)

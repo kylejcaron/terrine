@@ -1,0 +1,555 @@
+{
+  "timing_sample": false,
+  "timers": "inclusive; parent IDs identify nesting, never sum overlapping phases",
+  "phase_counts": {
+    "build": 1,
+    "compile_design": 2,
+    "expression_construction": 2,
+    "metadata_probe": 18,
+    "public_materialize": 1,
+    "native_function_admission": 4,
+    "execution_model_rebind": 1,
+    "primitive_admission": 1,
+    "validation_schedule": 1,
+    "statement_render_check": 3,
+    "sql_render": 3,
+    "statement_admission": 3,
+    "study_execute": 2,
+    "gated_expression_construction": 1,
+    "study_stream_open": 1,
+    "stream_gate_resolve": 2,
+    "stream_next": 2
+  },
+  "phases": [
+    {
+      "id": 0,
+      "parent": null,
+      "phase": "build",
+      "boundary": "Design.build",
+      "status": "ok",
+      "seconds": 6.1030087501276284
+    },
+    {
+      "id": 1,
+      "parent": 0,
+      "phase": "compile_design",
+      "boundary": "terrine.compile.dispatch.compile_design",
+      "status": "ok",
+      "seconds": 6.102993958862498
+    },
+    {
+      "id": 2,
+      "parent": 1,
+      "phase": "expression_construction",
+      "boundary": "terrine.compile.dispatch._compile_design",
+      "status": "ok",
+      "seconds": 5.839220708003268
+    },
+    {
+      "id": 3,
+      "parent": 2,
+      "phase": "metadata_probe",
+      "boundary": "terrine.execution._native._rows",
+      "status": "ok",
+      "seconds": 0.00042329193092882633,
+      "digest": "16197aeebecad30d",
+      "submitted_bytes": 115,
+      "scope": "metadata_probe"
+    },
+    {
+      "id": 4,
+      "parent": 2,
+      "phase": "metadata_probe",
+      "boundary": "terrine.execution._native._rows",
+      "status": "ok",
+      "seconds": 0.0011635830160230398,
+      "digest": "cf3e232cea27d231",
+      "submitted_bytes": 112,
+      "scope": "metadata_probe"
+    },
+    {
+      "id": 5,
+      "parent": null,
+      "phase": "public_materialize",
+      "boundary": "Frame.materialize",
+      "status": "ok",
+      "seconds": 10.603368999902159
+    },
+    {
+      "id": 6,
+      "parent": 5,
+      "phase": "native_function_admission",
+      "boundary": "terrine.execution._native.check_native_functions",
+      "status": "ok",
+      "seconds": 0.015586083987727761,
+      "digest": "47af98c807914ea0",
+      "submitted_bytes": 43,
+      "scope": "admission"
+    },
+    {
+      "id": 7,
+      "parent": 6,
+      "phase": "metadata_probe",
+      "boundary": "terrine.execution._native._rows",
+      "status": "ok",
+      "seconds": 0.012943249894306064,
+      "digest": "65e5899ceed1dde8",
+      "submitted_bytes": 99,
+      "scope": "metadata_probe"
+    },
+    {
+      "id": 8,
+      "parent": 5,
+      "phase": "metadata_probe",
+      "boundary": "terrine.execution._native._rows",
+      "status": "ok",
+      "seconds": 0.0002592499367892742,
+      "digest": "47af98c807914ea0",
+      "submitted_bytes": 43,
+      "scope": "metadata_probe"
+    },
+    {
+      "id": 9,
+      "parent": 5,
+      "phase": "metadata_probe",
+      "boundary": "terrine.execution._native._rows",
+      "status": "ok",
+      "seconds": 0.00013841595500707626,
+      "digest": "47af98c807914ea0",
+      "submitted_bytes": 43,
+      "scope": "metadata_probe"
+    },
+    {
+      "id": 10,
+      "parent": 5,
+      "phase": "metadata_probe",
+      "boundary": "terrine.execution._native._rows",
+      "status": "ok",
+      "seconds": 0.0001360001042485237,
+      "digest": "f9f714b4a99da09b",
+      "submitted_bytes": 152,
+      "scope": "metadata_probe"
+    },
+    {
+      "id": 11,
+      "parent": 5,
+      "phase": "metadata_probe",
+      "boundary": "terrine.execution._native._rows",
+      "status": "ok",
+      "seconds": 0.0001402089837938547,
+      "digest": "f9f714b4a99da09b",
+      "submitted_bytes": 152,
+      "scope": "metadata_probe"
+    },
+    {
+      "id": 12,
+      "parent": 5,
+      "phase": "metadata_probe",
+      "boundary": "terrine.execution._native._rows",
+      "status": "ok",
+      "seconds": 0.0003222501836717129,
+      "digest": "16197aeebecad30d",
+      "submitted_bytes": 115,
+      "scope": "metadata_probe"
+    },
+    {
+      "id": 13,
+      "parent": 5,
+      "phase": "metadata_probe",
+      "boundary": "terrine.execution._native._rows",
+      "status": "ok",
+      "seconds": 0.0007936251349747181,
+      "digest": "cf3e232cea27d231",
+      "submitted_bytes": 112,
+      "scope": "metadata_probe"
+    },
+    {
+      "id": 14,
+      "parent": 5,
+      "phase": "execution_model_rebind",
+      "boundary": "Model._for_execution",
+      "status": "ok",
+      "seconds": 0.00856891693547368
+    },
+    {
+      "id": 15,
+      "parent": 14,
+      "phase": "metadata_probe",
+      "boundary": "terrine.execution._native._rows",
+      "status": "ok",
+      "seconds": 0.0002572080120444298,
+      "digest": "16197aeebecad30d",
+      "submitted_bytes": 115,
+      "scope": "metadata_probe"
+    },
+    {
+      "id": 16,
+      "parent": 14,
+      "phase": "metadata_probe",
+      "boundary": "terrine.execution._native._rows",
+      "status": "ok",
+      "seconds": 0.0007730838842689991,
+      "digest": "cf3e232cea27d231",
+      "submitted_bytes": 112,
+      "scope": "metadata_probe"
+    },
+    {
+      "id": 17,
+      "parent": 14,
+      "phase": "metadata_probe",
+      "boundary": "terrine.execution._native._rows",
+      "status": "ok",
+      "seconds": 0.00018954207189381123,
+      "digest": "16197aeebecad30d",
+      "submitted_bytes": 115,
+      "scope": "metadata_probe"
+    },
+    {
+      "id": 18,
+      "parent": 14,
+      "phase": "metadata_probe",
+      "boundary": "terrine.execution._native._rows",
+      "status": "ok",
+      "seconds": 0.0007242909632623196,
+      "digest": "cf3e232cea27d231",
+      "submitted_bytes": 112,
+      "scope": "metadata_probe"
+    },
+    {
+      "id": 19,
+      "parent": 5,
+      "phase": "compile_design",
+      "boundary": "terrine.compile.dispatch.compile_design",
+      "status": "ok",
+      "seconds": 6.34793462487869
+    },
+    {
+      "id": 20,
+      "parent": 19,
+      "phase": "expression_construction",
+      "boundary": "terrine.compile.dispatch._compile_design",
+      "status": "ok",
+      "seconds": 6.091660124948248
+    },
+    {
+      "id": 21,
+      "parent": 20,
+      "phase": "metadata_probe",
+      "boundary": "terrine.execution._native._rows",
+      "status": "ok",
+      "seconds": 0.00031104194931685925,
+      "digest": "16197aeebecad30d",
+      "submitted_bytes": 115,
+      "scope": "metadata_probe"
+    },
+    {
+      "id": 22,
+      "parent": 20,
+      "phase": "metadata_probe",
+      "boundary": "terrine.execution._native._rows",
+      "status": "ok",
+      "seconds": 0.0008273748680949211,
+      "digest": "cf3e232cea27d231",
+      "submitted_bytes": 112,
+      "scope": "metadata_probe"
+    },
+    {
+      "id": 23,
+      "parent": 5,
+      "phase": "primitive_admission",
+      "boundary": "ExecutionContext.admit",
+      "status": "ok",
+      "seconds": 0.07369629200547934
+    },
+    {
+      "id": 24,
+      "parent": 5,
+      "phase": "validation_schedule",
+      "boundary": "terrine.frame.run_schedule",
+      "status": "ok",
+      "seconds": 0.037968166870996356
+    },
+    {
+      "id": 25,
+      "parent": 24,
+      "phase": "statement_render_check",
+      "boundary": "ExecutionContext._check_query",
+      "status": "ok",
+      "seconds": 0.017125125043094158
+    },
+    {
+      "id": 26,
+      "parent": 25,
+      "phase": "sql_render",
+      "boundary": "SQLBackend.compile",
+      "status": "ok",
+      "digest": "7c55b12a5872d7d1",
+      "submitted_bytes": 108,
+      "scope": "study",
+      "seconds": 0.001862082863226533
+    },
+    {
+      "id": 27,
+      "parent": 25,
+      "phase": "statement_admission",
+      "boundary": "_DuckDBSession.check_query",
+      "status": "ok",
+      "seconds": 0.015148708131164312,
+      "digest": "7c55b12a5872d7d1",
+      "submitted_bytes": 108,
+      "scope": "study"
+    },
+    {
+      "id": 28,
+      "parent": 27,
+      "phase": "native_function_admission",
+      "boundary": "terrine.execution._native.check_native_functions",
+      "status": "ok",
+      "seconds": 0.01512779202312231,
+      "digest": "7c55b12a5872d7d1",
+      "submitted_bytes": 108,
+      "scope": "admission"
+    },
+    {
+      "id": 29,
+      "parent": 28,
+      "phase": "metadata_probe",
+      "boundary": "terrine.execution._native._rows",
+      "status": "ok",
+      "seconds": 0.012310999911278486,
+      "digest": "65e5899ceed1dde8",
+      "submitted_bytes": 99,
+      "scope": "metadata_probe"
+    },
+    {
+      "id": 30,
+      "parent": 24,
+      "phase": "study_execute",
+      "boundary": "_DuckDBSession.execute",
+      "status": "ok",
+      "seconds": 0.0007068749982863665,
+      "digest": "7c55b12a5872d7d1",
+      "submitted_bytes": 108,
+      "scope": "study"
+    },
+    {
+      "id": 31,
+      "parent": 24,
+      "phase": "statement_render_check",
+      "boundary": "ExecutionContext._check_query",
+      "status": "ok",
+      "seconds": 0.018478874815627933
+    },
+    {
+      "id": 32,
+      "parent": 31,
+      "phase": "sql_render",
+      "boundary": "SQLBackend.compile",
+      "status": "ok",
+      "digest": "09f4dc8878015867",
+      "submitted_bytes": 269,
+      "scope": "study",
+      "seconds": 0.0037494159769266844
+    },
+    {
+      "id": 33,
+      "parent": 31,
+      "phase": "statement_admission",
+      "boundary": "_DuckDBSession.check_query",
+      "status": "ok",
+      "seconds": 0.014645291958004236,
+      "digest": "09f4dc8878015867",
+      "submitted_bytes": 269,
+      "scope": "study"
+    },
+    {
+      "id": 34,
+      "parent": 33,
+      "phase": "native_function_admission",
+      "boundary": "terrine.execution._native.check_native_functions",
+      "status": "ok",
+      "seconds": 0.014634374994784594,
+      "digest": "09f4dc8878015867",
+      "submitted_bytes": 269,
+      "scope": "admission"
+    },
+    {
+      "id": 35,
+      "parent": 34,
+      "phase": "metadata_probe",
+      "boundary": "terrine.execution._native._rows",
+      "status": "ok",
+      "seconds": 0.012445166939869523,
+      "digest": "65e5899ceed1dde8",
+      "submitted_bytes": 99,
+      "scope": "metadata_probe"
+    },
+    {
+      "id": 36,
+      "parent": 24,
+      "phase": "study_execute",
+      "boundary": "_DuckDBSession.execute",
+      "status": "ok",
+      "seconds": 0.0015381670091301203,
+      "digest": "09f4dc8878015867",
+      "submitted_bytes": 269,
+      "scope": "study"
+    },
+    {
+      "id": 37,
+      "parent": 5,
+      "phase": "gated_expression_construction",
+      "boundary": "terrine.frame.gated_output",
+      "status": "ok",
+      "seconds": 0.04876433406025171
+    },
+    {
+      "id": 38,
+      "parent": 5,
+      "phase": "statement_render_check",
+      "boundary": "ExecutionContext._check_query",
+      "status": "ok",
+      "seconds": 3.6767747499980032
+    },
+    {
+      "id": 39,
+      "parent": 38,
+      "phase": "sql_render",
+      "boundary": "SQLBackend.compile",
+      "status": "ok",
+      "digest": "43c8d3affd396bb7",
+      "submitted_bytes": 301619,
+      "scope": "study",
+      "seconds": 3.6601692088879645
+    },
+    {
+      "id": 40,
+      "parent": 38,
+      "phase": "statement_admission",
+      "boundary": "_DuckDBSession.check_query",
+      "status": "ok",
+      "seconds": 0.0163482918869704,
+      "digest": "43c8d3affd396bb7",
+      "submitted_bytes": 301619,
+      "scope": "study"
+    },
+    {
+      "id": 41,
+      "parent": 40,
+      "phase": "native_function_admission",
+      "boundary": "terrine.execution._native.check_native_functions",
+      "status": "ok",
+      "seconds": 0.016104958951473236,
+      "digest": "43c8d3affd396bb7",
+      "submitted_bytes": 301619,
+      "scope": "admission"
+    },
+    {
+      "id": 42,
+      "parent": 41,
+      "phase": "metadata_probe",
+      "boundary": "terrine.execution._native._rows",
+      "status": "ok",
+      "seconds": 0.012842792086303234,
+      "digest": "65e5899ceed1dde8",
+      "submitted_bytes": 99,
+      "scope": "metadata_probe"
+    },
+    {
+      "id": 43,
+      "parent": 5,
+      "phase": "study_stream_open",
+      "boundary": "_DuckDBSession.batches",
+      "status": "ok",
+      "seconds": 0.20388245792128146,
+      "digest": "43c8d3affd396bb7",
+      "submitted_bytes": 301619,
+      "scope": "study"
+    },
+    {
+      "id": 44,
+      "parent": 5,
+      "phase": "stream_gate_resolve",
+      "boundary": "GatedStream.resolve",
+      "status": "ok",
+      "seconds": 0.1265027499757707
+    },
+    {
+      "id": 45,
+      "parent": 44,
+      "phase": "stream_next",
+      "boundary": "_ClosingArrowReader.__next__",
+      "status": "ok",
+      "seconds": 0.1253384160809219
+    },
+    {
+      "id": 46,
+      "parent": 5,
+      "phase": "stream_gate_resolve",
+      "boundary": "GatedStream.resolve",
+      "status": "ok",
+      "seconds": 1.166015863418579e-06
+    },
+    {
+      "id": 47,
+      "parent": 5,
+      "phase": "stream_next",
+      "boundary": "_ClosingArrowReader.__next__",
+      "status": "exhausted",
+      "seconds": 0.0015190418343991041
+    }
+  ],
+  "sql_compilations": [
+    {
+      "kind": "validation",
+      "seconds": 0.0018264171667397022,
+      "characters": 108,
+      "bytes": 108,
+      "digest": "7c55b12a5872d7d1"
+    },
+    {
+      "kind": "validation",
+      "seconds": 0.003716625040397048,
+      "characters": 269,
+      "bytes": 269,
+      "digest": "09f4dc8878015867"
+    },
+    {
+      "kind": "output",
+      "seconds": 3.659868499962613,
+      "characters": 301619,
+      "bytes": 301619,
+      "digest": "43c8d3affd396bb7"
+    }
+  ],
+  "sql_compilation_count": 3,
+  "sql_compilation_bytes": 301996,
+  "study_statement_count": 3,
+  "study_statement_bytes": 301996,
+  "capture_excludes": "metadata/admission probes, transaction control and catalog introspection",
+  "unseparated": {
+    "expression_construction": "compiler dispatch includes shape validation; compile_design also includes resolution, exact scope and pruning outside this nested timer",
+    "statement_render_check": "includes rendering, ownership checks and admission",
+    "study_execute": "includes backend hooks, execution and Arrow conversion",
+    "stream_next": "includes deferred engine execution and Arrow batch conversion",
+    "public_materialize": "session opening/closing, remaining validation, output assembly and metadata are not isolated; this timer includes all nested phases",
+    "probes": "metadata_probe records _native._rows only; direct-driver admission witnesses and transaction control are not separately captured"
+  },
+  "duplicate_digest_note": "matching SQL digests do not prove duplicate database work",
+  "profile": "diagnostic.pstats",
+  "case": "wide",
+  "input_tables": {
+    "users": {
+      "rows": 10,
+      "schema": "unit_id: string\nobserved_from: timestamp[us, tz=UTC]\nobserved_until: timestamp[us, tz=UTC]",
+      "arrow_stream_sha256": "a461ff87ffd8acf0cf4b880ecc9b89e9f6e3f6a29dbb43f2ffb030db8c904c55"
+    },
+    "events_native": {
+      "rows": 300,
+      "schema": "unit_id: string\nevent_id: string\noccurrence_id: string\nevent_time: timestamp[us, tz=UTC]\nevent_type: string\nvalue: double\nadopted: string\nrevision: int64",
+      "arrow_stream_sha256": "650feab0b0583fee58a5ea6f5455351b869df2e7178e9f5d315eb26296afadd7"
+    }
+  },
+  "schema_parity": true,
+  "result_parity": true
+}

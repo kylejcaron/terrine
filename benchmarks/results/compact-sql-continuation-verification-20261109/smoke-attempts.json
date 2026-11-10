@@ -1,0 +1,36 @@
+{
+  "command": "env UV_NO_SYNC=1 PYTHONPATH=/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql uv run python benchmarks/results/compact-sql-continuation-verification-20261109/public-smokes.py.txt",
+  "attempts": [
+    {
+      "source_snapshot": "public-smokes-initial.py.txt",
+      "exit": 1,
+      "stdout": "",
+      "stderr_excerpt": "_duckdb.ConnectionException: Connection Error: Connection already closed!",
+      "cause": "Diagnostic closed DuckDB raw_sql return connection when attempting cursor cleanup; failed before public model binding. Fixed only diagnostic cursor ownership."
+    },
+    {
+      "source_snapshot": "public-smokes-cursor-corrected.py.txt",
+      "exit": 1,
+      "stdout": "",
+      "stderr_excerpt": "_duckdb.CatalogException: Catalog Error: Table with name TimeZone does not exist!",
+      "cause": "Diagnostic used PostgreSQL SHOW TimeZone syntax on DuckDB after value assertions; replaced only session observation with shared current_setting."
+    },
+    {
+      "source_snapshot": "public-smokes-schema-boundary.py.txt",
+      "exit": 1,
+      "stdout": "",
+      "stderr_excerpt": "AssertionError: original_union_fallback at exact serialized schema equality",
+      "cause": "Compared result.table lacking materialized-frame schema metadata to earlier result.to_pyarrow artifact. Named state probe confirms every field equal and same public to_pyarrow schema exactly equal. Corrected diagnostic accessor only, preserving exact metadata/dtype gate."
+    }
+  ],
+  "captured_full_schema_probe": "state-schema-probe.txt",
+  "successful_source": "public-smokes.py.txt",
+  "successful_outputs": [
+    "duckdb-1.5.6-public-smokes.json",
+    "duckdb-1.5.0-public-smokes.json",
+    "postgres-public-daily.json"
+  ],
+  "production_changes": false,
+  "test_changes": false,
+  "old_raw_gap_boundary_unchanged": true
+}
