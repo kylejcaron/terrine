@@ -175,6 +175,13 @@ if RELEASES:  # An empty list defines no test, rather than collecting a skipped 
                             ).to_pyarrow()
                         finally:
                             direct_con.disconnect()
+                    outputs = {column["name"] for column in expected_schema}
+                    current_rows = current_rows.select(
+                        [name for name in current_rows.column_names if name in outputs]
+                    )
+                    staged = staged.select(
+                        [name for name in staged.column_names if name in outputs]
+                    )
                     assert current_rows.schema.equals(staged.schema, check_metadata=False)
                     assert current_rows.to_pylist() == staged.to_pylist()
                     continue

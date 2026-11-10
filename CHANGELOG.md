@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0a1
+## 0.1.0a2
 
 ### Internal aggregation
 
@@ -68,6 +68,10 @@
   reduces SQL compilation but increases construction/public-call medians; no
   query-runtime gain or live cloud parity is inferred from text reduction.
 
+- `tr.preview` reports `local_event/native_float`, `local_day/native_float`,
+  `local_event/exact` or `local_day/exact`, according to the declaration-derived
+  input and arithmetic. Column and cohort metadata retain their arithmetic mode.
+
 ### Breaking changes
 
 - Retained execution no longer produces or substitutes daily/prefix
@@ -100,6 +104,17 @@
   Opaque or malformed active references are not decoded as run owners, and
   ambiguous bare/fenced references remain pinned while any owner can still run
   or retry. Exact historical run IDs remain supported even when they are JSON.
+
+### Fixed
+
+- Release-upgrade checks preserve declared output schemas, column order and
+  values without treating compiler-only support-column order as a stored-format
+  contract.
+
+## 0.1.0a1
+
+### Breaking changes
+
 - Python 3.12 is the minimum supported version; CPython 3.12, 3.13 and 3.14
   are supported.
 - Float sums and means use native arithmetic unless `exact=True`.
@@ -130,8 +145,8 @@
 - Design and dataset-definition documents require `schema_version: 4` and write
   durations as canonical text such as `gap: 1w` and `every: 1mo`; version 3 and
   older documents refuse: reconstruct and save the design or definition.
-  Catalog documents use version 3; manifest envelopes stay at version 1,
-  with version-4 nested designs and definitions.
+  Catalog documents use version 3; manifest and saved-plan outer envelopes stay
+  at version 1, with version-4 nested designs and definitions.
 - Design, dataset-definition and Catalog documents omit fields equal to their
   defaults (a minimal Design saves only `unit` and `anchor`), including the
   training and scoring views, split policies and winsorization records inside a
@@ -210,6 +225,9 @@
   catch it and inspect immutable `code` and `context` rather than relying on
   bare `TypeError`, `RuntimeError` or `FileExistsError`. Pydantic records retain
   `ValidationError`.
+- DuckDB runtime prefix layers store counts as Arrow `decimal128(38, 0)`:
+  read newly written layers with this version or newer; older layers still
+  restore and compose.
 - Runtime owner namespaces record metadata schema version 1. Databases created
   by earlier pre-releases without a version refuse with
   `terrine.runtime.schema_unsupported` (`reason="unversioned"`) before any write,
@@ -324,19 +342,51 @@
   term's reason. Their records (`Lt`, `Lte`, `Gte`, `Ne`, `IsIn`, `Between`,
   `Or`, `Not`, and now `Gt`, `Eq`, `IsNull`, `And`) are stable exports of
   `terrine.spec`, and Design documents stay at version 4 with new node tags.
-- `ColumnMeta.arithmetic` records each metric column's arithmetic
+- Native float sums and means are evaluated as differences of binary64 running
+  sums, without `DECIMAL(38, 9)` quantization or exact backend state, and their
+  generated SQL is smaller (the README design drops from about 86k to 66k
+  characters). Non-finite inputs and running sums beyond binary64's range
+  still refuse with `terrine.temporal.float64_precision`.
+  `ColumnMeta.arithmetic` records each metric column's declared arithmetic
   (`"native"` or `"exact"`; `None` for other columns) through Arrow and JSON
-  metadata; metadata saved without it reads as `None`. `tr.preview` reports
-  `local_event/native_float`, `local_day/native_float`, `local_event/exact` or
-  `local_day/exact`, according to the declaration-derived input and arithmetic.
-  Cohort summaries also retain the value column's arithmetic.
+  metadata; metadata saved without it reads as `None`. `tr.preview` names
+  native float windows' strategies
+  `sparse_day_prefix/native_float` and `sparse_event_prefix/native_float`.
+- On PostgreSQL and the portable expression policy, whose float arithmetic
+  raises on overflow and underflow, native sums are withheld by a magnitude
+  bound once a unit's accumulated history could leave half of binary64's range,
+  and means and ratios are withheld when their divisor-dependent guard allows
+  a quotient to round to zero (below `2**-1020` with divisor magnitude at least
+  one) or overflow (above `2**1020` with a divisor below one).
+  Cohort totals and cumulative trajectory values of native metrics are bounded
+  the same way. Affected windows and summaries refuse
+  `terrine.temporal.float64_precision` (`bound_overflow`) instead of failing
+  with a driver error; DuckDB results are unchanged. Cohort summaries record
+  the value column's `arithmetic` in their metadata.
 - An exact float window that discards a nonzero contribution below its `1e-9`
-  resolution publishes the retained sum with `__reason = "below_resolution"`
-  and `__complete` unchanged; means, ratios, cumulative trajectory values and
-  complete cohort summaries carry the note. The
-  [numerical contract](docs/guides/backend-compatibility.md#shared-numerical-contract)
-  distinguishes the selected-input exact bound from ordinary native backend
-  arithmetic and the preserved specialized cumulative/cohort safeguards.
+  resolution publishes the sum of retained contributions with
+  `__reason = "below_resolution"` and `__complete` unchanged; means, ratios,
+  cumulative trajectory values and complete cohort summaries carry the note.
+  The numerical contract documents both arithmetic modes: the native bound
+  against the history prefix (`2·n_P·2^-53·Σ_P|x|`), the exact window bound,
+  and when to choose exact. PostgreSQL and the portable policy also refuse
+  `bound_overflow` for histories reaching half the binary64 range, quotients
+  that could round to zero (below `2^-1020` with a divisor of magnitude at
+  least one) or overflow (above `2^1020` with a divisor below one), and cohort
+  means whose scaled quotient or product the engine would raise on. Prefix
+  state format is part of every layer identity, rebuilding earlier layers;
+  portable prefix lookup aligns an unscaled anchor instant with microsecond
+  state.
+- Generated study SQL is smaller and faster with unchanged results: columns no
+  later step reads are dropped from every nested projection, prefix lookups for
+  one window join in a single chain, windows over the same anchors, bounds and
+  coverage share one relation of request points, and DuckDB compares
+  microsecond timestamps natively. The README design compiles to about 19.7k
+  characters (from 66k); time-to-event and trial designs shrink by roughly
+  three to five times. The scheduled scale tier checks each recipe's SQL size
+  and results against hand-written queries of the same values (see the cost
+  guide's budget table). Query-time comparisons are tracked separately; run
+  `uv run python -m benchmarks.run_cost` to measure them.
 - Warehouse exports retain scoring rows when there are no outcome windows.
 ### Fixed
 
@@ -370,12 +420,12 @@
   and results holding records are read in binary so the identifiers publish as
   the same Arrow struct DuckDB returns.
 
-- PostgreSQL first-occurrence lookups use set-based union/window evaluation
-  instead of correlated top-one scans. Anchor assembly uses hash/merge-joinable,
-  null-preserving keys, retaining strict window boundaries, event tie ordering
-  and duplicate request multiplicity. DuckDB's selector lookup path is unchanged;
-  portable union timelines normalize key nullability and compatible integer
-  widths without changing output key types.
+- PostgreSQL prefix and first-occurrence lookups use set-based union/window
+  evaluation instead of correlated top-one scans. Anchor assembly uses
+  hash/merge-joinable, null-preserving keys, retaining strict window boundaries,
+  event tie ordering and duplicate request multiplicity. DuckDB's native lookup
+  path is unchanged; portable union timelines also normalize key nullability
+  and compatible integer widths without changing output key types.
 
 ## 0.1.0.dev2
 
