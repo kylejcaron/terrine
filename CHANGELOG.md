@@ -44,6 +44,29 @@
   DuckDB mixed naive/aware comparisons use exact timestamp parts, and
   microsecond extraction uses native epoch ticks rather than calendar
   differences, avoiding overflow or loss of adjacent endpoint instants.
+- Reuse prepared exact timestamp keys and compatible window contexts, and narrow
+  each aggregate finalization branch to its own dependencies while preserving
+  original anchor fields. Declaration-proven UTC microsecond origins can use
+  DuckDB native shifted comparisons; other domains retain exact comparisons.
+  Unshifted portable comparisons retain integer timestamp parts, so string
+  as-of reads do not acquire an unrelated decimal-arithmetic admission requirement.
+- The metadata-only BigQuery five-metric, ten-window SQL budget now passes its
+  existing 1,000,000-character ceiling; live cloud execution is not inferred.
+- Compact daily envelope masking with guarded native keys or exact integer
+  timestamp parts, retaining nanosecond/pre-epoch ordering and wide-endpoint
+  fallback. Finite point-only normalization never casts source clocks. Share
+  compatible support/count payloads only within full membership identities;
+  preserve original anchor multiplicity, availability, reasons and checks.
+- Compact eligible exact scale-zero binned-state query relations while keeping
+  the original scheduled and endpoint validation studies separate. Whole-day
+  host-clock/count proof and the active unbounded-coefficient policy are required;
+  float, bounded and other declined paths retain their original union.
+- Meet unchanged README/state-panel formatted SQL budgets at 19,520/18,525
+  characters in the final combined implementation; metadata-only BigQuery
+  compilation measures 514,334. Local PostgreSQL and DuckDB 1.5.0 public boundary
+  proofs pass without a dependency/floor change. A separate state A/B comparison
+  reduces SQL compilation but increases construction/public-call medians; no
+  query-runtime gain or live cloud parity is inferred from text reduction.
 
 ### Breaking changes
 

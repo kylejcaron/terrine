@@ -163,9 +163,6 @@ def test_readme_design_sql_within_budget():
 
 
 @pytest.mark.scale
-@pytest.mark.xfail(
-    strict=True, reason="measured 1,050,208 characters (formatted); 22,600 per metric window"
-)
 def test_five_metrics_by_ten_windows_compile_under_the_bigquery_limit():
     """Compiled for BigQuery from relation metadata alone; no warehouse is contacted."""
     from ibis.backends.bigquery import Backend

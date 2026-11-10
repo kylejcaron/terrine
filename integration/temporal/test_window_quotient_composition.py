@@ -548,33 +548,48 @@ def test_all_null_ratio_numerator_is_not_a_zero_denominator(con):
     assert row[result.columns["requested"].reason_column] == "all_values_null"
 
 
-def test_local_window_preserves_ns_events_around_utc_microsecond_anchor(con):
-    events = con.sql("""
-        SELECT 'a' AS user_id, ts::TIMESTAMP_NS AS occurred_at, amount::BIGINT AS amount
-        FROM (VALUES
-            ('2025-01-02 11:59:59.999999999', 1),
-            ('2025-01-02 12:00:00.000000000', 2),
-            ('2025-01-02 12:00:00.000000001', 4)
-        ) AS e(ts, amount)
-    """)
-    source = BoundSource(
-        "ns_events",
-        TableRef(kind="table", name="ns_events"),
-        "occurred_at",
-        {"user": "user_id"},
-        {"revenue": "amount"},
-        {},
-        (),
-        "duckdb",
-        "UTC",
+def test_local_window_preserves_ns_events_around_utc_microsecond_anchors(con):
+    anchor_us = [-1, -1, 1_735_819_200_000_000]
+    edges = (-1_000_000_001, -1_000_000_000, -999_999_999, -1, 0, 1, 999_999_999, 10**9, 10**9 + 1)
+    instants = [origin * 1000 + edge for origin in dict.fromkeys(anchor_us) for edge in edges]
+    amounts = list(range(1, len(instants) + 1))
+    pair = _timestamp_source(con, pa.array(instants, type=pa.timestamp("ns")), amounts)
+    anchors = con.create_table(
+        "microsecond_anchors",
+        pa.table(
+            {
+                "unit": ["a"] * len(anchor_us),
+                "anchor_id": [str(index) for index in range(len(anchor_us))],
+                "t0": pa.array(anchor_us, type=pa.timestamp("us", tz="UTC")),
+            }
+        ),
     )
-    events = normalize_events(events, source, "user_id")
-    measure = resolve_measure(
-        events, BoundMeasure("revenue", "ns_events", "sum", (), None, None), source=source
+    windows = {"before": (-1, 0), "after": (0, 1), "straddling": (-1, 1)}
+    result = _batch(
+        anchors,
+        [
+            (name, [pair], Window(f"{start}s", f"{end}s"), "mean")
+            for name, (start, end) in windows.items()
+        ],
+        readiness=Readiness(
+            {
+                "timestamp_edges": BoundCoverage(
+                    datetime(1960, 1, 1, tzinfo=UTC), datetime(2026, 1, 1, tzinfo=UTC)
+                )
+            }
+        ),
     )
-    pair = (measure, (events, source))
-    anchors = _anchors(con, time="2025-01-02 12:00:00+00")
-    before = _result(anchors, [pair], kind="mean", window=Window("-1s", 0))
-    after = _result(anchors, [pair], kind="mean", window=Window(0, "1s"))
-    assert _rows(con, before)[0]["requested"] == 1
-    assert _rows(con, after)[0]["requested"] == 6
+    rows = _rows(con, result)
+    assert len(rows) == len(anchor_us)
+    for row in rows:
+        origin_ns = anchor_us[int(row["anchor_id"])] * 1000
+        for name, (start, end) in windows.items():
+            expected = sum(
+                amount
+                for instant, amount in zip(instants, amounts, strict=True)
+                if origin_ns + start * 10**9 <= instant < origin_ns + end * 10**9
+            )
+            assert row[name] == expected, (row["anchor_id"], name)
+            meta = result.columns[name]
+            assert row[meta.reason_column] is None
+            assert row[meta.complete_column] is True

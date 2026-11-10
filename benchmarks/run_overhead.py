@@ -262,6 +262,7 @@ def compilations() -> Generator[list[dict[str, Any]]]:
                 "kind": _query_kind(expr),
                 "seconds": elapsed,
                 "characters": len(sql),
+                "bytes": len(sql.encode()),
                 "digest": hashlib.sha256(sql.encode()).hexdigest()[:16],
             }
         )

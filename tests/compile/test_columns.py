@@ -145,7 +145,10 @@ def test_time_series_columns_are_values_with_named_support(column_model):
         Design(
             "user",
             Schedule("1d", "2025-01-02", "2025-01-03"),
-            features={"rev_14d": agg("total", window=("-14d", "0d"))},
+            features={
+                "rev_14d": agg("total", window=("-14d", "0d")),
+                "rev_1d": agg("total", window=("-1d", "0d")),
+            },
         )
         .build(column_model)
         .materialize()
@@ -159,10 +162,31 @@ def test_time_series_columns_are_values_with_named_support(column_model):
         "rev_14d",
         "rev_14d__complete",
         "rev_14d__reason",
+        "rev_1d",
+        "rev_1d__complete",
+        "rev_1d__reason",
     ]
     assert "_observed_from" in full.column_names
     assert set(compact.column_names) < set(full.column_names)
-    assert frame.columns["rev_14d"].complete_column == "rev_14d__complete"
+    assert list(frame.columns) == ["rev_14d", "rev_1d"]
+    for name in ("rev_14d", "rev_1d"):
+        meta = frame.columns[name]
+        assert meta.complete_column == f"{name}__complete"
+        assert meta.reason_column == f"{name}__reason"
+        assert meta.role == "feature"
+        assert meta.numeric_policy == "exact"
+        assert meta.arithmetic == "exact"
+        assert compact.schema.field(name).type == pa.decimal128(38, 0)
+        assert compact.schema.field(meta.complete_column).type == pa.bool_()
+        assert compact.schema.field(meta.reason_column).type == pa.string()
+        assert full.schema.field(meta.observed_from_column).type == pa.timestamp("us", tz="UTC")
+        assert full.schema.field(meta.observed_until_column).type == pa.timestamp("us", tz="UTC")
+    assert compact["rev_14d"].to_pylist() == [None] * 4
+    assert compact["rev_14d__complete"].to_pylist() == [False] * 4
+    assert compact["rev_14d__reason"].to_pylist() == ["incomplete_coverage"] * 4
+    assert compact["rev_1d"].to_pylist() == [Decimal(0), Decimal(10), Decimal(0), None]
+    assert compact["rev_1d__complete"].to_pylist() == [True] * 4
+    assert compact["rev_1d__reason"].to_pylist() == [None, None, None, "all_values_null"]
 
 
 @pytest.mark.parametrize("field", ["features", "outcomes", "eligibility"])

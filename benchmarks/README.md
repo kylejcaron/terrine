@@ -108,6 +108,85 @@ are observed empirical errors with their algorithm/version/error metadata;
 HLL/t-digest are not advertised as exact or given an invented hard tolerance.
 There is no billion-event or universal scale claim from local calibration.
 
+## Literal SQL comparison
+
+`benchmarks.compare_sql` compares three deterministic DuckDB datasets with their
+literal-SQL references: the README monthly example, a scaled monthly example,
+and a wide five-metric, ten-window example. It retains each source schema and
+content digest, submitted/compact/formatted SQL bytes, captured public study
+statements, and every uninstrumented timing sample. Both precompiled queries
+use the same Arrow execution boundary. Public materialization additionally
+includes admission, validation, compilation and richer output metadata; its
+timing is not an identical-payload comparison.
+
+```sh
+agent-slots -j 1 -- uv run python -m benchmarks.compare_sql --case readme --repeats 5 --output /path/to/new-readme
+agent-slots -j 1 -- uv run python -m benchmarks.compare_sql --case scaled --units 10000 --events-per-unit 30 \
+  --repeats 5 --output /path/to/new-scaled
+agent-slots -j 1 -- uv run python -m benchmarks.compare_sql --case wide --units 10000 --events-per-unit 30 \
+  --repeats 5 --output /path/to/new-wide
+# Separate instrumented diagnostics, not the final timing comparison.
+agent-slots -j 1 -- uv run python -m benchmarks.compare_sql --case wide --units 10 --events-per-unit 30 \
+  --repeats 1 --diagnostics --profile --output /path/to/new-tiny-wide-profile
+# Tiny correctness checks use the same cases and controls.
+agent-slots -j 1 -- uv run python -m benchmarks.compare_sql --case scaled --units 10 --events-per-unit 6 \
+  --repeats 1 --diagnostics --output /path/to/new-tiny-scaled
+agent-slots -j 1 -- uv run python -m benchmarks.compare_sql --case wide --units 10 --events-per-unit 30 \
+  --repeats 1 --output /path/to/new-tiny-wide
+```
+
+Every sample must match the independent Python oracle's ordered unit/origin
+support, strict types, values, completeness and reasons. The checker must also
+reject missing origins, duplicate origins, a changed metric and a changed
+column type. A diagnostic pass checks those same contracts, its full public
+schema and all public values against the ordinary materialization. Any failure
+fails the benchmark.
+
+`--diagnostics` adds one separate build and public materialization **before**
+the uninstrumented warm timing samples. `diagnostics.json` records actual call
+boundaries for build, compile-design, expression construction, execution-model
+rebinding, primitive admission, validation scheduling, statement rendering and
+admission, study execution, and stream consumption. SQL compilation records
+reuse `run_overhead.compilations`, including digests and submitted byte counts.
+Phase records carry parent IDs and inclusive elapsed times: nested timers
+overlap and must not be summed. Expression construction includes validation at
+the compiler's dispatch boundary; deferred execution and Arrow conversion are
+not separable within stream reads. Other unseparated work is explicitly listed.
+Matching SQL digests alone are not proof of duplicate database work.
+
+Captured study statements exclude metadata/admission probes, transaction
+control and catalog introspection. Diagnostic metadata-probe and native
+admission records are labelled separately, and direct-driver admission
+witnesses and transaction control remain unmeasured rather than reported as
+zero. `--profile` implies the diagnostic pass and writes `diagnostic.pstats`
+separately; it never replaces a timing sample. Both instrumentation contexts
+delegate the original methods and restore them on success or failure.
+
+Use fresh output directories and one engine thread (fixed by this comparator).
+Do not run benchmarks concurrently. Compare warm medians and ranges, build,
+SQL translation and public materialization separately. Instrumented/profiled
+numbers are diagnostic evidence, never performance gains. `environment.json`
+hashes the comparator, imported benchmark helpers (including `run_overhead.py`),
+fixture and production sources. Keep the comparator and helper revisions
+frozen across milestone comparisons; record production revisions separately.
+
+The [2026-11-09 compact-SQL report](../docs/research/2026-11-09-compact-generated-sql.md)
+and [combined final manifest](results/compact-sql-continuation-final-20261109.json)
+bind the reused five-repeat, unprofiled results at production `24e0573`, all
+prior milestones and the unchanged v2 baseline. Matched query/literal medians
+are 3.459× (README), 4.412× (scaled) and 1.839× (wide); only wide meets the 3×
+waypoint. Wide projected submitted SQL falls from 1,063,594 to 99,738 bytes.
+Its public call is still 30.013× the literal query and returns richer data.
+Unchanged actual consumer budgets pass at README 19,520, state-panel 18,525 and
+BigQuery 514,334 formatted characters (BigQuery compilation is metadata-only).
+
+The separately pinned state A/B comparison reduces SQL size and compilation,
+but increases construction/public-call medians and establishes no query-runtime
+gain. Its compact SQL is 22,767 characters before the final daily changes, not
+the final combined 18,525-character graph. Prior checkpoint measurements and
+inclusive tiny-wide profiles remain preserved at their original sources;
+profiles are not final timing samples. No cloud or all-recipe parity is inferred.
+
 ## Fixed compiler overhead
 
 `benchmarks/run_overhead.py` times the ordinary public path, `Design.build`

@@ -1,0 +1,201 @@
+{
+  "readme": {
+    "formatted_chars": 84821,
+    "cte_count": 2,
+    "largest_ctes": [
+      {
+        "alias": "t23",
+        "body_formatted_chars": 57455,
+        "projection_count": 3,
+        "operations": {
+          "Literal": 914,
+          "Identifier": 844,
+          "Anonymous": 339,
+          "Column": 322,
+          "Case": 213,
+          "If": 213,
+          "DataType": 111,
+          "Paren": 104,
+          "PropertyEQ": 78,
+          "ColumnDef": 78,
+          "Null": 57,
+          "Mul": 52
+        }
+      },
+      {
+        "alias": "t12",
+        "body_formatted_chars": 3955,
+        "projection_count": 16,
+        "operations": {
+          "Identifier": 143,
+          "Literal": 122,
+          "Column": 57,
+          "Paren": 24,
+          "Anonymous": 23,
+          "Alias": 21,
+          "Cast": 12,
+          "DataType": 12,
+          "Null": 9,
+          "And": 8,
+          "Select": 7,
+          "TableAlias": 7
+        }
+      }
+    ],
+    "operations": {
+      "Identifier": 1643,
+      "Literal": 1093,
+      "Column": 646,
+      "Anonymous": 366,
+      "If": 241,
+      "Case": 239,
+      "Paren": 173,
+      "DataType": 162,
+      "Alias": 116,
+      "Null": 90,
+      "Cast": 83,
+      "PropertyEQ": 78,
+      "ColumnDef": 78,
+      "And": 57,
+      "Mul": 52,
+      "TimestampFromParts": 52,
+      "TableAlias": 45,
+      "LT": 40,
+      "Select": 37,
+      "Is": 36,
+      "From": 35,
+      "Subquery": 34,
+      "Boolean": 34,
+      "Coalesce": 30,
+      "Sub": 27
+    }
+  },
+  "state_panel": {
+    "formatted_chars": 32387,
+    "cte_count": 5,
+    "largest_ctes": [
+      {
+        "alias": "t72",
+        "body_formatted_chars": 20970,
+        "projection_count": 7,
+        "operations": {
+          "Identifier": 656,
+          "Column": 259,
+          "Alias": 81,
+          "Literal": 69,
+          "TableAlias": 49,
+          "DataType": 48,
+          "Cast": 46,
+          "Select": 41,
+          "From": 39,
+          "Subquery": 39,
+          "Paren": 37,
+          "And": 31
+        }
+      },
+      {
+        "alias": "t46",
+        "body_formatted_chars": 2069,
+        "projection_count": 3,
+        "operations": {
+          "Identifier": 82,
+          "Column": 32,
+          "Alias": 9,
+          "TableAlias": 7,
+          "Cast": 7,
+          "DataType": 7,
+          "Coalesce": 7,
+          "Boolean": 7,
+          "Select": 6,
+          "From": 6,
+          "Subquery": 5,
+          "And": 5
+        }
+      },
+      {
+        "alias": "t26",
+        "body_formatted_chars": 1599,
+        "projection_count": 9,
+        "operations": {
+          "Identifier": 66,
+          "Literal": 47,
+          "Column": 28,
+          "Paren": 12,
+          "Anonymous": 10,
+          "Alias": 7,
+          "And": 4,
+          "Cast": 4,
+          "DataType": 4,
+          "Is": 3,
+          "Null": 3,
+          "Select": 2
+        }
+      },
+      {
+        "alias": "t12",
+        "body_formatted_chars": 1528,
+        "projection_count": 7,
+        "operations": {
+          "Identifier": 60,
+          "Literal": 53,
+          "Column": 21,
+          "Alias": 12,
+          "Paren": 10,
+          "Anonymous": 7,
+          "Select": 5,
+          "TableAlias": 5,
+          "From": 4,
+          "Subquery": 4,
+          "And": 2,
+          "Coalesce": 2
+        }
+      },
+      {
+        "alias": "t16",
+        "body_formatted_chars": 781,
+        "projection_count": 5,
+        "operations": {
+          "Identifier": 36,
+          "Literal": 19,
+          "Column": 11,
+          "Alias": 8,
+          "Select": 5,
+          "TableAlias": 5,
+          "From": 4,
+          "Subquery": 4,
+          "Cast": 4,
+          "DataType": 4,
+          "Anonymous": 3,
+          "Join": 1
+        }
+      }
+    ],
+    "operations": {
+      "Identifier": 1060,
+      "Column": 414,
+      "Literal": 242,
+      "Alias": 138,
+      "DataType": 82,
+      "Cast": 80,
+      "TableAlias": 78,
+      "Paren": 70,
+      "Select": 62,
+      "From": 58,
+      "Subquery": 55,
+      "And": 48,
+      "If": 36,
+      "Coalesce": 35,
+      "Null": 35,
+      "Boolean": 34,
+      "Case": 30,
+      "Anonymous": 27,
+      "DataTypeParam": 24,
+      "Table": 18,
+      "EQ": 18,
+      "Join": 15,
+      "Not": 14,
+      "Or": 14,
+      "Is": 13
+    }
+  }
+}

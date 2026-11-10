@@ -1,0 +1,19 @@
+{
+  "duckdb": "1.5.6",
+  "ibis": "12.0.0",
+  "module": "/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/terrine/__init__.py",
+  "postgres-us": {
+    "boundary": "half-open two-day schedule; naive source, pre-epoch lower/upper/adjacent ticks; NY caller session unchanged",
+    "source_unit": "us",
+    "strategies": {
+      "counted": "local_day/exact",
+      "total": "local_day/exact"
+    },
+    "public": {
+      "rows": 4,
+      "schema": "unit: string\nanchor_id: string\nt0: timestamp[us, tz=UTC]\ncounted: int64\ncounted__complete: bool\ncounted__reason: string\ntotal: decimal128(38, 2)\ntotal__complete: bool\ntotal__reason: string\n_observed_from: timestamp[us, tz=UTC]\n_observed_until: timestamp[us, tz=UTC]\nanchor_provenance: string\n__terrine_value_0_observed_from: timestamp[us, tz=UTC]\n__terrine_value_0_observed_until: timestamp[us, tz=UTC]\n__terrine_value_1_observed_from: timestamp[us, tz=UTC]\n__terrine_value_1_observed_until: timestamp[us, tz=UTC]",
+      "arrow_stream_sha256": "9f4fbd7715599b08e44acaaf87d00924c7285f05873b077c3e5aa3fc3950c806"
+    },
+    "rows": "[{'unit': 'a', 'counted': 2, 'total': Decimal('5.00'), 'counted__complete': True, 'total__complete': True, 'counted__reason': None, 'total__reason': None}, {'unit': 'a', 'counted': 2, 'total': Decimal('9.00'), 'counted__complete': True, 'total__complete': True, 'counted__reason': None, 'total__reason': None}, {'unit': 'empty', 'counted': 0, 'total': Decimal('0.00'), 'counted__complete': True, 'total__complete': True, 'counted__reason': None, 'total__reason': None}, {'unit': 'empty', 'counted': 0, 'total': Decimal('0.00'), 'counted__complete': True, 'total__complete': True, 'counted__reason': None, 'total__reason': None}]"
+  }
+}

@@ -1,0 +1,34 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.11, pytest-8.4.2, pluggy-1.7.0
+rootdir: /Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql
+configfile: pyproject.toml
+plugins: tach-0.35.3, hypothesis-6.170.1, xdist-3.8.0, split-0.11.0, platformdirs-4.13.4, anyio-4.15.1
+collected 26 items / 16 deselected / 10 selected
+
+integration/test_cost_budget.py ...x.x....                               [100%]
+
+=============================== warnings summary ===============================
+integration/test_cost_budget.py: 20 warnings
+  /Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/.venv/lib/python3.12/site-packages/ibis/backends/duckdb/__init__.py:332: DeprecationWarning: fetch_arrow_table() is deprecated, use to_arrow_table() instead.
+    meta = result.fetch_arrow_table()
+
+integration/test_cost_budget.py::test_recipe_sql_within_characters_per_feature[time_series]
+integration/test_cost_budget.py::test_recipe_sql_within_characters_per_feature[time_series]
+integration/test_cost_budget.py::test_recipe_sql_within_characters_per_feature[time_series]
+integration/test_cost_budget.py::test_recipe_sql_within_characters_per_feature[time_series]
+integration/test_cost_budget.py::test_recipe_sql_within_characters_per_feature[time_series]
+integration/test_cost_budget.py::test_recipe_sql_within_characters_per_feature[time_series]
+integration/test_cost_budget.py::test_recipe_sql_within_characters_per_feature[time_series]
+integration/test_cost_budget.py::test_recipe_sql_within_characters_per_feature[time_series]
+  /Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/.venv/lib/python3.12/site-packages/ibis/backends/duckdb/__init__.py:1718: DeprecationWarning: fetch_arrow_table() is deprecated, use to_arrow_table() instead.
+    rows = cur.fetch_arrow_table()
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================== slowest durations ===============================
+8.66s setup    integration/test_cost_budget.py::test_recipe_sql_within_characters_per_feature[time_series]
+
+(29 durations < 5s hidden.)
+=========================== short test summary info ============================
+XFAIL integration/test_cost_budget.py::test_recipe_sql_within_characters_per_feature[ltv] - measured 79,098 characters for one trajectory: one window per age against 30,000 per feature
+XFAIL integration/test_cost_budget.py::test_recipe_sql_within_characters_per_feature[life_table] - measured 49,345 characters for one follow-up against 30,000 per feature
+========== 8 passed, 16 deselected, 2 xfailed, 28 warnings in 10.77s ===========

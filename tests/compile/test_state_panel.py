@@ -191,6 +191,43 @@ def observed_model_factory(native_inputs):
     return build
 
 
+@pytest.mark.parametrize(
+    ("every", "start", "end", "extended_end", "boundary"),
+    [
+        ("1d", "2025-01-03", "2025-01-04", "2025-01-05", "UTC"),
+        ("2d", "2025-01-02", "2025-01-05", "2025-01-07", "UTC"),
+        ("12h", "2025-01-03", "2025-01-03", None, "UTC"),
+        ("2d", "2025-01-03", "2025-01-05", None, "UTC"),
+        ("1d", "9999-12-29", "9999-12-30", None, "UTC"),
+        ("1d", "2025-01-03", "2025-01-04", "2025-01-05", "UTC+05:30"),
+    ],
+)
+def test_compact_state_schedule_preserves_endpoint_clock(
+    panel_model, every, start, end, extended_end, boundary
+):
+    from terrine.compile.shapes.state_panel import _compact_state_schedule
+
+    if boundary != "UTC":
+        panel_model = Model.from_catalog(
+            panel_model.catalog.model_copy(update={"day_boundary": boundary}),
+            con=panel_model.con,
+            readiness=panel_model.readiness,
+            units=panel_model.units,
+        )
+
+    schedule = Schedule(every, start, end)
+    compact = _compact_state_schedule(schedule, panel_model)
+    if extended_end is None:
+        assert compact is None
+    else:
+        assert compact == Schedule(every, start, extended_end)
+        count = schedule.count(panel_model.day_boundary)
+        assert compact.count(panel_model.day_boundary) == count + 1
+        assert compact.instant(count, panel_model.day_boundary).astimezone(
+            UTC
+        ) == panel_model.day_boundary(schedule.end_exclusive).astimezone(UTC)
+
+
 def test_binned_state_panel_compiles_bounded_period_pairing(panel_model):
     design = Design(
         "user",

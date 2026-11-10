@@ -541,6 +541,19 @@ inlining repeated numerical expressions. The five-metric, ten-window raw/day
 DuckDB smoke compiles, validates and exports in both integer and native modes;
 this is exercised evidence, not a performance guarantee or a new public mode.
 
+Compatible outputs reuse context expressions within one aggregate build. Each
+output's finalization branch projects only its own primitives, availability,
+observed bounds and alignment check, while retaining every original anchor
+field. Sibling output payloads do not inflate those branches. Execution-bound
+recompilation still occurs under the materialization snapshot; expressions,
+validation results and source data are not cached across calls.
+
+Same-source support expressions can share observed bounds without sharing
+availability, completeness, reason or check records. An unfiltered count may
+reuse an existing unfiltered event-count payload only when the donor covers its
+full membership identity; the count still applies its own final mask. Source
+scope remains unique at `(unit, day)` before full anchor-instance fanout.
+
 Event counts include selected null values; event means divide by the selected
 nonnull count. For values `2, NULL, 3`, the count is `3`, sum is `5`, and event
 mean is `2.5`. Complete empty sums/counts are zero, complete empty conversions
@@ -616,6 +629,22 @@ recursion limit. Its inspected DuckDB plan scans the event source once; generate
 SQL is still large, so this demonstrates shared lowering and correct execution,
 not an end-to-end speedup. Retained staging and correction use the same compiler;
 no-change refresh reuses only a verified current-revision generation.
+
+The separate [matched literal-SQL comparison](../research/2026-11-09-compact-generated-sql.md)
+measures five unprofiled repeats at 10,000 units/300,000 events. Its wide query
+median is 1.839× the literal query with identical typed modeling/quality output,
+while the richer public call is 30.013×. README/scaled queries still exceed the
+3× waypoint. These bounded measurements do not change declaration-based strategy
+selection, exact numeric/timestamp semantics or source-validation order.
+
+Binned state queries may compact the period relation only for one untransformed
+sum yielding `DECIMAL(38,0)` under the active unbounded-coefficient policy, with
+whole-day endpoint/count/host-clock proof. The original scheduled and endpoint
+validation studies remain separate and unchanged. Native floats, bounded
+policies, other metric shapes and declined schedules keep the original union;
+there is no public switch or cached validation. The separately pinned state
+comparison reduced SQL compilation but increased construction/public-call
+medians, not an established query-runtime speedup.
 
 Execution revision 2 identifies this compiler. A checksummed revision-1 plan
 cannot execute or replay, and a no-change refresh from revision 1 recomputes.
@@ -901,6 +930,22 @@ Unsupported representations refuse
 `terrine.temporal.timestamp_order_unsupported`; normalize to a losslessly
 representable supported timestamp before binding. When executing an Ibis
 expression directly, sort explicitly if row order matters.
+
+Exact fallback comparisons stage and reuse a timestamp's rank and coordinate
+fields. DuckDB may instead compare native shifted UTC microsecond timestamps
+when a fixed/scheduled declaration proves that every origin and shifted bound
+fits the supported host domain. The schedule's last actual origin supplies its
+upper bound, not a sample used to prove calendar alignment. Naive/nanosecond
+inputs and supplied, persisted or event-relative origins retain the exact
+fallback; a declined optimization does not change the refusal contract.
+
+Daily envelope masking can reuse guarded native keys or integer timestamp
+parts. With conservative proof over every requested offset, a naive
+microsecond source can compare against finite UTC-microsecond point bounds
+normalized explicitly to naive UTC. Source clocks are never cast for that
+optimization. Nanoseconds, unproven origins, unsupported policies and declined
+host bounds retain exact integer ordering, including pre-epoch signed fractions
+and wide finite endpoints independently of the caller's session timezone.
 
 Attribute/as-of lookups and event-time selectors keep their own strict cutoff,
 tie and missing-history rules; they are not cumulative numeric window lookups.

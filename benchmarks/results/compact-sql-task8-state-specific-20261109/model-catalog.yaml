@@ -1,0 +1,82 @@
+schema_version: 3
+day_boundary: UTC
+dialect: duckdb
+sources:
+  events:
+    relation:
+      kind: table
+      name: events
+    time: event_time
+    units:
+      user: unit_id
+    events:
+    - event
+    - value
+    properties:
+    - adopted
+    dimensions: []
+  targets:
+    relation:
+      kind: table
+      name: events
+    time: event_time
+    units:
+      user: unit_id
+    events:
+    - target
+    properties: []
+    dimensions: []
+    where:
+    - property: event_type
+      op: equals
+      values:
+      - target
+events:
+  event:
+    source: events
+    column: null
+  value:
+    source: events
+    column: value
+  target:
+    source: targets
+    column: null
+properties:
+  adopted:
+    source: events
+    column: adopted
+    dtype: string
+    as_of: event_time
+dimensions: {}
+measures:
+  events:
+    event: event
+    aggregation: count
+  total:
+    event: value
+    aggregation: sum
+  average:
+    event: value
+    aggregation: avg_event
+metrics:
+  events:
+    kind: mean
+    unit: user
+    measure: events
+  total:
+    kind: mean
+    unit: user
+    measure: total
+  average:
+    kind: mean
+    unit: user
+    measure: average
+  per_event:
+    kind: ratio
+    unit: user
+    numerator: total
+    denominator: events
+  active:
+    kind: conversion
+    unit: user
+    measure: events

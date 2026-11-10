@@ -1,0 +1,28 @@
+Prior Task3 evidence, not rerun during final integration:
+
+## Supported DuckDB floor and installed environment
+
+No existing repository-owned 1.5.0 matrix is available. Used the authorized disposable uv overlay, not a dependency/lock/floor change:
+
+```text
+uv run --with 'duckdb==1.5.0' --no-sync python -c 'import duckdb, pytest; print("Loaded DuckDB:", duckdb.__version__, duckdb.__file__, flush=True); assert duckdb.__version__ == "1.5.0"; raise SystemExit(pytest.main(["-n", "0", "tests/backends/test_timestamps.py::test_duckdb_native_elapsed_shifts_preserve_dst_boundaries_and_declines", "tests/backends/test_timestamps.py::test_duckdb_microsecond_comparisons_order_shifted_infinities_and_naive_utc_clocks", "tests/backends/test_timestamps.py::test_duckdb_mixed_utc_comparisons_preserve_finite_timestamp_endpoints", "integration/compile/test_numeric_lowering.py::test_schedule_native_certificate_uses_last_origin_not_alignment_sample", "integration/compile/test_numeric_lowering.py::test_native_recent_window_ignores_excluded_large_history"]))'
+```
+
+Actual output:
+
+```text
+Loaded DuckDB: 1.5.0 /Users/kylejcaron/.cache/uv/archive-v0/v0umoL1LDIYqIsS1/lib/python3.12/site-packages/duckdb/__init__.py
+collected 9 items
+9 passed, 46 warnings in 3.90s
+```
+
+Immediately ran the identical selection without the overlay and asserted the installed version:
+
+```text
+uv run --no-sync python -c 'import duckdb, pytest; print("Loaded DuckDB:", duckdb.__version__, duckdb.__file__, flush=True); assert duckdb.__version__ == "1.5.6"; raise SystemExit(pytest.main(["-n", "0", "tests/backends/test_timestamps.py::test_duckdb_native_elapsed_shifts_preserve_dst_boundaries_and_declines", "tests/backends/test_timestamps.py::test_duckdb_microsecond_comparisons_order_shifted_infinities_and_naive_utc_clocks", "tests/backends/test_timestamps.py::test_duckdb_mixed_utc_comparisons_preserve_finite_timestamp_endpoints", "integration/compile/test_numeric_lowering.py::test_schedule_native_certificate_uses_last_origin_not_alignment_sample", "integration/compile/test_numeric_lowering.py::test_native_recent_window_ignores_excluded_large_history"]))'
+Loaded DuckDB: 1.5.6 /Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/.venv/lib/python3.12/site-packages/duckdb/__init__.py
+collected 9 items
+9 passed, 46 warnings in 3.84s
+```
+
+Both versions exercised native elapsed DST shifts, both host-boundary directions, exact out-of-range/mixed-domain comparisons, the three-origin decline and the five origin-generation/substitution cases. The floor overlay succeeded on its first attempt. The main venv remained on 1.5.6.

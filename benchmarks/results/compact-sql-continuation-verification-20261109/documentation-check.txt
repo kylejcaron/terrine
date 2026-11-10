@@ -1,0 +1,177 @@
+uv run ruff check terrine tests integration benchmarks
+All checks passed!
+uv run vulture terrine
+# Isolated: pydoclint's docstring-parser-fork and dagster's docstring-parser
+# install the same module and would overwrite each other.
+uv run --isolated --no-project --with pydoclint==0.11.1 pydoclint terrine
+Skipping files that match this pattern: \.git|\.tox
+terrine/__init__.py
+terrine/_refusal_codes.py
+terrine/_time.py
+terrine/adapters/__init__.py
+terrine/adapters/increment.py
+terrine/adapters/opentelemetry.py
+terrine/agent/__init__.py
+terrine/agent/definitions.py
+terrine/agent/design_schema.py
+terrine/agent/policy.py
+terrine/agent/schemas.py
+terrine/agent/tools.py
+terrine/backends/__init__.py
+terrine/backends/capabilities.py
+terrine/backends/dialect.py
+terrine/backends/engines/__init__.py
+terrine/backends/engines/bigquery.py
+terrine/backends/engines/duckdb.py
+terrine/backends/engines/postgres.py
+terrine/backends/engines/snowflake.py
+terrine/backends/extrema.py
+terrine/backends/joins.py
+terrine/backends/numeric.py
+terrine/backends/registry.py
+terrine/backends/sequences.py
+terrine/backends/timestamps.py
+terrine/compile/__init__.py
+terrine/compile/_asof.py
+terrine/compile/_predicates.py
+terrine/compile/anchors.py
+terrine/compile/columns.py
+terrine/compile/cost.py
+terrine/compile/dispatch.py
+terrine/compile/layers.py
+terrine/compile/materialize.py
+terrine/compile/numeric.py
+terrine/compile/provenance.py
+terrine/compile/prune.py
+terrine/compile/ranges.py
+terrine/compile/retention.py
+terrine/compile/shapes/__init__.py
+terrine/compile/shapes/_observations.py
+terrine/compile/shapes/calendar_comparison.py
+terrine/compile/shapes/cohorts.py
+terrine/compile/shapes/event_panel.py
+terrine/compile/shapes/event_sequence.py
+terrine/compile/shapes/life_table.py
+terrine/compile/shapes/ltv.py
+terrine/compile/shapes/matched_t0.py
+terrine/compile/shapes/sequential.py
+terrine/compile/shapes/state_panel.py
+terrine/compile/shapes/time_to_event.py
+terrine/data.py
+terrine/dataset/__init__.py
+terrine/dataset/export.py
+terrine/dataset/manifest.py
+terrine/dataset/reference.py
+terrine/dataset/splits.py
+terrine/dataset/training.py
+terrine/dataset/transforms.py
+terrine/errors.py
+terrine/execution/__init__.py
+terrine/execution/_bigquery.py
+terrine/execution/_generic.py
+terrine/execution/_metadata.py
+terrine/execution/_native.py
+terrine/execution/_postgres.py
+terrine/execution/_publish.py
+terrine/execution/_snowflake.py
+terrine/execution/backend.py
+terrine/execution/gates.py
+terrine/execution/inputs.py
+terrine/export/__init__.py
+terrine/export/diff_diff.py
+terrine/export/lifelines.py
+terrine/export/preflight.py
+terrine/export/surrogate.py
+terrine/frame.py
+terrine/metrics.py
+terrine/model.py
+terrine/orchestration/__init__.py
+terrine/orchestration/airflow.py
+terrine/orchestration/dagster.py
+terrine/reasons.py
+terrine/recipes.py
+terrine/runtime/__init__.py
+terrine/runtime/api.py
+terrine/runtime/arrow.py
+terrine/runtime/backends/base.py
+terrine/runtime/backends/duckdb.py
+terrine/runtime/changes.py
+terrine/runtime/cli.py
+terrine/runtime/control.py
+terrine/runtime/cost.py
+terrine/runtime/events.py
+terrine/runtime/execute.py
+terrine/runtime/gc.py
+terrine/runtime/graph.py
+terrine/runtime/layers.py
+terrine/runtime/leases.py
+terrine/runtime/materialize.py
+terrine/runtime/owner.py
+terrine/runtime/planner.py
+terrine/runtime/planning.py
+terrine/runtime/saved_plan.py
+terrine/runtime/schema.py
+terrine/runtime/snapshot.py
+terrine/runtime/state.py
+terrine/runtime/status.py
+terrine/runtime/synchronization.py
+terrine/semantic/__init__.py
+terrine/semantic/attributes.py
+terrine/semantic/bind.py
+terrine/semantic/io.py
+terrine/semantic/models.py
+terrine/semantic/predicates.py
+terrine/semantic/rules.py
+terrine/semantic/sql.py
+terrine/semantic/time.py
+terrine/simulate/__init__.py
+terrine/simulate/generate.py
+terrine/simulate/scale.py
+terrine/simulate/world.py
+terrine/spec/__init__.py
+terrine/spec/_columns.py
+terrine/spec/anchors.py
+terrine/spec/dataset.py
+terrine/spec/describe.py
+terrine/spec/design.py
+terrine/spec/expressions.py
+terrine/spec/io.py
+terrine/spec/panels.py
+terrine/spec/sequence.py
+terrine/spec/state_panel.py
+terrine/spec/trajectory.py
+terrine/spec/transforms.py
+terrine/spec/validate.py
+terrine/temporal/__init__.py
+terrine/temporal/aggregate.py
+terrine/temporal/attributes.py
+terrine/temporal/daily.py
+terrine/temporal/first.py
+terrine/temporal/nonadditive.py
+terrine/temporal/ranges.py
+terrine/temporal/readiness.py
+terrine/temporal/retention.py
+terrine/temporal/sequence.py
+terrine/temporal/sessionize.py
+terrine/temporal/sketches.py
+terrine/windows.py
+🎉 No violations 🎉
+uv run tach check
+✅ All modules validated!
+uv run ty check terrine tests integration benchmarks
+All checks passed!
+uv run pytest -n 0 tests/test_documentation.py
+============================= test session starts ==============================
+platform darwin -- Python 3.12.11, pytest-8.4.2, pluggy-1.7.0
+rootdir: /Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql
+configfile: pyproject.toml
+plugins: tach-0.35.3, hypothesis-6.170.1, xdist-3.8.0, split-0.11.0, platformdirs-4.13.4, anyio-4.15.1
+collected 6 items
+
+tests/test_documentation.py ......                                       [100%]
+
+============================== slowest durations ===============================
+
+(18 durations < 5s hidden.)
+============================== 6 passed in 1.05s ===============================
+Strict documentation build followed make check in the same successful command; no build output, combined exit0.

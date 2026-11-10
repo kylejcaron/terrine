@@ -213,31 +213,55 @@ def test_bucket_join_virtual_endpoints_do_not_overflow_native_timestamp_domain(
         con.disconnect()
 
 
-def test_shifted_timestamp_comparisons_preserve_null_predicates():
+def test_shifted_timestamp_comparisons_match_integer_nanosecond_order():
     from terrine.backends.timestamps import compare_timestamps
 
     con = ibis.duckdb.connect()
+    left_ns = [-1_000_000_001, -999_999_999, -1, 0, 1, 999, 1000, 1001, None, 1]
+    right_us = [-1, -1, 0, 0, 0, 1, 1, 1, 1, None]
+    offsets = (0, -1, 1, -(2**63), 2**63 - 1)
+    operations = ("lt", "le", "gt", "ge", "eq")
     try:
         timestamps = con.create_table(
             "nullable_timestamps",
             pa.table(
                 {
-                    "left": pa.array([1, None], type=pa.timestamp("ns")),
-                    "right": pa.array([None, 1], type=pa.timestamp("ns")),
+                    "i": list(range(len(left_ns))),
+                    "left": pa.array(left_ns, type=pa.timestamp("ns")),
+                    "right": pa.array(right_us, type=pa.timestamp("us", tz="UTC")),
                 }
             ),
         )
         comparisons = timestamps.select(
+            "i",
             **{
-                op: compare_timestamps(
-                    timestamps.left, timestamps.right, op, right_offset_seconds=1
+                f"{op}_{index}": compare_timestamps(
+                    timestamps.left, timestamps.right, op, right_offset_seconds=offset
                 )
-                for op in ("lt", "le", "gt", "ge", "eq")
-            }
+                for index, offset in enumerate(offsets)
+                for op in operations
+            },
         )
-        assert (
-            con.to_pyarrow(comparisons).to_pylist()
-            == [{op: None for op in ("lt", "le", "gt", "ge", "eq")}] * 2
-        )
+        rows = con.to_pyarrow(comparisons).to_pylist()
+        assert len(rows) == len(left_ns)
+        for row in rows:
+            left, right = left_ns[row["i"]], right_us[row["i"]]
+            for index, offset in enumerate(offsets):
+                if left is None or right is None:
+                    expected = dict.fromkeys(operations)
+                else:
+                    shifted = right * 1000 + offset * 10**9
+                    expected = {
+                        "lt": left < shifted,
+                        "le": left <= shifted,
+                        "gt": left > shifted,
+                        "ge": left >= shifted,
+                        "eq": left == shifted,
+                    }
+                assert {op: row[f"{op}_{index}"] for op in operations} == expected, (
+                    left,
+                    right,
+                    offset,
+                )
     finally:
         con.disconnect()

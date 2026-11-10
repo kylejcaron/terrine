@@ -1,0 +1,336 @@
+"""One-off state-query tradeoff measurement; retained only as evidence text."""
+
+from __future__ import annotations
+
+import contextlib
+import hashlib
+import json
+import os
+import platform
+import statistics
+import subprocess
+import sys
+import time
+import traceback
+from pathlib import Path
+
+import duckdb
+import ibis
+import pyarrow as pa
+
+from benchmarks import compare_sql, workloads
+from integration import test_cost_budget
+from terrine import Budget
+from terrine.backends.engines.duckdb import DuckDBDialect
+from terrine.compile.shapes import state_panel
+
+ROOT = Path("/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql")
+OUT = ROOT / "benchmarks/results/compact-sql-task8-state-specific-20261109"
+HEAD = "966c7ffbe00c9916ca295fd6c98d9c5c0c131aab"
+FROZEN_COMPARATOR = "6bf68e1d6ed5a296f086a6394dd9ec554ce78b54256666b37fbc08bdbff7c00f"
+MODES = (("original_union_fallback", False), ("compact_query", True))
+BUDGET = Budget(max_rows=25_000, max_output_bytes=20_000_000, strict_scan=False)
+PHASES = ("expression_build", "sql_compile", "precompiled_full_query", "full_public_build_and_materialize")
+
+
+def digest(data):
+    return hashlib.sha256(data).hexdigest()
+
+
+def dump(path, value):
+    path.write_text(json.dumps(value, indent=2, sort_keys=True, allow_nan=False) + "\n")
+
+
+def revision():
+    return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+
+
+def source_hashes():
+    paths = list((ROOT / "terrine").rglob("*.py")) + [
+        ROOT / "benchmarks/compare_sql.py",
+        ROOT / "benchmarks/run_overhead.py",
+        ROOT / "benchmarks/workloads.py",
+        ROOT / "integration/test_cost_budget.py",
+        ROOT / "terrine/simulate/scale.py",
+        ROOT / "pyproject.toml",
+        ROOT / "uv.lock",
+    ]
+    return {str(path.relative_to(ROOT)): digest(path.read_bytes()) for path in sorted(set(paths))}
+
+
+def arrow_bytes(table):
+    sink = pa.BufferOutputStream()
+    with pa.ipc.new_stream(sink, table.schema) as writer:
+        writer.write_table(table)
+    return sink.getvalue().to_pybytes()
+
+
+def save_arrow(path, table):
+    data = arrow_bytes(table)
+    path.write_bytes(data)
+    return {"rows": table.num_rows, "columns": table.num_columns, "arrow_bytes": table.nbytes,
+            "schema": str(table.schema), "schema_sha256": digest(table.schema.serialize().to_pybytes()),
+            "arrow_stream_sha256": digest(data)}
+
+
+def canonical(table, names=None):
+    if names is not None:
+        assert set(table.column_names) == set(names), (table.column_names, names)
+        table = table.select(names)
+    return table.sort_by([("unit", "ascending"), ("t0", "ascending")])
+
+
+def input_identity(con):
+    identity = {}
+    for name in ("events", "users"):
+        table = con.table(name).to_pyarrow()
+        identity[name] = {"rows": table.num_rows, "schema": str(table.schema),
+                          "schema_sha256": digest(table.schema.serialize().to_pybytes()),
+                          "arrow_stream_sha256": digest(arrow_bytes(table))}
+    return identity
+
+
+@contextlib.contextmanager
+def coefficient_mode(value):
+    previous = DuckDBDialect._unbounded_coefficients
+    DuckDBDialect._unbounded_coefficients = value
+    try:
+        yield
+    finally:
+        DuckDBDialect._unbounded_coefficients = previous
+
+
+def invariant_metadata(result):
+    metadata = result.to_metadata()
+    snapshot = metadata["provenance"]["execution_snapshot"]
+    dynamic = {name: snapshot[name] for name in ("snapshot_id", "input_binding_id")}
+    for name in dynamic:
+        del snapshot[name]
+    return metadata, dynamic
+
+
+def timed(action):
+    start = time.perf_counter_ns()
+    result = action()
+    return result, (time.perf_counter_ns() - start) / 1e9
+
+
+def require_reference(table, reference, expected, projection):
+    selected = canonical(table.select(projection))
+    compare_sql._assert_schema(selected, reference)
+    compare_sql._assert_rows(selected, expected)
+
+
+def require_full(table, baseline, expected):
+    table = canonical(table, baseline.column_names)
+    assert table.schema.serialize().to_pybytes() == baseline.schema.serialize().to_pybytes()
+    compare_sql._assert_schema(table, baseline)
+    compare_sql._assert_rows(table, expected)
+    assert table.equals(baseline, check_metadata=True)
+    return table
+
+
+def rejection_controls(reference, expected):
+    controls = {}
+    candidates = {
+        "missing": reference.slice(1),
+        "duplicate": pa.concat_tables([reference, reference.slice(0, 1)]),
+    }
+    changed = reference.to_pylist()
+    changed[0]["from_state"] = "__corrupted_state__"
+    candidates["changed_value"] = pa.Table.from_pylist(changed, schema=reference.schema)
+    candidates["changed_type"] = reference.set_column(
+        reference.schema.get_field_index("from_state"), "from_state",
+        reference["from_state"].cast(pa.large_string()),
+    )
+    for name, table in candidates.items():
+        evidence = save_arrow(OUT / f"control-{name}.arrow", table)
+        try:
+            if name == "changed_type":
+                compare_sql._assert_schema(table, reference)
+            else:
+                compare_sql._assert_rows(table, expected)
+        except AssertionError as error:
+            controls[name] = {"rejected": True, "oracle_invoked": True,
+                              "constructed_table": evidence, "assertion": str(error)[:1000]}
+        else:
+            raise AssertionError(f"Frozen oracle accepted {name}")
+    dump(OUT / "controls.json", controls)
+    return controls
+
+
+def main():
+    assert Path.cwd().resolve() == ROOT.resolve()
+    assert revision() == HEAD
+    OUT.mkdir(parents=True, exist_ok=False)
+    source = Path(__file__).read_bytes()
+    (OUT / "diagnostic.py.txt").write_bytes(source)
+    paths = {}
+    for module in (compare_sql, workloads, test_cost_budget, state_panel):
+        path = Path(module.__file__).resolve()
+        assert path.is_relative_to(ROOT.resolve()), path
+        paths[module.__name__] = str(path)
+    before = source_hashes()
+    assert before["benchmarks/compare_sql.py"] == FROZEN_COMPARATOR
+    assert DuckDBDialect._unbounded_coefficients is True
+    environment = {"head": HEAD, "root": str(ROOT), "python": platform.python_version(),
+                   "python_executable": sys.executable, "duckdb": duckdb.__version__,
+                   "ibis": ibis.__version__, "pyarrow": pa.__version__, "module_paths": paths,
+                   "UV_NO_SYNC": os.environ.get("UV_NO_SYNC"), "PYTHONPATH": os.environ.get("PYTHONPATH"),
+                   "source_sha256_before": before, "diagnostic_sha256": digest(source),
+                   "mode_definition": "original union fallback vs compact query at one source revision; not historical commits",
+                   "timing_definition": {"expression_build": "fresh Design.build(model) and Frame.expr construction",
+                                         "sql_compile": "con.compile of that fresh full expression",
+                                         "precompiled_full_query": "frozen compare_sql._execute of full expression SQL to Arrow",
+                                         "full_public_build_and_materialize": "fresh Design.build plus bounded Frame.materialize; retains fresh execution rebind, compile, validation and all checks",
+                                         "handwritten_query": "frozen compare_sql._execute of unchanged state fixture reference to Arrow"},
+                   "phase_caveat": "Separate non-overlapping invocations; public timer internally includes new builds and execution compilation, so do not add phase medians.",
+                   "sampling": "one unmeasured warm/parity pass per mode, then five alternating paired samples; checks outside timers; no profiler"}
+    dump(OUT / "environment.json", environment)
+    con = ibis.duckdb.connect(threads=1)
+    try:
+        con.con.execute("SET TimeZone='UTC'")
+        assert con.con.sql("SELECT current_setting('threads')").fetchone()[0] == 1
+        environment["session"] = {"threads": 1, "timezone": "UTC"}
+        config = test_cost_budget._CONFIG
+        environment["config"] = config.to_dict()
+        environment["load_counts"] = workloads.load_tables(con, config)
+        inputs = input_identity(con)
+        environment["input_tables_before"] = inputs
+        model = workloads.cost_model(con, config)
+        case = workloads.recipe_cases(config)["state_panel"]
+        environment["model_hash"] = model.model_hash
+        environment["design_hash"] = case.design.spec_hash
+        environment["budget"] = {"max_rows": 25_000, "max_output_bytes": 20_000_000, "strict_scan": False}
+        (OUT / "model-catalog.yaml").write_text(model.to_catalog())
+        (OUT / "handwritten.sql").write_text(case.reference + "\n")
+        environment["handwritten_sql_sha256"] = digest(case.reference.encode())
+        projection = list(case.key + case.values)
+        reference = canonical(compare_sql._execute(con, case.reference))
+        expected = reference.to_pylist()
+        save_arrow(OUT / "handwritten.arrow", reference)
+        controls = rejection_controls(reference, expected)
+        seeds = {}
+        results = {}
+        metadata_base = None
+        baseline = None
+        baseline_rows = None
+        for label, flag in MODES:
+            directory = OUT / label
+            directory.mkdir()
+            with coefficient_mode(flag):
+                assert DuckDBDialect._unbounded_coefficients is flag
+                frame = case.design.build(model)
+                full_sql = con.compile(frame.expr)
+                consumer_sql = ibis.to_sql(frame.expr)
+                (directory / "full-expression.sql").write_text(full_sql + "\n")
+                (directory / "consumer-formatted.sql").write_text(consumer_sql + "\n")
+                with compare_sql._capture_study_sql() as statements:
+                    result = frame.materialize(budget=BUDGET)
+                assert DuckDBDialect._unbounded_coefficients is flag
+                public = canonical(result.table)
+                require_reference(public, reference, expected, projection)
+                metadata, dynamic = invariant_metadata(result)
+                if baseline is None:
+                    baseline, baseline_rows, metadata_base = public, public.to_pylist(), metadata
+                else:
+                    require_full(public, baseline, baseline_rows)
+                    assert metadata == metadata_base, "Invariant public provenance/ColumnMeta/roles differs"
+                    assert dict(result.columns) == dict(seeds["original_union_fallback"].columns)
+                    assert result.roles == seeds["original_union_fallback"].roles
+                direct = compare_sql._execute(con, full_sql)
+                require_full(direct, baseline, baseline_rows)
+                require_reference(direct, reference, expected, projection)
+                for index, sql in enumerate(statements):
+                    (directory / f"public-study-statement-{index}.sql").write_text(sql + "\n")
+                dump(directory / "metadata.json", result.to_metadata())
+                dump(directory / "invariant-metadata.json", metadata)
+                dump(directory / "dynamic-snapshot-identities.json", dynamic)
+                arrow = save_arrow(directory / "public-full.arrow", result.to_pyarrow())
+                save_arrow(directory / "precompiled-full.arrow", canonical(direct, public.column_names))
+                seeds[label] = result
+                results[label] = {"private_flag": flag, "consumer_formatted_characters": len(consumer_sql),
+                                  "ceiling": test_cost_budget._CHARS_PER_FEATURE * case.features,
+                                  "consumer_ceiling_met": len(consumer_sql) <= test_cost_budget._CHARS_PER_FEATURE * case.features,
+                                  "full_expression_sizes": compare_sql._sizes(full_sql),
+                                  "public_study_sql": {"count": len(statements), "bytes": sum(len(sql.encode()) for sql in statements),
+                                                       "excludes": "metadata/admission probes, transaction control, catalog introspection"},
+                                  "arrow": arrow, "seconds": {name: [] for name in PHASES},
+                                  "result_parity_each_sample": True, "schema_parity_each_sample": True,
+                                  "column_meta_parity_each_sample": True, "invariant_provenance_parity_each_sample": True}
+        handwritten_seconds = []
+        order_records = []
+        for repeat in range(5):
+            ordered = MODES if repeat % 2 == 0 else tuple(reversed(MODES))
+            order_records.append([label for label, _ in ordered])
+            for label, flag in ordered:
+                directory = OUT / label
+                with coefficient_mode(flag):
+                    def build():
+                        frame = case.design.build(model)
+                        return frame, frame.expr
+                    (frame, expr), build_seconds = timed(build)
+                    full_sql, compile_seconds = timed(lambda: con.compile(expr))
+                    direct, query_seconds = timed(lambda: compare_sql._execute(con, full_sql))
+                    require_full(direct, baseline, baseline_rows)
+                    require_reference(direct, reference, expected, projection)
+                    def public_pass():
+                        fresh = case.design.build(model)
+                        return fresh.materialize(budget=BUDGET)
+                    public_result, public_seconds = timed(public_pass)
+                    assert DuckDBDialect._unbounded_coefficients is flag
+                    require_full(public_result.table, baseline, baseline_rows)
+                    require_reference(public_result.table, reference, expected, projection)
+                    assert dict(public_result.columns) == dict(seeds["original_union_fallback"].columns)
+                    assert public_result.roles == seeds["original_union_fallback"].roles
+                    metadata, dynamic = invariant_metadata(public_result)
+                    assert metadata == metadata_base
+                    (directory / f"sample-{repeat}-full-expression.sql").write_text(full_sql + "\n")
+                    dump(directory / f"sample-{repeat}-metadata.json", public_result.to_metadata())
+                    dump(directory / f"sample-{repeat}-identity.json", {"private_flag_during_complete_public_pass": flag,
+                         "dynamic_snapshot_identities": dynamic,
+                         "plain_public_arrow_stream_sha256": digest(arrow_bytes(canonical(public_result.table))),
+                         "precompiled_full_arrow_stream_sha256": digest(arrow_bytes(canonical(direct, baseline.column_names)))})
+                    values = (build_seconds, compile_seconds, query_seconds, public_seconds)
+                    for phase, value in zip(PHASES, values, strict=True):
+                        results[label]["seconds"][phase].append(value)
+            hand, elapsed = timed(lambda: compare_sql._execute(con, case.reference))
+            compare_sql._assert_schema(canonical(hand), reference)
+            compare_sql._assert_rows(canonical(hand), expected)
+            handwritten_seconds.append(elapsed)
+            print(json.dumps({"repeat": repeat, "order": order_records[-1],
+                              "seconds": {label: {phase: results[label]["seconds"][phase][-1] for phase in PHASES} for label, _ in MODES},
+                              "handwritten_seconds": elapsed}), flush=True)
+        for record in results.values():
+            record["summary_seconds"] = {phase: {"median": statistics.median(values), "minimum": min(values), "maximum": max(values)}
+                                         for phase, values in record["seconds"].items()}
+            assert all(len(values) == 5 for values in record["seconds"].values())
+        after = source_hashes()
+        assert before == after, "Source/helper bytes changed during measurement"
+        assert revision() == HEAD, "Revision changed during measurement"
+        assert DuckDBDialect._unbounded_coefficients is True
+        assert input_identity(con) == inputs, "Fixture inputs changed during measurement"
+        environment.update(source_sha256_after=after, source_identity_unchanged=True, input_identity_unchanged=True,
+                           private_flag_restored=True, head_after=revision(), pair_order=order_records)
+        dump(OUT / "environment.json", environment)
+        output = {"case": "state_panel", "comparison": "original union fallback vs compact query, same pinned source",
+                  "rows": len(expected), "public_columns": baseline.num_columns, "repeats": 5,
+                  "variants": results, "handwritten_seconds": handwritten_seconds,
+                  "handwritten_summary_seconds": {"median": statistics.median(handwritten_seconds), "minimum": min(handwritten_seconds), "maximum": max(handwritten_seconds)},
+                  "all_four_controls_rejected": all(item["rejected"] for item in controls.values()),
+                  "full_schema_values_columnmeta_support_and_invariant_provenance_parity": True,
+                  "dynamic_snapshot_identity_fields_recorded_not_compared": ["snapshot_id", "input_binding_id"],
+                  "timing_caveat": environment["phase_caveat"]}
+        dump(OUT / "result.json", output)
+        print(json.dumps(output), flush=True)
+    finally:
+        con.disconnect()
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except BaseException:
+        if OUT.is_dir():
+            (OUT / "failure.txt").write_text(traceback.format_exc())
+        raise

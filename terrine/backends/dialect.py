@@ -15,6 +15,7 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
+from datetime import datetime
 from fractions import Fraction
 from functools import cache
 from typing import Any, ClassVar, cast
@@ -151,6 +152,8 @@ class Dialect:
     # Fixed-precision state carries an accumulated binary64 magnitude bound so
     # that an accumulation leaving the domain refuses; native exact types do not.
     bounds_accumulations: ClassVar[bool] = True
+    # Only value coefficients, not count accumulators, may have an unbounded domain.
+    _unbounded_coefficients: ClassVar[bool] = False
     # Binary64 sums, quotients and products are withheld before leaving the
     # range where float arithmetic raises on overflow or underflow instead of
     # yielding an infinity or zero; an IEEE 754 engine publishes the non-finite
@@ -661,6 +664,17 @@ class Dialect:
 
         Without native keys, comparisons order (rank, seconds, nanos) parts.
         """
+        return None
+
+    def native_shifted_comparison_keys(
+        self,
+        left: ir.TimestampValue,
+        right: ir.TimestampValue,
+        *,
+        offset_seconds: int,
+        right_bounds: tuple[datetime, datetime],
+    ) -> tuple[ir.Value, ir.Value] | None:
+        """Native elapsed-shift operands certified by declared origin extrema."""
         return None
 
     def reverse_time_key(self, value: ir.TimestampValue) -> ir.Value:

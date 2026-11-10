@@ -107,26 +107,48 @@ def test_native_sum_matches_selected_hand_query(con):
             assert abs(Fraction(value) - expected) <= bound
 
 
-def test_native_recent_window_ignores_excluded_large_history(con):
+@pytest.mark.parametrize("origin", ["fixed", "event", "relative", "override", "persisted"])
+def test_native_recent_window_ignores_excluded_large_history(con, origin):
     model = _model(
         con,
         ["a", "a"],
         [_T0 - timedelta(days=10), _T0 - timedelta(hours=12)],
         [1e16, 1.0],
     )
-    result = (
-        Design(
-            "customer",
-            FixedDate(_T0),
-            features={"recent": agg("spend", window=("-1d", 0))},
-        )
-        .build(model)
-        .materialize()
+    from terrine.compile.anchors import AnchorTable, compile_anchors
+    from terrine.compile.columns import compile_columns, exact_scope
+    from terrine.compile.numeric import _declared_origin_bounds
+
+    anchor = tr.EventAnchor("orders") if origin == "event" else FixedDate(_T0)
+    relative = tr.event_time("orders", window=("-1d", 0)) if origin == "relative" else None
+    design = Design(
+        "customer",
+        anchor,
+        features={"recent": agg("spend", window=("-1d", 0), relative_to=relative)},
     )
-    row = result.table.to_pylist()[0]
-    assert row["recent"] == pytest.approx(1.0)
+    if origin == "event":
+        assert _declared_origin_bounds(design, model) is None
+    if origin in {"override", "persisted"}:
+        anchors = compile_anchors(design, model).table
+        supplied = anchors.mutate(t0=ibis.literal(_T0 - timedelta(hours=12)))
+        with exact_scope(model):
+            compiled = compile_columns(
+                design,
+                model,
+                _anchor_table=AnchorTable(supplied, ()) if origin == "override" else None,
+                persisted_anchors=supplied if origin == "persisted" else None,
+            )
+        compiled.validate(execute=con.to_pyarrow)
+        table = con.to_pyarrow(compiled.table)
+        columns = compiled.columns
+    else:
+        result = design.build(model).materialize()
+        table = result.table
+        columns = result.columns
+    row = table.to_pylist()[0]
+    assert row["recent"] == (1.0 if origin == "fixed" else 0.0)
     assert (row["recent__complete"], row["recent__reason"]) == (True, None)
-    assert result.columns["recent"].arithmetic == "native"
+    assert columns["recent"].arithmetic == "native"
 
 
 def test_exact_opt_in_keeps_quantized_path(con):
@@ -185,7 +207,13 @@ def test_direct_batch_lowering_selects_declared_representation(con, origins, rel
         "('first', TIMESTAMPTZ '2025-01-25'), "
         "('last', TIMESTAMPTZ '2025-01-26')) AS a(id, t0)"
     )
-    ctx = CompileContext(model, "customer", origins, lambda _: events)
+    ctx = CompileContext(
+        model,
+        "customer",
+        origins,
+        (_T0, _T0 + timedelta(days=1)),
+        lambda _: events,
+    )
     requests = [
         AggregateRequest(model.metrics["spend"], Window("-1d", 0), "whole", "feature"),
         AggregateRequest(model.metrics["mean_spend"], Window("-18h", 0), "partial", "feature"),
@@ -203,6 +231,59 @@ def test_direct_batch_lowering_selects_declared_representation(con, origins, rel
     assert sorted((row["whole"], row["partial"], row["mean"]) for row in rows) == [
         (2.0, 2.0, 2.0),
         (3.0, 3.0, 3.0),
+    ]
+
+
+def test_schedule_native_certificate_uses_last_origin_not_alignment_sample(con):
+    from terrine.backends.dialect import current_dialect, dialect_scope
+    from terrine.compile.numeric import _declared_origin_bounds
+
+    first = datetime(9999, 12, 28, tzinfo=UTC)
+    last = datetime(9999, 12, 30, tzinfo=UTC)
+    model = _model(con, ["a", "a"], [first, last], [2.0, 3.0])
+    model = tr.Model.from_tables(
+        con,
+        units={"customer": tr.UnitSource("customers", "customer_id")},
+        events={
+            "orders": tr.Events(
+                "orders",
+                time="ordered_at",
+                key="customer_id",
+                metrics={"spend": tr.sum("amount")},
+                complete=("9999-12-27", "9999-12-30"),
+            )
+        },
+    )
+    design = Design(
+        "customer",
+        tr.Schedule("1d", "9999-12-28", "9999-12-30"),
+        outcomes={"next": agg("spend", window=(0, "2d"))},
+    )
+    bounds = _declared_origin_bounds(design, model)
+    assert bounds == (first, last)
+    typed = ibis.table({"at": "timestamp('UTC')"})
+    with dialect_scope("duckdb"):
+        dialect = current_dialect()
+        assert (
+            dialect.native_shifted_comparison_keys(
+                typed.at, typed.at, offset_seconds=2 * 86400, right_bounds=bounds
+            )
+            is None
+        )
+        for instant in (first, first + timedelta(days=1)):
+            assert (
+                dialect.native_shifted_comparison_keys(
+                    typed.at, typed.at, offset_seconds=2 * 86400, right_bounds=(instant, instant)
+                )
+                is not None
+            )
+    rows = design.build(model).to_pyarrow().sort_by("t0").to_pylist()
+    assert [
+        (row["t0"], row["next"], row["next__complete"], row["next__reason"]) for row in rows
+    ] == [
+        (first, 2.0, True, None),
+        (first + timedelta(days=1), 3.0, True, None),
+        (last, None, False, "incomplete_coverage"),
     ]
 
 

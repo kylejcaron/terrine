@@ -1,0 +1,138 @@
+{
+  "version": 1,
+  "roles": {
+    "unit": "unit",
+    "anchor": "anchor_id",
+    "t0": "t0",
+    "treatment": null,
+    "features": [],
+    "outcomes": [
+      "to_state"
+    ],
+    "weight": null,
+    "cluster_unit": "unit",
+    "prior_state": "from_state",
+    "trial": null,
+    "assignment_probability": null,
+    "target_weight": null,
+    "trial_weight": null
+  },
+  "columns": {
+    "from_state": {
+      "window": {
+        "$window": [
+          -604800,
+          0
+        ]
+      },
+      "role": "prior_state",
+      "observed_from_column": "from_state_observed_from",
+      "observed_until_column": "from_state_observed_until",
+      "complete_column": "from_state__complete",
+      "reason_column": "from_state__reason",
+      "numeric_policy": null,
+      "approximation": null,
+      "transformation": null,
+      "measure": null,
+      "arithmetic": null
+    },
+    "to_state": {
+      "window": {
+        "$window": [
+          0,
+          604800
+        ]
+      },
+      "role": "outcome",
+      "observed_from_column": "to_state_observed_from",
+      "observed_until_column": "to_state_observed_until",
+      "complete_column": "to_state__complete",
+      "reason_column": "to_state__reason",
+      "numeric_policy": null,
+      "approximation": null,
+      "transformation": null,
+      "measure": null,
+      "arithmetic": null
+    }
+  },
+  "provenance": {
+    "feature_cutoffs": {},
+    "eligibility_cutoffs": {},
+    "design_hash": "cd6dbbfb5fc4cb01052d93de0cb5c9e718cf461a319ea929df3c56c5146e608f",
+    "model_hash": "9c13ab359a2f08f34ab0720226175bef52c49f011ac2e6dc98362ab3e51d51b5",
+    "source_generations": {
+      "[\"source\",\"events\"]": null,
+      "[\"source\",\"targets\"]": null,
+      "[\"roster\",\"user\"]": null
+    },
+    "execution_snapshot": {
+      "backend": "duckdb",
+      "source_generations": {
+        "[\"source\",\"events\"]": null,
+        "[\"source\",\"targets\"]": null,
+        "[\"roster\",\"user\"]": null
+      },
+      "replay_equivalence": "unverified"
+    },
+    "shape": "state_panel",
+    "treatment_design": null,
+    "engine_name": "duckdb",
+    "dialect": "duckdb",
+    "engine_status": "verified",
+    "eligibility_summary": {
+      "candidate": 20000,
+      "excluded_false": 0,
+      "unknown": 0,
+      "retained": 20000
+    },
+    "treatment_knowledge": null,
+    "weight_kind": null,
+    "weight_cutoff": null,
+    "weight_depends_on_treatment": null,
+    "treatment_known_at_t0": false,
+    "state_panel": {
+      "state_source": {
+        "kind": "binned_metric",
+        "metric": "total",
+        "cutpoints": [
+          {
+            "type": "int",
+            "value": "0"
+          }
+        ]
+      },
+      "levels": [
+        "low",
+        "high"
+      ],
+      "ordered": true,
+      "absorbing": [],
+      "panel_start": {
+        "$datetime": "2025-01-08T00:00:00+00:00"
+      },
+      "administrative_end": {
+        "$datetime": "2025-01-22T00:00:00+00:00"
+      },
+      "period_seconds": 604800,
+      "baseline_features": [],
+      "time_varying_features": [],
+      "prior_state_timing": "strict_period",
+      "period_column": "period_index",
+      "from_time_column": "from_time",
+      "to_time_column": "to_time",
+      "scheduled_to_column": "scheduled_to",
+      "gap_column": "gap",
+      "terminal_column": "terminal"
+    },
+    "expression_timings": {},
+    "sequence_meta": null,
+    "panel": null,
+    "sampling": null,
+    "calendar_comparison": null,
+    "cohort_operation": null,
+    "administrative_cutoff": null,
+    "measurement_knowledge": null,
+    "dataset_view": null,
+    "execution_revision": 2
+  }
+}

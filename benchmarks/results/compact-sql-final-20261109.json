@@ -1,0 +1,1290 @@
+{
+  "date": "2026-11-09",
+  "production_revision": "801369269df302a409988933bfd4ada54624f442",
+  "task6_base": "6b0ff5d14696648a10cd3f76170b78755e52fe79",
+  "baseline_manifest": "benchmarks/results/direct-sql-comparison-20261109-v2.json",
+  "baseline_manifest_sha256": "30bee973df423fb9ef371dd26dafa15a9911a735d0392f00a09e03e54a2c2bfb",
+  "scope": "Native DuckDB measures/exact counts/Boolean activity; same ordered origins, strict Arrow schemas, values, completeness, reasons and sensitivity controls every trial. Public richer payload separate. No cloud runtime/performance claims.",
+  "environment": {
+    "platform": "macOS-15.7.4-arm64-arm-64bit",
+    "machine": "arm64",
+    "python": "3.12.11",
+    "duckdb": "1.5.6",
+    "ibis": "12.0.0",
+    "pyarrow": "23.0.1",
+    "threads": 1,
+    "timing": "Five unprofiled warm repeats per path, case processes serial, query order alternates, public follows each pair; no concurrent tests or benchmarks.",
+    "plugin_retained": true
+  },
+  "frozen_helper_sha256": {
+    "benchmarks/compare_sql.py": "6bf68e1d6ed5a296f086a6394dd9ec554ce78b54256666b37fbc08bdbff7c00f",
+    "benchmarks/run_overhead.py": "7a64bb9547e5f645a432b858cfb301b964d592f15abd7f084120f7bd4c1302dd"
+  },
+  "identity_checks": {
+    "all_current_sources_match_final_environments": true,
+    "all_final_and_task2_through_task5_input_tables_match_v2": true,
+    "all_compared_arrow_schemas_match_v2": true,
+    "all_literal_sql_bytes_match_v2": true,
+    "all_v2_manifest_file_hashes_unchanged": true,
+    "all_final_and_milestone_helpers_frozen": true
+  },
+  "capture_excludes": "metadata/admission probes, transaction control and catalog introspection; direct-driver witnesses unmeasured, not zero",
+  "cases": {
+    "readme": {
+      "directory": "benchmarks/results/compact-sql-final-20261109-readme",
+      "file_sha256": {
+        "environment.json": "bc6896164482b0cc861d1eced7e30b5f476a51a8b9c54522b43a725691f554ad",
+        "handwritten.sql": "9fdfc1319ab7bcf9a3862ea1b3a433b6dc310529259a0cdeebaa8aa30a1eede8",
+        "public-study-statement-0.sql": "f65b6ce2fed90cd3ec3328a21fc55424534c16e793dfc27f51b665bc1a8c78f6",
+        "public-study-statement-1.sql": "119c43cb3904a6a45a41130fd006157b48bf752a249b24e2f041aefd0b85e679",
+        "public-study-statement-2.sql": "33dfd27efbbd0f5201d426170274e936be7dfd25ae0ac60f5e752a477d28c08b",
+        "result.json": "c84fc2fa6b6c413c4310e8ef62704c7fea65f984f628e68f41b7b87567817d1c",
+        "terrine-full-expression.sql": "8c99f6a0a0ed3356ca932698b5f434e2ae82fd6483f4271e1e117aa375a8b907",
+        "terrine-projected.sql": "109dab4ababdfd5f227fb224806f9c5b2c64acbd372592788f1c19ccf2732264"
+      },
+      "input_tables": {
+        "customers": {
+          "rows": 3,
+          "schema": "customer_id: string",
+          "arrow_stream_sha256": "21d4a7178c5f13b0b082c5cbeb197a61c7e107ee7fe69c5c0b04564944430921"
+        },
+        "orders": {
+          "rows": 5,
+          "schema": "customer_id: string\nordered_at: timestamp[us]\namount: double",
+          "arrow_stream_sha256": "01c2e04822225d9ffdf5adc379e80608aeb7690f1a6815bbfb0be1e4a5fa54b7"
+        }
+      },
+      "rows": 6,
+      "compared_columns": [
+        "unit",
+        "t0",
+        "orders_30d",
+        "orders_30d__complete",
+        "orders_30d__reason",
+        "spend_30d",
+        "spend_30d__complete",
+        "spend_30d__reason",
+        "spend_next_30d",
+        "spend_next_30d__complete",
+        "spend_next_30d__reason"
+      ],
+      "compared_arrow_schema": "unit: string\nt0: timestamp[us, tz=UTC]\norders_30d: int64\norders_30d__complete: bool\norders_30d__reason: string\nspend_30d: double\nspend_30d__complete: bool\nspend_30d__reason: string\nspend_next_30d: double\nspend_next_30d__complete: bool\nspend_next_30d__reason: string",
+      "public_columns": 21,
+      "arrow_bytes": {
+        "handwritten_projected": 385,
+        "terrine_projected": 385,
+        "public": 923
+      },
+      "timings": {
+        "handwritten": {
+          "samples_seconds": [
+            0.002567499876022339,
+            0.0034361660946160555,
+            0.0028611659072339535,
+            0.003852665890008211,
+            0.0025661662220954895
+          ],
+          "median_seconds": 0.0028611659072339535,
+          "minimum_seconds": 0.0025661662220954895,
+          "maximum_seconds": 0.003852665890008211
+        },
+        "terrine_precompiled": {
+          "samples_seconds": [
+            0.042125708889216185,
+            0.04208120796829462,
+            0.04150287504307926,
+            0.04049704200588167,
+            0.04431508295238018
+          ],
+          "median_seconds": 0.04208120796829462,
+          "minimum_seconds": 0.04049704200588167,
+          "maximum_seconds": 0.04431508295238018
+        },
+        "terrine_public": {
+          "samples_seconds": [
+            0.4806394171901047,
+            0.5054778340272605,
+            0.47144166589714587,
+            0.5686773331835866,
+            0.5588912081439048
+          ],
+          "median_seconds": 0.5054778340272605,
+          "minimum_seconds": 0.47144166589714587,
+          "maximum_seconds": 0.5686773331835866
+        }
+      },
+      "build_seconds": 0.08233729214407504,
+      "projected_compile_seconds": 0.1059402918908745,
+      "sql": {
+        "handwritten": {
+          "submitted_bytes": 1620,
+          "submitted_lines": 32,
+          "compact_bytes": 1605,
+          "formatted_bytes": 1777
+        },
+        "terrine_projected": {
+          "submitted_bytes": 39676,
+          "submitted_lines": 1,
+          "compact_bytes": 39676,
+          "formatted_bytes": 85448
+        },
+        "terrine_full_expression": {
+          "submitted_bytes": 39997,
+          "submitted_lines": 1,
+          "compact_bytes": 39997,
+          "formatted_bytes": 84823
+        }
+      },
+      "public_study_sql": {
+        "statements": 3,
+        "bytes": 90688,
+        "excludes": "metadata/admission probes, transaction control and catalog introspection"
+      },
+      "query_time_ratio_to_literal": 14.707713335287446,
+      "public_time_ratio_to_literal": 176.6684807578788,
+      "three_times_waypoint_met": false,
+      "remaining_elapsed_fraction_to_one_times": 0.9320084654083682,
+      "baseline": {
+        "directory": "benchmarks/results/direct-sql-readme-20261109-v2",
+        "production_revision": "64d7caf4f7925a8bd744b9ceafd4731d1eb67015",
+        "comparator_sha256": "c4f4d88928633dfd152b626541df329c0d0fd8220c48a1a82bf7b37cff4b2fed",
+        "medians_seconds": {
+          "handwritten": 0.0024035838432610035,
+          "terrine_precompiled": 0.03712062491104007,
+          "terrine_public": 0.4750557499937713
+        },
+        "ranges_seconds": {
+          "handwritten": [
+            0.002179624978452921,
+            0.0026856670156121254
+          ],
+          "terrine_precompiled": [
+            0.03651549993082881,
+            0.04005779093131423
+          ],
+          "terrine_public": [
+            0.4615419169422239,
+            0.5001463750377297
+          ]
+        },
+        "build_seconds": 0.10464145801961422,
+        "projected_compile_seconds": 0.06941533298231661,
+        "sql": {
+          "handwritten": {
+            "submitted_bytes": 1620,
+            "submitted_lines": 32,
+            "compact_bytes": 1605,
+            "formatted_bytes": 1777
+          },
+          "terrine_projected": {
+            "submitted_bytes": 42502,
+            "submitted_lines": 1,
+            "compact_bytes": 42502,
+            "formatted_bytes": 90060
+          },
+          "terrine_full_expression": {
+            "submitted_bytes": 42823,
+            "submitted_lines": 1,
+            "compact_bytes": 42823,
+            "formatted_bytes": 89269
+          }
+        },
+        "public_study_sql": {
+          "statements": 3,
+          "bytes": 97005,
+          "excludes": "metadata/admission probes, transaction control and catalog introspection"
+        }
+      },
+      "baseline_to_final_speedup": {
+        "handwritten": 0.8400714677831039,
+        "terrine_precompiled": 0.8821188055962647,
+        "terrine_public": 0.9398151966603375
+      },
+      "result_parity_each_sample": true,
+      "schema_parity_each_sample": true,
+      "oracle_sensitivity": [
+        "missing",
+        "duplicate",
+        "changed_value",
+        "changed_type"
+      ]
+    },
+    "scaled": {
+      "directory": "benchmarks/results/compact-sql-final-20261109-scaled",
+      "file_sha256": {
+        "environment.json": "c67e29ef938515641fc1191f8b46c4d0e437fb49390d9eacb43945fd90cda66b",
+        "handwritten.sql": "9fdfc1319ab7bcf9a3862ea1b3a433b6dc310529259a0cdeebaa8aa30a1eede8",
+        "public-study-statement-0.sql": "f65b6ce2fed90cd3ec3328a21fc55424534c16e793dfc27f51b665bc1a8c78f6",
+        "public-study-statement-1.sql": "119c43cb3904a6a45a41130fd006157b48bf752a249b24e2f041aefd0b85e679",
+        "public-study-statement-2.sql": "059049a52ddc32da1dfabfc687f5afe6b8f032cc1e6422ea2e3dc3c0997686bb",
+        "result.json": "39b57bdd5daaacdd3ce0ffd46afc3b3b058d1f261ed64611a4371e027e426b3f",
+        "terrine-full-expression.sql": "781212b7930d87bb7fb57d0e0fa9c670a9ea7520355b69745a02700fe534fd4a",
+        "terrine-projected.sql": "020e848a857b06eceb63cbd0ab8ea5746fa2f3c31c2594a35261214ee5f4c78f"
+      },
+      "input_tables": {
+        "customers": {
+          "rows": 10000,
+          "schema": "customer_id: string",
+          "arrow_stream_sha256": "34d0bf8e1a7b7087e0c7dcd465aed34a0649ad9595006f65eec405112df261fc"
+        },
+        "orders": {
+          "rows": 300000,
+          "schema": "customer_id: string\nordered_at: timestamp[us, tz=UTC]\namount: double",
+          "arrow_stream_sha256": "ab0c45d67eb5a4ebf95f80dec696fa94431f56c6b17224e3a57a8926acf91694"
+        }
+      },
+      "rows": 20000,
+      "compared_columns": [
+        "unit",
+        "t0",
+        "orders_30d",
+        "orders_30d__complete",
+        "orders_30d__reason",
+        "spend_30d",
+        "spend_30d__complete",
+        "spend_30d__reason",
+        "spend_next_30d",
+        "spend_next_30d__complete",
+        "spend_next_30d__reason"
+      ],
+      "compared_arrow_schema": "unit: string\nt0: timestamp[us, tz=UTC]\norders_30d: int64\norders_30d__complete: bool\norders_30d__reason: string\nspend_30d: double\nspend_30d__complete: bool\nspend_30d__reason: string\nspend_next_30d: double\nspend_next_30d__complete: bool\nspend_next_30d__reason: string",
+      "public_columns": 21,
+      "arrow_bytes": {
+        "handwritten_projected": 1405000,
+        "terrine_projected": 1405000,
+        "public": 3200000
+      },
+      "timings": {
+        "handwritten": {
+          "samples_seconds": [
+            0.02960854209959507,
+            0.03121287515386939,
+            0.030774292070418596,
+            0.03255683300085366,
+            0.032778749940916896
+          ],
+          "median_seconds": 0.03121287515386939,
+          "minimum_seconds": 0.02960854209959507,
+          "maximum_seconds": 0.032778749940916896
+        },
+        "terrine_precompiled": {
+          "samples_seconds": [
+            0.1384290421847254,
+            0.13644854188896716,
+            0.1358520418871194,
+            0.14471766585484147,
+            0.14088416704908013
+          ],
+          "median_seconds": 0.1384290421847254,
+          "minimum_seconds": 0.1358520418871194,
+          "maximum_seconds": 0.14471766585484147
+        },
+        "terrine_public": {
+          "samples_seconds": [
+            0.7632729997858405,
+            0.6585701669100672,
+            0.6745239158626646,
+            0.6357448329217732,
+            0.6475797919556499
+          ],
+          "median_seconds": 0.6585701669100672,
+          "minimum_seconds": 0.6357448329217732,
+          "maximum_seconds": 0.7632729997858405
+        }
+      },
+      "build_seconds": 0.07518662489019334,
+      "projected_compile_seconds": 0.08911058399826288,
+      "sql": {
+        "handwritten": {
+          "submitted_bytes": 1620,
+          "submitted_lines": 32,
+          "compact_bytes": 1605,
+          "formatted_bytes": 1777
+        },
+        "terrine_projected": {
+          "submitted_bytes": 16702,
+          "submitted_lines": 1,
+          "compact_bytes": 16702,
+          "formatted_bytes": 28014
+        },
+        "terrine_full_expression": {
+          "submitted_bytes": 17023,
+          "submitted_lines": 1,
+          "compact_bytes": 17023,
+          "formatted_bytes": 27389
+        }
+      },
+      "public_study_sql": {
+        "statements": 3,
+        "bytes": 44740,
+        "excludes": "metadata/admission probes, transaction control and catalog introspection"
+      },
+      "query_time_ratio_to_literal": 4.434998105823797,
+      "public_time_ratio_to_literal": 21.099311218961056,
+      "three_times_waypoint_met": false,
+      "remaining_elapsed_fraction_to_one_times": 0.7745207605191861,
+      "baseline": {
+        "directory": "benchmarks/results/direct-sql-scaled-20261109-v2",
+        "production_revision": "64d7caf4f7925a8bd744b9ceafd4731d1eb67015",
+        "comparator_sha256": "c4f4d88928633dfd152b626541df329c0d0fd8220c48a1a82bf7b37cff4b2fed",
+        "medians_seconds": {
+          "handwritten": 0.0264785410836339,
+          "terrine_precompiled": 0.11849612486548722,
+          "terrine_public": 0.6151337909977883
+        },
+        "ranges_seconds": {
+          "handwritten": [
+            0.025507332989946008,
+            0.02932520885951817
+          ],
+          "terrine_precompiled": [
+            0.11744012497365475,
+            0.12717137509025633
+          ],
+          "terrine_public": [
+            0.5878746670205146,
+            0.6580654589924961
+          ]
+        },
+        "build_seconds": 0.0855544579681009,
+        "projected_compile_seconds": 0.07405199995264411,
+        "sql": {
+          "handwritten": {
+            "submitted_bytes": 1620,
+            "submitted_lines": 32,
+            "compact_bytes": 1605,
+            "formatted_bytes": 1777
+          },
+          "terrine_projected": {
+            "submitted_bytes": 19528,
+            "submitted_lines": 1,
+            "compact_bytes": 19528,
+            "formatted_bytes": 32626
+          },
+          "terrine_full_expression": {
+            "submitted_bytes": 19849,
+            "submitted_lines": 1,
+            "compact_bytes": 19849,
+            "formatted_bytes": 31835
+          }
+        },
+        "public_study_sql": {
+          "statements": 3,
+          "bytes": 51057,
+          "excludes": "metadata/admission probes, transaction control and catalog introspection"
+        }
+      },
+      "baseline_to_final_speedup": {
+        "handwritten": 0.8483211159850942,
+        "terrine_precompiled": 0.8560062469215175,
+        "terrine_public": 0.9340444221515876
+      },
+      "result_parity_each_sample": true,
+      "schema_parity_each_sample": true,
+      "oracle_sensitivity": [
+        "missing",
+        "duplicate",
+        "changed_value",
+        "changed_type"
+      ]
+    },
+    "wide": {
+      "directory": "benchmarks/results/compact-sql-final-20261109-wide",
+      "file_sha256": {
+        "environment.json": "568349b4a69524a4b7a491603bc68ab7f56cc173dc8272315be0b977c71edbdc",
+        "handwritten.sql": "a868d91726036f8d80289be58114b0b1dc02d5d00d0dc3a4b1e578ddfb326bde",
+        "public-study-statement-0.sql": "4d1abefc36d52f1cab52e599796b25019b6b9e237022b562602ba3bf4f599471",
+        "public-study-statement-1.sql": "cc023b0087b69b9c7cb42613d366314834b8338a4e59bb8c967b3279c867ed08",
+        "public-study-statement-2.sql": "72e7467ab1544e7a3251bc3eb19d3bc70efd789366de336cf19bc3b5e6b2176a",
+        "result.json": "caf79180c00348e5bebc6f05f28047e8fb4b91c55cae3f5aaeee3117b5066d85",
+        "terrine-full-expression.sql": "2bccf10701cc36e0e721021975e66b241f8ead8ffe3998e1a4906498e110eca4",
+        "terrine-projected.sql": "5aa36aec815fce2a0413f349b1b044b7567d0dabf6372ec08a2766c4ef1ca91c"
+      },
+      "input_tables": {
+        "users": {
+          "rows": 10000,
+          "schema": "unit_id: string\nobserved_from: timestamp[us, tz=UTC]\nobserved_until: timestamp[us, tz=UTC]",
+          "arrow_stream_sha256": "a00adc17c129b0b071d3368137f4f8157cbc0afabe4e9895b15d62043a9a241b"
+        },
+        "events_native": {
+          "rows": 300000,
+          "schema": "unit_id: string\nevent_id: string\noccurrence_id: string\nevent_time: timestamp[us, tz=UTC]\nevent_type: string\nvalue: double\nadopted: string\nrevision: int64",
+          "arrow_stream_sha256": "dc75da58a2733e0c7629cfa234ab365914b6204d611ba58c17863dedb6788989"
+        }
+      },
+      "rows": 10000,
+      "compared_columns": [
+        "unit",
+        "t0",
+        "events_1d",
+        "events_1d__complete",
+        "events_1d__reason",
+        "events_2d",
+        "events_2d__complete",
+        "events_2d__reason",
+        "events_3d",
+        "events_3d__complete",
+        "events_3d__reason",
+        "events_4d",
+        "events_4d__complete",
+        "events_4d__reason",
+        "events_5d",
+        "events_5d__complete",
+        "events_5d__reason",
+        "events_6d",
+        "events_6d__complete",
+        "events_6d__reason",
+        "events_7d",
+        "events_7d__complete",
+        "events_7d__reason",
+        "events_8d",
+        "events_8d__complete",
+        "events_8d__reason",
+        "events_9d",
+        "events_9d__complete",
+        "events_9d__reason",
+        "events_10d",
+        "events_10d__complete",
+        "events_10d__reason",
+        "total_1d",
+        "total_1d__complete",
+        "total_1d__reason",
+        "total_2d",
+        "total_2d__complete",
+        "total_2d__reason",
+        "total_3d",
+        "total_3d__complete",
+        "total_3d__reason",
+        "total_4d",
+        "total_4d__complete",
+        "total_4d__reason",
+        "total_5d",
+        "total_5d__complete",
+        "total_5d__reason",
+        "total_6d",
+        "total_6d__complete",
+        "total_6d__reason",
+        "total_7d",
+        "total_7d__complete",
+        "total_7d__reason",
+        "total_8d",
+        "total_8d__complete",
+        "total_8d__reason",
+        "total_9d",
+        "total_9d__complete",
+        "total_9d__reason",
+        "total_10d",
+        "total_10d__complete",
+        "total_10d__reason",
+        "average_1d",
+        "average_1d__complete",
+        "average_1d__reason",
+        "average_2d",
+        "average_2d__complete",
+        "average_2d__reason",
+        "average_3d",
+        "average_3d__complete",
+        "average_3d__reason",
+        "average_4d",
+        "average_4d__complete",
+        "average_4d__reason",
+        "average_5d",
+        "average_5d__complete",
+        "average_5d__reason",
+        "average_6d",
+        "average_6d__complete",
+        "average_6d__reason",
+        "average_7d",
+        "average_7d__complete",
+        "average_7d__reason",
+        "average_8d",
+        "average_8d__complete",
+        "average_8d__reason",
+        "average_9d",
+        "average_9d__complete",
+        "average_9d__reason",
+        "average_10d",
+        "average_10d__complete",
+        "average_10d__reason",
+        "per_event_1d",
+        "per_event_1d__complete",
+        "per_event_1d__reason",
+        "per_event_2d",
+        "per_event_2d__complete",
+        "per_event_2d__reason",
+        "per_event_3d",
+        "per_event_3d__complete",
+        "per_event_3d__reason",
+        "per_event_4d",
+        "per_event_4d__complete",
+        "per_event_4d__reason",
+        "per_event_5d",
+        "per_event_5d__complete",
+        "per_event_5d__reason",
+        "per_event_6d",
+        "per_event_6d__complete",
+        "per_event_6d__reason",
+        "per_event_7d",
+        "per_event_7d__complete",
+        "per_event_7d__reason",
+        "per_event_8d",
+        "per_event_8d__complete",
+        "per_event_8d__reason",
+        "per_event_9d",
+        "per_event_9d__complete",
+        "per_event_9d__reason",
+        "per_event_10d",
+        "per_event_10d__complete",
+        "per_event_10d__reason",
+        "active_1d",
+        "active_1d__complete",
+        "active_1d__reason",
+        "active_2d",
+        "active_2d__complete",
+        "active_2d__reason",
+        "active_3d",
+        "active_3d__complete",
+        "active_3d__reason",
+        "active_4d",
+        "active_4d__complete",
+        "active_4d__reason",
+        "active_5d",
+        "active_5d__complete",
+        "active_5d__reason",
+        "active_6d",
+        "active_6d__complete",
+        "active_6d__reason",
+        "active_7d",
+        "active_7d__complete",
+        "active_7d__reason",
+        "active_8d",
+        "active_8d__complete",
+        "active_8d__reason",
+        "active_9d",
+        "active_9d__complete",
+        "active_9d__reason",
+        "active_10d",
+        "active_10d__complete",
+        "active_10d__reason"
+      ],
+      "compared_arrow_schema": "unit: string\nt0: timestamp[us, tz=UTC]\nevents_1d: int64\nevents_1d__complete: bool\nevents_1d__reason: string\nevents_2d: int64\nevents_2d__complete: bool\nevents_2d__reason: string\nevents_3d: int64\nevents_3d__complete: bool\nevents_3d__reason: string\nevents_4d: int64\nevents_4d__complete: bool\nevents_4d__reason: string\nevents_5d: int64\nevents_5d__complete: bool\nevents_5d__reason: string\nevents_6d: int64\nevents_6d__complete: bool\nevents_6d__reason: string\nevents_7d: int64\nevents_7d__complete: bool\nevents_7d__reason: string\nevents_8d: int64\nevents_8d__complete: bool\nevents_8d__reason: string\nevents_9d: int64\nevents_9d__complete: bool\nevents_9d__reason: string\nevents_10d: int64\nevents_10d__complete: bool\nevents_10d__reason: string\ntotal_1d: double\ntotal_1d__complete: bool\ntotal_1d__reason: string\ntotal_2d: double\ntotal_2d__complete: bool\ntotal_2d__reason: string\ntotal_3d: double\ntotal_3d__complete: bool\ntotal_3d__reason: string\ntotal_4d: double\ntotal_4d__complete: bool\ntotal_4d__reason: string\ntotal_5d: double\ntotal_5d__complete: bool\ntotal_5d__reason: string\ntotal_6d: double\ntotal_6d__complete: bool\ntotal_6d__reason: string\ntotal_7d: double\ntotal_7d__complete: bool\ntotal_7d__reason: string\ntotal_8d: double\ntotal_8d__complete: bool\ntotal_8d__reason: string\ntotal_9d: double\ntotal_9d__complete: bool\ntotal_9d__reason: string\ntotal_10d: double\ntotal_10d__complete: bool\ntotal_10d__reason: string\naverage_1d: double\naverage_1d__complete: bool\naverage_1d__reason: string\naverage_2d: double\naverage_2d__complete: bool\naverage_2d__reason: string\naverage_3d: double\naverage_3d__complete: bool\naverage_3d__reason: string\naverage_4d: double\naverage_4d__complete: bool\naverage_4d__reason: string\naverage_5d: double\naverage_5d__complete: bool\naverage_5d__reason: string\naverage_6d: double\naverage_6d__complete: bool\naverage_6d__reason: string\naverage_7d: double\naverage_7d__complete: bool\naverage_7d__reason: string\naverage_8d: double\naverage_8d__complete: bool\naverage_8d__reason: string\naverage_9d: double\naverage_9d__complete: bool\naverage_9d__reason: string\naverage_10d: double\naverage_10d__complete: bool\naverage_10d__reason: string\nper_event_1d: double\nper_event_1d__complete: bool\nper_event_1d__reason: string\nper_event_2d: double\nper_event_2d__complete: bool\nper_event_2d__reason: string\nper_event_3d: double\nper_event_3d__complete: bool\nper_event_3d__reason: string\nper_event_4d: double\nper_event_4d__complete: bool\nper_event_4d__reason: string\nper_event_5d: double\nper_event_5d__complete: bool\nper_event_5d__reason: string\nper_event_6d: double\nper_event_6d__complete: bool\nper_event_6d__reason: string\nper_event_7d: double\nper_event_7d__complete: bool\nper_event_7d__reason: string\nper_event_8d: double\nper_event_8d__complete: bool\nper_event_8d__reason: string\nper_event_9d: double\nper_event_9d__complete: bool\nper_event_9d__reason: string\nper_event_10d: double\nper_event_10d__complete: bool\nper_event_10d__reason: string\nactive_1d: bool\nactive_1d__complete: bool\nactive_1d__reason: string\nactive_2d: bool\nactive_2d__complete: bool\nactive_2d__reason: string\nactive_3d: bool\nactive_3d__complete: bool\nactive_3d__reason: string\nactive_4d: bool\nactive_4d__complete: bool\nactive_4d__reason: string\nactive_5d: bool\nactive_5d__complete: bool\nactive_5d__reason: string\nactive_6d: bool\nactive_6d__complete: bool\nactive_6d__reason: string\nactive_7d: bool\nactive_7d__complete: bool\nactive_7d__reason: string\nactive_8d: bool\nactive_8d__complete: bool\nactive_8d__reason: string\nactive_9d: bool\nactive_9d__complete: bool\nactive_9d__reason: string\nactive_10d: bool\nactive_10d__complete: bool\nactive_10d__reason: string",
+      "public_columns": 256,
+      "arrow_bytes": {
+        "handwritten_projected": 5901646,
+        "terrine_projected": 5901646,
+        "public": 14170396
+      },
+      "timings": {
+        "handwritten": {
+          "samples_seconds": [
+            0.09095991682261229,
+            0.076256541069597,
+            0.08080000011250377,
+            0.08725566719658673,
+            0.08032508403994143
+          ],
+          "median_seconds": 0.08080000011250377,
+          "minimum_seconds": 0.076256541069597,
+          "maximum_seconds": 0.09095991682261229
+        },
+        "terrine_precompiled": {
+          "samples_seconds": [
+            0.15379116591066122,
+            0.15145225008018315,
+            0.16637054202146828,
+            0.1668902498204261,
+            0.14593433286063373
+          ],
+          "median_seconds": 0.15379116591066122,
+          "minimum_seconds": 0.14593433286063373,
+          "maximum_seconds": 0.1668902498204261
+        },
+        "terrine_public": {
+          "samples_seconds": [
+            2.7321318748872727,
+            2.952774249948561,
+            2.6613590409979224,
+            2.7359146249946207,
+            2.716210874961689
+          ],
+          "median_seconds": 2.7321318748872727,
+          "minimum_seconds": 2.6613590409979224,
+          "maximum_seconds": 2.952774249948561
+        }
+      },
+      "build_seconds": 0.7301510421093553,
+      "projected_compile_seconds": 0.346388875041157,
+      "sql": {
+        "handwritten": {
+          "submitted_bytes": 10856,
+          "submitted_lines": 190,
+          "compact_bytes": 10871,
+          "formatted_bytes": 11509
+        },
+        "terrine_projected": {
+          "submitted_bytes": 99958,
+          "submitted_lines": 1,
+          "compact_bytes": 99958,
+          "formatted_bytes": 148750
+        },
+        "terrine_full_expression": {
+          "submitted_bytes": 104259,
+          "submitted_lines": 1,
+          "compact_bytes": 104259,
+          "formatted_bytes": 146829
+        }
+      },
+      "public_study_sql": {
+        "statements": 3,
+        "bytes": 301996,
+        "excludes": "metadata/admission probes, transaction control and catalog introspection"
+      },
+      "query_time_ratio_to_literal": 1.903356011095625,
+      "public_time_ratio_to_literal": 33.813513255979274,
+      "three_times_waypoint_met": true,
+      "remaining_elapsed_fraction_to_one_times": 0.47461221433589185,
+      "baseline": {
+        "directory": "benchmarks/results/direct-sql-wide-20261109-v2",
+        "production_revision": "64d7caf4f7925a8bd744b9ceafd4731d1eb67015",
+        "comparator_sha256": "c4f4d88928633dfd152b626541df329c0d0fd8220c48a1a82bf7b37cff4b2fed",
+        "medians_seconds": {
+          "handwritten": 0.06695708306506276,
+          "terrine_precompiled": 3.5126984580419958,
+          "terrine_public": 17.565747916931286
+        },
+        "ranges_seconds": {
+          "handwritten": [
+            0.06679787510074675,
+            0.07535783294588327
+          ],
+          "terrine_precompiled": [
+            3.3580436250194907,
+            4.327362374868244
+          ],
+          "terrine_public": [
+            17.40582458395511,
+            18.618665124988183
+          ]
+        },
+        "build_seconds": 4.913383084116504,
+        "projected_compile_seconds": 1.539944457821548,
+        "sql": {
+          "handwritten": {
+            "submitted_bytes": 10856,
+            "submitted_lines": 190,
+            "compact_bytes": 10871,
+            "formatted_bytes": 11509
+          },
+          "terrine_projected": {
+            "submitted_bytes": 1063594,
+            "submitted_lines": 1,
+            "compact_bytes": 1063594,
+            "formatted_bytes": 3755646
+          },
+          "terrine_full_expression": {
+            "submitted_bytes": 1067895,
+            "submitted_lines": 1,
+            "compact_bytes": 1067895,
+            "formatted_bytes": 3649365
+          }
+        },
+        "public_study_sql": {
+          "statements": 3,
+          "bytes": 2261680,
+          "excludes": "metadata/admission probes, transaction control and catalog introspection"
+        }
+      },
+      "baseline_to_final_speedup": {
+        "handwritten": 0.828676769453385,
+        "terrine_precompiled": 22.84070373770725,
+        "terrine_public": 6.429319198823829
+      },
+      "result_parity_each_sample": true,
+      "schema_parity_each_sample": true,
+      "oracle_sensitivity": [
+        "missing",
+        "duplicate",
+        "changed_value",
+        "changed_type"
+      ]
+    }
+  },
+  "milestones": {
+    "task2-readme": {
+      "directory": "benchmarks/results/compact-sql-task2-20261109-readme",
+      "production_revision": "03a30ef92e7a4d465136adf154d09ef181638b97",
+      "medians_seconds": {
+        "handwritten": 0.003649583086371422,
+        "terrine_precompiled": 0.04739970783703029,
+        "terrine_public": 0.7491425829939544
+      },
+      "build_seconds": 0.11127287498675287,
+      "projected_compile_seconds": 0.0742412090767175,
+      "sql": {
+        "handwritten": {
+          "submitted_bytes": 1620,
+          "submitted_lines": 32,
+          "compact_bytes": 1605,
+          "formatted_bytes": 1777
+        },
+        "terrine_projected": {
+          "submitted_bytes": 39166,
+          "submitted_lines": 1,
+          "compact_bytes": 39166,
+          "formatted_bytes": 81634
+        },
+        "terrine_full_expression": {
+          "submitted_bytes": 39487,
+          "submitted_lines": 1,
+          "compact_bytes": 39487,
+          "formatted_bytes": 80843
+        }
+      },
+      "file_sha256": {
+        "environment.json": "83fdc13379f95efdfa857ea8389bb2f3486f09f8929c59b74ea2fb03ad469e45",
+        "handwritten.sql": "9fdfc1319ab7bcf9a3862ea1b3a433b6dc310529259a0cdeebaa8aa30a1eede8",
+        "public-study-statement-0.sql": "f65b6ce2fed90cd3ec3328a21fc55424534c16e793dfc27f51b665bc1a8c78f6",
+        "public-study-statement-1.sql": "119c43cb3904a6a45a41130fd006157b48bf752a249b24e2f041aefd0b85e679",
+        "public-study-statement-2.sql": "4a9c4ba4cf1e03abe05fd5823f18209cab84bbe76cb20606879f06d6198d583d",
+        "result.json": "22f0c96bd7484b563916d5f3b382c55a2244bd87bb3e67fd710a33e57d32f0a2",
+        "terrine-full-expression.sql": "6c579d5eccccfaf00c794ced772bd2b2fb23eea1897758d2700f0c05390cdf29",
+        "terrine-projected.sql": "d80bd6c4a42ef37b546cb09cbf06cb6e4b0e6be441748b6c30f5cd6d77d33d2d"
+      }
+    },
+    "task3-readme": {
+      "directory": "benchmarks/results/compact-sql-task3-20261109-readme",
+      "production_revision": "e3546098e07ada97a8f3f3c071d135f6d637374c",
+      "medians_seconds": {
+        "handwritten": 0.003090666141360998,
+        "terrine_precompiled": 0.043121542083099484,
+        "terrine_public": 0.6282987908925861
+      },
+      "build_seconds": 0.13781066611409187,
+      "projected_compile_seconds": 0.08838450000621378,
+      "sql": {
+        "handwritten": {
+          "submitted_bytes": 1620,
+          "submitted_lines": 32,
+          "compact_bytes": 1605,
+          "formatted_bytes": 1777
+        },
+        "terrine_projected": {
+          "submitted_bytes": 39166,
+          "submitted_lines": 1,
+          "compact_bytes": 39166,
+          "formatted_bytes": 81634
+        },
+        "terrine_full_expression": {
+          "submitted_bytes": 39487,
+          "submitted_lines": 1,
+          "compact_bytes": 39487,
+          "formatted_bytes": 80843
+        }
+      },
+      "file_sha256": {
+        "environment.json": "cc7f5e1bf21e0ab0ed1ae60467287dc313af5c4643b66b1ca104363e39d88ec3",
+        "handwritten.sql": "9fdfc1319ab7bcf9a3862ea1b3a433b6dc310529259a0cdeebaa8aa30a1eede8",
+        "public-study-statement-0.sql": "f65b6ce2fed90cd3ec3328a21fc55424534c16e793dfc27f51b665bc1a8c78f6",
+        "public-study-statement-1.sql": "119c43cb3904a6a45a41130fd006157b48bf752a249b24e2f041aefd0b85e679",
+        "public-study-statement-2.sql": "fae2d3314d0e86338dddbcc3dfbd035f0af6561e0813659ca59445ca0a6f21f8",
+        "result.json": "b81e4457b45b1d8cd9502ea4e86b4ecf73ba69ef0e0fbaf5dde2940b52bb621e",
+        "terrine-full-expression.sql": "6c579d5eccccfaf00c794ced772bd2b2fb23eea1897758d2700f0c05390cdf29",
+        "terrine-projected.sql": "d80bd6c4a42ef37b546cb09cbf06cb6e4b0e6be441748b6c30f5cd6d77d33d2d"
+      }
+    },
+    "task4-readme": {
+      "directory": "benchmarks/results/compact-sql-task4-20261109-readme",
+      "production_revision": "f6369a84b51a2b06567715622e55ad0eca198db2",
+      "medians_seconds": {
+        "handwritten": 0.004361417144536972,
+        "terrine_precompiled": 0.04684095806442201,
+        "terrine_public": 0.6618932499550283
+      },
+      "build_seconds": 0.08407208300195634,
+      "projected_compile_seconds": 0.10437879199162126,
+      "sql": {
+        "handwritten": {
+          "submitted_bytes": 1620,
+          "submitted_lines": 32,
+          "compact_bytes": 1605,
+          "formatted_bytes": 1777
+        },
+        "terrine_projected": {
+          "submitted_bytes": 36340,
+          "submitted_lines": 1,
+          "compact_bytes": 36340,
+          "formatted_bytes": 77022
+        },
+        "terrine_full_expression": {
+          "submitted_bytes": 36661,
+          "submitted_lines": 1,
+          "compact_bytes": 36661,
+          "formatted_bytes": 76397
+        }
+      },
+      "file_sha256": {
+        "environment.json": "bc90b8acef706862740b4bee31bf3fd13f7cd57cb72953679dfb9ec9a270b4cb",
+        "handwritten.sql": "9fdfc1319ab7bcf9a3862ea1b3a433b6dc310529259a0cdeebaa8aa30a1eede8",
+        "public-study-statement-0.sql": "f65b6ce2fed90cd3ec3328a21fc55424534c16e793dfc27f51b665bc1a8c78f6",
+        "public-study-statement-1.sql": "119c43cb3904a6a45a41130fd006157b48bf752a249b24e2f041aefd0b85e679",
+        "public-study-statement-2.sql": "462d577860a2dbf7453a96dcf6a5aa1dacbb9157d2088c620bae94382805128e",
+        "result.json": "09a7bdd07610de1b8de1b832605aa0006060ce0dc727825f6c8f5d992ecbd1ea",
+        "terrine-full-expression.sql": "b4fb7715d45d892bac1a396e427fbdfe531a8570d7d939d9cd91c693255fcb5c",
+        "terrine-projected.sql": "5575cab3795f8ca1da0cbc155c9f3a49607744b446068dbed34324de524c12fe"
+      }
+    },
+    "task5-readme": {
+      "directory": "benchmarks/results/compact-sql-task5-20261109-readme",
+      "production_revision": "6b0ff5d14696648a10cd3f76170b78755e52fe79",
+      "medians_seconds": {
+        "handwritten": 0.003437207778915763,
+        "terrine_precompiled": 0.03958550002425909,
+        "terrine_public": 0.5685934580396861
+      },
+      "build_seconds": 0.08824316691607237,
+      "projected_compile_seconds": 0.12261666590347886,
+      "sql": {
+        "handwritten": {
+          "submitted_bytes": 1620,
+          "submitted_lines": 32,
+          "compact_bytes": 1605,
+          "formatted_bytes": 1777
+        },
+        "terrine_projected": {
+          "submitted_bytes": 36340,
+          "submitted_lines": 1,
+          "compact_bytes": 36340,
+          "formatted_bytes": 77022
+        },
+        "terrine_full_expression": {
+          "submitted_bytes": 36661,
+          "submitted_lines": 1,
+          "compact_bytes": 36661,
+          "formatted_bytes": 76397
+        }
+      },
+      "file_sha256": {
+        "environment.json": "ac5355d2811eb4a43fd417283292824984b23c98bd57b6731283e22fcda906d8",
+        "handwritten.sql": "9fdfc1319ab7bcf9a3862ea1b3a433b6dc310529259a0cdeebaa8aa30a1eede8",
+        "public-study-statement-0.sql": "f65b6ce2fed90cd3ec3328a21fc55424534c16e793dfc27f51b665bc1a8c78f6",
+        "public-study-statement-1.sql": "119c43cb3904a6a45a41130fd006157b48bf752a249b24e2f041aefd0b85e679",
+        "public-study-statement-2.sql": "f1b7c4082c4adaceec44e15e20d1f5ceefe511cbafb9c8da0ef91afc46d761cc",
+        "result.json": "221e8a998efd4a54543bafe497498f27cef5aaf3df4bcca43778d5991d56c852",
+        "terrine-full-expression.sql": "b4fb7715d45d892bac1a396e427fbdfe531a8570d7d939d9cd91c693255fcb5c",
+        "terrine-projected.sql": "5575cab3795f8ca1da0cbc155c9f3a49607744b446068dbed34324de524c12fe"
+      }
+    },
+    "task2-scaled": {
+      "directory": "benchmarks/results/compact-sql-task2-20261109-scaled",
+      "production_revision": "03a30ef92e7a4d465136adf154d09ef181638b97",
+      "medians_seconds": {
+        "handwritten": 0.02786074997857213,
+        "terrine_precompiled": 0.13107554195448756,
+        "terrine_public": 0.6603796668350697
+      },
+      "build_seconds": 0.09883341705426574,
+      "projected_compile_seconds": 0.09381874999962747,
+      "sql": {
+        "handwritten": {
+          "submitted_bytes": 1620,
+          "submitted_lines": 32,
+          "compact_bytes": 1605,
+          "formatted_bytes": 1777
+        },
+        "terrine_projected": {
+          "submitted_bytes": 19528,
+          "submitted_lines": 1,
+          "compact_bytes": 19528,
+          "formatted_bytes": 32626
+        },
+        "terrine_full_expression": {
+          "submitted_bytes": 19849,
+          "submitted_lines": 1,
+          "compact_bytes": 19849,
+          "formatted_bytes": 31835
+        }
+      },
+      "file_sha256": {
+        "environment.json": "257ba1125c5d6efa2f9bd2b1ee3377c6ab9b25d12ad0d28c3a87e420c8c23e27",
+        "handwritten.sql": "9fdfc1319ab7bcf9a3862ea1b3a433b6dc310529259a0cdeebaa8aa30a1eede8",
+        "public-study-statement-0.sql": "f65b6ce2fed90cd3ec3328a21fc55424534c16e793dfc27f51b665bc1a8c78f6",
+        "public-study-statement-1.sql": "119c43cb3904a6a45a41130fd006157b48bf752a249b24e2f041aefd0b85e679",
+        "public-study-statement-2.sql": "caca9bc9cbcd60ae9bef9750cb612628707025c376be243b95abb4aeb7239964",
+        "result.json": "10e71d58e22ee977839eea7e0c96eb48e470203ca625db9d9c90284c28dca279",
+        "terrine-full-expression.sql": "89e77fe088a4d71cd3d996f96515cd01e93680163200b21cd7a5450225c2d009",
+        "terrine-projected.sql": "283d46589cb1d613130825b1e92ddcf897545517c109e9403ed273578ee9b3c8"
+      }
+    },
+    "task3-scaled": {
+      "directory": "benchmarks/results/compact-sql-task3-20261109-scaled",
+      "production_revision": "e3546098e07ada97a8f3f3c071d135f6d637374c",
+      "medians_seconds": {
+        "handwritten": 0.03405537502840161,
+        "terrine_precompiled": 0.16503420914523304,
+        "terrine_public": 0.8589875421021134
+      },
+      "build_seconds": 0.10267749987542629,
+      "projected_compile_seconds": 0.09184283297508955,
+      "sql": {
+        "handwritten": {
+          "submitted_bytes": 1620,
+          "submitted_lines": 32,
+          "compact_bytes": 1605,
+          "formatted_bytes": 1777
+        },
+        "terrine_projected": {
+          "submitted_bytes": 19528,
+          "submitted_lines": 1,
+          "compact_bytes": 19528,
+          "formatted_bytes": 32626
+        },
+        "terrine_full_expression": {
+          "submitted_bytes": 19849,
+          "submitted_lines": 1,
+          "compact_bytes": 19849,
+          "formatted_bytes": 31835
+        }
+      },
+      "file_sha256": {
+        "environment.json": "c25014057b0da62beb1fe9a89917eca4a7cc3468f7da11b13424f460c2888a3b",
+        "handwritten.sql": "9fdfc1319ab7bcf9a3862ea1b3a433b6dc310529259a0cdeebaa8aa30a1eede8",
+        "public-study-statement-0.sql": "f65b6ce2fed90cd3ec3328a21fc55424534c16e793dfc27f51b665bc1a8c78f6",
+        "public-study-statement-1.sql": "119c43cb3904a6a45a41130fd006157b48bf752a249b24e2f041aefd0b85e679",
+        "public-study-statement-2.sql": "caca9bc9cbcd60ae9bef9750cb612628707025c376be243b95abb4aeb7239964",
+        "result.json": "429a0c7cffd3d22503fb6f10df9cc90c62df035a6e604258e4a6edfe7785f931",
+        "terrine-full-expression.sql": "89e77fe088a4d71cd3d996f96515cd01e93680163200b21cd7a5450225c2d009",
+        "terrine-projected.sql": "283d46589cb1d613130825b1e92ddcf897545517c109e9403ed273578ee9b3c8"
+      }
+    },
+    "task4-scaled": {
+      "directory": "benchmarks/results/compact-sql-task4-20261109-scaled",
+      "production_revision": "f6369a84b51a2b06567715622e55ad0eca198db2",
+      "medians_seconds": {
+        "handwritten": 0.03459387505427003,
+        "terrine_precompiled": 0.14573574997484684,
+        "terrine_public": 0.7611801670864224
+      },
+      "build_seconds": 0.12485770788043737,
+      "projected_compile_seconds": 0.1251300829462707,
+      "sql": {
+        "handwritten": {
+          "submitted_bytes": 1620,
+          "submitted_lines": 32,
+          "compact_bytes": 1605,
+          "formatted_bytes": 1777
+        },
+        "terrine_projected": {
+          "submitted_bytes": 16702,
+          "submitted_lines": 1,
+          "compact_bytes": 16702,
+          "formatted_bytes": 28014
+        },
+        "terrine_full_expression": {
+          "submitted_bytes": 17023,
+          "submitted_lines": 1,
+          "compact_bytes": 17023,
+          "formatted_bytes": 27389
+        }
+      },
+      "file_sha256": {
+        "environment.json": "bd6fca4b4b4f5df504ebb5a9749c33011b95ae8e0a1ccde1e3c038dfc787e52c",
+        "handwritten.sql": "9fdfc1319ab7bcf9a3862ea1b3a433b6dc310529259a0cdeebaa8aa30a1eede8",
+        "public-study-statement-0.sql": "f65b6ce2fed90cd3ec3328a21fc55424534c16e793dfc27f51b665bc1a8c78f6",
+        "public-study-statement-1.sql": "119c43cb3904a6a45a41130fd006157b48bf752a249b24e2f041aefd0b85e679",
+        "public-study-statement-2.sql": "059049a52ddc32da1dfabfc687f5afe6b8f032cc1e6422ea2e3dc3c0997686bb",
+        "result.json": "8d869d7dfbea3c2596bd2d956a52950c760ba34b03a34977b01473ce0d9d6565",
+        "terrine-full-expression.sql": "781212b7930d87bb7fb57d0e0fa9c670a9ea7520355b69745a02700fe534fd4a",
+        "terrine-projected.sql": "020e848a857b06eceb63cbd0ab8ea5746fa2f3c31c2594a35261214ee5f4c78f"
+      }
+    },
+    "task5-scaled": {
+      "directory": "benchmarks/results/compact-sql-task5-20261109-scaled",
+      "production_revision": "6b0ff5d14696648a10cd3f76170b78755e52fe79",
+      "medians_seconds": {
+        "handwritten": 0.030767833814024925,
+        "terrine_precompiled": 0.14081662497483194,
+        "terrine_public": 0.6714410840068012
+      },
+      "build_seconds": 0.08010433311574161,
+      "projected_compile_seconds": 0.09177799988538027,
+      "sql": {
+        "handwritten": {
+          "submitted_bytes": 1620,
+          "submitted_lines": 32,
+          "compact_bytes": 1605,
+          "formatted_bytes": 1777
+        },
+        "terrine_projected": {
+          "submitted_bytes": 16702,
+          "submitted_lines": 1,
+          "compact_bytes": 16702,
+          "formatted_bytes": 28014
+        },
+        "terrine_full_expression": {
+          "submitted_bytes": 17023,
+          "submitted_lines": 1,
+          "compact_bytes": 17023,
+          "formatted_bytes": 27389
+        }
+      },
+      "file_sha256": {
+        "environment.json": "b1bb1515a9e3df478faaf505724b9337d1242f32d46b12cfcf9f01fdcf64aafa",
+        "handwritten.sql": "9fdfc1319ab7bcf9a3862ea1b3a433b6dc310529259a0cdeebaa8aa30a1eede8",
+        "public-study-statement-0.sql": "f65b6ce2fed90cd3ec3328a21fc55424534c16e793dfc27f51b665bc1a8c78f6",
+        "public-study-statement-1.sql": "119c43cb3904a6a45a41130fd006157b48bf752a249b24e2f041aefd0b85e679",
+        "public-study-statement-2.sql": "c738ac8801df00efe730083f2005e5da3109cd17ee5634c17ccb06efc32dcde8",
+        "result.json": "51223004bc45c02a26b5894eca88e2cbdd29dc526634c9e5e623784f50c771dd",
+        "terrine-full-expression.sql": "781212b7930d87bb7fb57d0e0fa9c670a9ea7520355b69745a02700fe534fd4a",
+        "terrine-projected.sql": "020e848a857b06eceb63cbd0ab8ea5746fa2f3c31c2594a35261214ee5f4c78f"
+      }
+    },
+    "task2-wide": {
+      "directory": "benchmarks/results/compact-sql-task2-20261109-wide",
+      "production_revision": "03a30ef92e7a4d465136adf154d09ef181638b97",
+      "medians_seconds": {
+        "handwritten": 0.07074708305299282,
+        "terrine_precompiled": 0.27711300016380847,
+        "terrine_public": 7.876657250104472
+      },
+      "build_seconds": 4.827534208074212,
+      "projected_compile_seconds": 0.5206840001046658,
+      "sql": {
+        "handwritten": {
+          "submitted_bytes": 10856,
+          "submitted_lines": 190,
+          "compact_bytes": 10871,
+          "formatted_bytes": 11509
+        },
+        "terrine_projected": {
+          "submitted_bytes": 188130,
+          "submitted_lines": 1,
+          "compact_bytes": 188130,
+          "formatted_bytes": 323318
+        },
+        "terrine_full_expression": {
+          "submitted_bytes": 192431,
+          "submitted_lines": 1,
+          "compact_bytes": 192431,
+          "formatted_bytes": 316877
+        }
+      },
+      "file_sha256": {
+        "environment.json": "a1c23a7272364dd4d531d0b288ca081ae9c33fe112dc096ff0d980da0043b837",
+        "handwritten.sql": "a868d91726036f8d80289be58114b0b1dc02d5d00d0dc3a4b1e578ddfb326bde",
+        "public-study-statement-0.sql": "4d1abefc36d52f1cab52e599796b25019b6b9e237022b562602ba3bf4f599471",
+        "public-study-statement-1.sql": "cc023b0087b69b9c7cb42613d366314834b8338a4e59bb8c967b3279c867ed08",
+        "public-study-statement-2.sql": "3facc2ae235dfe3f3cafb7ecb84d7006d0e2603dd39332d954f7ed771b2b8d6c",
+        "result.json": "1703c561b72e2cabc4672edcc962f1b33f2edafd957c48a44e2f2e0ac664990c",
+        "terrine-full-expression.sql": "184eb4b7a6ad15b457517ab47d5867f06c34b1bb6ad4e5eafaeaa52af48f606a",
+        "terrine-projected.sql": "8b47c3db861c9d366cb1562050b1782b6515e4e26c9e9ad5c6c873e0d1b3ab7b"
+      }
+    },
+    "task3-wide": {
+      "directory": "benchmarks/results/compact-sql-task3-20261109-wide",
+      "production_revision": "e3546098e07ada97a8f3f3c071d135f6d637374c",
+      "medians_seconds": {
+        "handwritten": 0.07531420793384314,
+        "terrine_precompiled": 0.19774358300492167,
+        "terrine_public": 7.832582334056497
+      },
+      "build_seconds": 5.0426260840613395,
+      "projected_compile_seconds": 0.4770738750230521,
+      "sql": {
+        "handwritten": {
+          "submitted_bytes": 10856,
+          "submitted_lines": 190,
+          "compact_bytes": 10871,
+          "formatted_bytes": 11509
+        },
+        "terrine_projected": {
+          "submitted_bytes": 167662,
+          "submitted_lines": 1,
+          "compact_bytes": 167662,
+          "formatted_bytes": 260162
+        },
+        "terrine_full_expression": {
+          "submitted_bytes": 171963,
+          "submitted_lines": 1,
+          "compact_bytes": 171963,
+          "formatted_bytes": 254773
+        }
+      },
+      "file_sha256": {
+        "environment.json": "4e983e3a2eafe646ecc65001feb411302582b43e4587e76852892b38baa8d976",
+        "handwritten.sql": "a868d91726036f8d80289be58114b0b1dc02d5d00d0dc3a4b1e578ddfb326bde",
+        "public-study-statement-0.sql": "4d1abefc36d52f1cab52e599796b25019b6b9e237022b562602ba3bf4f599471",
+        "public-study-statement-1.sql": "cc023b0087b69b9c7cb42613d366314834b8338a4e59bb8c967b3279c867ed08",
+        "public-study-statement-2.sql": "fd193cbdcf51b08834841404cd87e37cc55e7bea9691aaec07df75d2d63768cb",
+        "result.json": "585923c3780011da9c63c38b56b1a84bc3f8240ca9ed69d77ce20615ad3cd073",
+        "terrine-full-expression.sql": "ba060d91a768ebbc364667e7ad068d87af8ded42dee3dba348d72640c74c5e4c",
+        "terrine-projected.sql": "a97d4ef518b463e2d96e5f388c8bae862e29b8794d538324e5b812295e2b9b6a"
+      }
+    },
+    "task4-wide": {
+      "directory": "benchmarks/results/compact-sql-task4-20261109-wide",
+      "production_revision": "f6369a84b51a2b06567715622e55ad0eca198db2",
+      "medians_seconds": {
+        "handwritten": 0.07752479100599885,
+        "terrine_precompiled": 0.15157933393493295,
+        "terrine_public": 3.971202375134453
+      },
+      "build_seconds": 2.8336422501597553,
+      "projected_compile_seconds": 0.39959891699254513,
+      "sql": {
+        "handwritten": {
+          "submitted_bytes": 10856,
+          "submitted_lines": 190,
+          "compact_bytes": 10871,
+          "formatted_bytes": 11509
+        },
+        "terrine_projected": {
+          "submitted_bytes": 99958,
+          "submitted_lines": 1,
+          "compact_bytes": 99958,
+          "formatted_bytes": 148750
+        },
+        "terrine_full_expression": {
+          "submitted_bytes": 104259,
+          "submitted_lines": 1,
+          "compact_bytes": 104259,
+          "formatted_bytes": 146829
+        }
+      },
+      "file_sha256": {
+        "environment.json": "084c52998f6526d697636e5287a90419be742416fe3a48e345913b82b4c78a2c",
+        "handwritten.sql": "a868d91726036f8d80289be58114b0b1dc02d5d00d0dc3a4b1e578ddfb326bde",
+        "public-study-statement-0.sql": "4d1abefc36d52f1cab52e599796b25019b6b9e237022b562602ba3bf4f599471",
+        "public-study-statement-1.sql": "cc023b0087b69b9c7cb42613d366314834b8338a4e59bb8c967b3279c867ed08",
+        "public-study-statement-2.sql": "460948602b4174cd25f2090c445cdc492b4e6c120f20a628652c9ab5fa10f4cc",
+        "result.json": "a261798dd8763df235cc6db81e8883e7f881e57588f9df00d8098be909d920d6",
+        "terrine-full-expression.sql": "2bccf10701cc36e0e721021975e66b241f8ead8ffe3998e1a4906498e110eca4",
+        "terrine-projected.sql": "5aa36aec815fce2a0413f349b1b044b7567d0dabf6372ec08a2766c4ef1ca91c"
+      }
+    },
+    "task5-wide": {
+      "directory": "benchmarks/results/compact-sql-task5-20261109-wide",
+      "production_revision": "6b0ff5d14696648a10cd3f76170b78755e52fe79",
+      "medians_seconds": {
+        "handwritten": 0.08186354185454547,
+        "terrine_precompiled": 0.1615835828706622,
+        "terrine_public": 2.79004616686143
+      },
+      "build_seconds": 0.7438305409159511,
+      "projected_compile_seconds": 0.32548979204148054,
+      "sql": {
+        "handwritten": {
+          "submitted_bytes": 10856,
+          "submitted_lines": 190,
+          "compact_bytes": 10871,
+          "formatted_bytes": 11509
+        },
+        "terrine_projected": {
+          "submitted_bytes": 99958,
+          "submitted_lines": 1,
+          "compact_bytes": 99958,
+          "formatted_bytes": 148750
+        },
+        "terrine_full_expression": {
+          "submitted_bytes": 104259,
+          "submitted_lines": 1,
+          "compact_bytes": 104259,
+          "formatted_bytes": 146829
+        }
+      },
+      "file_sha256": {
+        "environment.json": "3fb23bcc2a37811af35c9124c99a7d46f80e737b7e8c9b90e108b94b988ca43c",
+        "handwritten.sql": "a868d91726036f8d80289be58114b0b1dc02d5d00d0dc3a4b1e578ddfb326bde",
+        "public-study-statement-0.sql": "4d1abefc36d52f1cab52e599796b25019b6b9e237022b562602ba3bf4f599471",
+        "public-study-statement-1.sql": "cc023b0087b69b9c7cb42613d366314834b8338a4e59bb8c967b3279c867ed08",
+        "public-study-statement-2.sql": "460948602b4174cd25f2090c445cdc492b4e6c120f20a628652c9ab5fa10f4cc",
+        "result.json": "16f40edc27cd427c73ad96bf41c4498b3c61d2d4c0345db8f5119c3f5445e3c2",
+        "terrine-full-expression.sql": "2bccf10701cc36e0e721021975e66b241f8ead8ffe3998e1a4906498e110eca4",
+        "terrine-projected.sql": "5aa36aec815fce2a0413f349b1b044b7567d0dabf6372ec08a2766c4ef1ca91c"
+      }
+    }
+  },
+  "cloud_matrices": {
+    "integration/warehouse_execution/test_bigquery_parity.py": {
+      "sha256": "f423c76dcb00e9b07b2d0260ab464f66bad9411c683d6e1018c825da5a8d83cf",
+      "unchanged_from_task6_base": true,
+      "live_run": false,
+      "reason": "Live cloud execution not authorized."
+    },
+    "integration/warehouse_execution/test_snowflake_parity.py": {
+      "sha256": "ed6f4731912710e016e38b13c7df4253b03dafa0a17024e586047f02cdf4d8c8",
+      "unchanged_from_task6_base": true,
+      "live_run": false,
+      "reason": "Live cloud execution not authorized."
+    }
+  },
+  "consumer_budgets": {
+    "unit": "formatted characters, len(ibis.to_sql(frame.expr))",
+    "readme": {
+      "baseline": 89267,
+      "final": 84821,
+      "ceiling": 20000,
+      "status": "FAILED; inherited, not waived"
+    },
+    "state_panel": {
+      "baseline": 196349,
+      "final": 32387,
+      "ceiling": 30000,
+      "status": "FAILED; inherited, not waived"
+    },
+    "bigquery_5x10": {
+      "final": 515634,
+      "ceiling": 1000000,
+      "status": "PASSED; observed strict XPASS before removing existing mark; metadata-only"
+    },
+    "ltv": {
+      "final": 96020,
+      "ceiling": 30000,
+      "status": "existing strict xfail retained"
+    },
+    "life_table": {
+      "final": 44321,
+      "ceiling": 30000,
+      "status": "existing strict xfail retained"
+    }
+  },
+  "acceptance": "Residual README/state-panel budget gates FAILED, unresolved owner disposition; not represented as successful task acceptance.",
+  "supporting_artifacts": {
+    "benchmarks/results/compact-sql-task4-20261109-dense-day": {
+      "duckdb-integer-anchors21-local_day-explain.txt": "f2d753fcde95662e6fde8bb7f21bc10a3709ca28aa7a0c38d693a11238b21409",
+      "duckdb-integer-anchors21-local_day.sql": "2348fc53e0b222f3501eb6d0841295ab4b266f29bac779a98317237b3994dee0",
+      "duckdb-integer-anchors21-local_raw-explain.txt": "59992e096f917926e9b902d4cf5dc716b0696f395a825277e270ff54c3ed4f53",
+      "duckdb-integer-anchors21-local_raw.sql": "4ba8e9e6b1c6c628cfb165ab0cfb955c3c79895e64af04eb11d896ae47bed429",
+      "duckdb-integer-anchors21.json": "846046427f5b87d32cb55d847762d0c986659e80dc1b165f7cf2a31f46708287",
+      "duckdb-native-anchors21-local_day-explain.txt": "4e8e28f6d5361d434ecb01756b03c5c6e64d3883274af0c44a94e6ff406d794b",
+      "duckdb-native-anchors21-local_day.sql": "a6e31fb42a167379c2cc8ee7a374a122cdce15cc68c7cc8f1905de895b372fd5",
+      "duckdb-native-anchors21-local_raw-explain.txt": "001d55510c9f6e347fcf38f2b36e498266a99493c96421338abcf8fcf7f65d57",
+      "duckdb-native-anchors21-local_raw.sql": "bfc75131f71179907b39e63b3adb2ef8a45a4af1b6288d3b5c0803ecac2456cd",
+      "duckdb-native-anchors21.json": "fbf62aaec46bb2a5ed0a878653f76923e3e58ad14e9eecb43a9dabe0de05403e",
+      "environment.json": "31806128ae66a03753385a70da323e3fd236dfd24190775063141581a17fc511"
+    },
+    "benchmarks/results/compact-sql-narrow-diagnostics-20261109": {
+      "after-diagnostics.json": "9066b70bf28cc7b243df52ecb0351523f868b45517ae20f80a4ec8e21e5a6c3f",
+      "after-environment.json": "46d95d383a2381e4352f7567f63e2a227c17cfdae7278f61703835dda9ba1d42",
+      "after-result.json": "6ac6d8ac28eddd8997e0b242847cc528cb287a232b2a05ad29c7bfc94ae8a57c",
+      "before-diagnostics.json": "a8603af1478e7de1ca69727ea8a193da69741139c1ec64ab0ac839443db3946e",
+      "before-environment.json": "a14f1c3dd510dd66ad16d95491169a300cdbfd8f779aef3ac513b40ca4b4e9a3",
+      "before-result.json": "53bb4317ccaa5ab54fff6222287b8e786f09862b4c53bdb751e3aa39e1e5cf5a",
+      "profile-summary.json": "1a7693d6fe677e0c760bcf1efe07e2623478bfb84f8689ffe4040ccc8f7ea1e7"
+    },
+    "benchmarks/results/compact-sql-final-verification-20261109": {
+      "admission-restoration-check.txt": "218d5719660e827a668547f8c5bdfe6100c98f23b66556e035bc9c4d26b4930f",
+      "baseline-budgets.txt": "d5f5f6efd2c9d0011a9724b4a95b0846b761962f08a9787e11164d9baa0429c6",
+      "boolean-profile-summary.json": "2a5b8205f9cd0ee774af72b1df35d9b212a18d19c352be0b41410265f3f2b254",
+      "budget-structure.json": "84602ea7c94e6e2da29e1bd3f3e7898d0a62ef0e69f631024aed0d6a6c110b10",
+      "budgets.txt": "0c58a49c5b29865595f3efec3e5ce0efcfe7ee44c389cc40e6b58223d73356cf",
+      "floor-provenance.txt": "ac1ea323e4ff25039d6cf4d01e5f029b6b79eaec7bf08fb285c278eb535d82c2",
+      "generic-conformance.txt": "c64248db947289296abce322f6a4704fcf98fa983b9c97f6106bb8a7c71d9318",
+      "initial-budgets.txt": "ba8eb0cc459dde86b0d9609f5637dcd63996728020a34d4a68af9ad81e0f063d",
+      "integrated-check.txt": "3c61956a7e4d3bd84884e8c041b42948a0c108a78ff9929838fa7042b21edc98",
+      "postgres.json": "de5911317e3d5b9a8c5e06a6bd17180c75a29d134bfd652046ebf1fcb47f6b66",
+      "readme-budget.sql": "66d04d65e765b6fe1d5ca29bdc0d5c211648e1c925e5e688329453c257fce1ba",
+      "state_panel-budget.sql": "3a4c438814a96b43c4b4b212886276c0b3bd77c5b972b703b9397a77f6309c8f",
+      "summary.json": "52abf4791789284c5236d6f469c001b79f9cc7bbc48e8a22078c1d319ab52c43"
+    }
+  }
+}

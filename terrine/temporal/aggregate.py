@@ -6,11 +6,13 @@ import itertools
 import re
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
+from datetime import datetime, timedelta
 from types import MappingProxyType
 from typing import Any, Literal, cast
 
 import ibis
 import ibis.expr.datatypes as dt
+import ibis.expr.operations as ops
 import ibis.expr.types as ir
 import pyarrow as pa
 
@@ -28,7 +30,17 @@ from terrine.backends.numeric import (
     float_is_finite,
     float_ratio,
 )
-from terrine.backends.timestamps import compare_timestamps, day_start, local_day
+from terrine.backends.timestamps import (
+    _compare_timestamp_keys,
+    _compare_timestamp_parts,
+    _timestamp_comparison_key,
+    _TimestampComparisonKey,
+    compare_timestamps,
+    day_start,
+    local_day,
+    timestamp_parts,
+    utc_wall_clock,
+)
 from terrine.data import ColumnMeta, RowCheck
 from terrine.errors import RefusalSpec
 from terrine.semantic.bind import _SCHEMA
@@ -474,6 +486,17 @@ class AggregateRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class _WindowContextKey:
+    start_seconds: int
+    end_seconds: int
+    source_start: datetime
+    source_end: datetime
+    boundary: str
+    resolution: Literal["event", "day"]
+    calendar_alignment: bool
+
+
+@dataclass(frozen=True, slots=True)
 class _WindowContext:
     start: str
     end: str
@@ -481,7 +504,7 @@ class _WindowContext:
     unavailable: str
     observed_from: str
     observed_until: str
-    row_checks: tuple[RowCheck, ...]
+    unaligned: str | None
 
 
 def _window_context(
@@ -492,10 +515,11 @@ def _window_context(
     boundary: str,
     output: str,
     resolution: Literal["event", "day"] = "event",
-) -> _WindowContext:
-    anchors = builder.table
-    offset = boundary_timezone(boundary).utcoffset(None)
-    minutes = (offset.days * 86400 + offset.seconds) // 60
+    *,
+    shared: dict[_WindowContextKey, _WindowContext],
+    shared_support: dict[tuple[Any, ...], tuple[str, str]] | None = None,
+) -> tuple[_WindowContext, tuple[RowCheck, ...]]:
+    boundary_timezone(boundary)
     calendars = [m for m in metric.measures if m.aggregation == "avg_calendar_day"]
     domain_context = {
         "metric": metric.name,
@@ -509,25 +533,63 @@ def _window_context(
         if calendar_average_alignment(window, anchor=None, day_boundary=boundary) == "unaligned":
             raise UNALIGNED_CALENDAR_AVERAGE.error(measure=measure.event, **domain_context)
 
+    coverages = [readiness.for_fact(measure.source_name) for measure in metric.measures]
+    key = _WindowContextKey(
+        window.start.seconds,
+        window.end.seconds,
+        max(coverage.start for coverage in coverages),
+        min(coverage.end_exclusive for coverage in coverages),
+        boundary,
+        resolution,
+        bool(calendars),
+    )
+    if key not in shared:
+        if shared_support is None:
+            shared[key] = _window_fields(builder, key)
+        else:
+            support_key = (
+                tuple(measure.source_name for measure in metric.measures),
+                key.source_start,
+                key.source_end,
+                ibis.literal(key.source_start).type(),
+                ibis.literal(key.source_end).type(),
+            )
+            shared[key] = _window_fields(builder, key, support=shared_support.get(support_key))
+            shared_support[support_key] = shared[key].observed_from, shared[key].observed_until
+    context = shared[key]
+    checks = ()
+    if context.unaligned is not None:
+        refusal = UNALIGNED_CALENDAR_AVERAGE if calendars else _DAY_ALIGNMENT
+        error_context = (
+            {**domain_context, "measure": calendars[0].event} if calendars else domain_context
+        )
+        checks = (RowCheck(context.unaligned, refusal, error_context),)
+    return context, checks
+
+
+def _window_fields(
+    builder: _Builder, key: _WindowContextKey, *, support: tuple[str, str] | None = None
+) -> _WindowContext:
+    """Build fields shared by requests with the same coverage and window semantics."""
+    anchors = builder.table
+
     def shifted(seconds: int):
         t0 = builder.table.t0
         return t0 + ibis.interval(seconds=seconds) if seconds else t0
 
-    start = builder.put("start", shifted(window.start.seconds))
-    end = builder.put("end", shifted(window.end.seconds))
-    row_checks: list[RowCheck] = []
-    if calendars or resolution == "day":
+    start = builder.put("start", shifted(key.start_seconds))
+    end = builder.put("end", shifted(key.end_seconds))
+    unaligned = None
+    if key.calendar_alignment or key.resolution == "day":
+        offset = boundary_timezone(key.boundary).utcoffset(None)
+        minutes = (offset.days * 86400 + offset.seconds) // 60
         invalid = builder.put(
             "unaligned",
             builder.table.t0.notnull()
             & ~(_aligned(builder.col(start), minutes) & _aligned(builder.col(end), minutes)),
         )
-        refusal = UNALIGNED_CALENDAR_AVERAGE if calendars else _DAY_ALIGNMENT
-        context = {**domain_context, "measure": calendars[0].event} if calendars else domain_context
-        row_checks.extend(builder.check([(invalid, refusal, context)]))
-    coverages = [readiness.for_fact(measure.source_name) for measure in metric.measures]
-    source_start = max(coverage.start for coverage in coverages)
-    source_end = min(coverage.end_exclusive for coverage in coverages)
+        unaligned = builder.put("check", builder.col(invalid).fill_null(True))
+    source_start, source_end = key.source_start, key.source_end
     source_complete = builder.put(
         "source_complete",
         (builder.col(start) >= ibis.literal(source_start))
@@ -538,14 +600,19 @@ def _window_context(
     bounds = []
     if "_observed_from" in anchors.columns:
         bound = builder.table._observed_from
-        observed_from = greatest(observed_from, bound.fill_null(observed_from))
+        if support is None:
+            observed_from = greatest(observed_from, bound.fill_null(observed_from))
         bounds.append(bound.isnull() | (builder.col(start) >= bound))
     if "_observed_until" in anchors.columns:
         bound = builder.table._observed_until
-        observed_until = least(observed_until, bound.fill_null(observed_until))
+        if support is None:
+            observed_until = least(observed_until, bound.fill_null(observed_until))
         bounds.append(bound.isnull() | (builder.col(end) <= bound))
-    observed_from = builder.put("observed_from", observed_from)
-    observed_until = builder.put("observed_until", observed_until)
+    if support is None:
+        observed_from = builder.put("observed_from", observed_from)
+        observed_until = builder.put("observed_until", observed_until)
+    else:
+        observed_from, observed_until = support
     observation_complete = cast(ir.BooleanValue, ibis.literal(True))
     if bounds:
         conjunction = bounds[0] if len(bounds) == 1 else bounds[0] & bounds[1]
@@ -561,7 +628,7 @@ def _window_context(
         ),
     )
     return _WindowContext(
-        start, end, available, unavailable, observed_from, observed_until, tuple(row_checks)
+        start, end, available, unavailable, observed_from, observed_until, unaligned
     )
 
 
@@ -662,10 +729,72 @@ class _Primitive:
     counting: bool
 
 
-def _interval(timestamp, t0, window: Window):
-    return compare_timestamps(timestamp, t0, "ge", right_offset_seconds=window.start.seconds) & (
-        compare_timestamps(timestamp, t0, "lt", right_offset_seconds=window.end.seconds)
+@dataclass(frozen=True, slots=True)
+class _MembershipKey:
+    source: str
+    window: Window
+    available: tuple[str, ...]
+
+
+def _membership_keys(
+    source: BoundSource, primitives: Mapping[_Primitive, Sequence[_WindowContext]]
+) -> dict[_Primitive, _MembershipKey]:
+    return {
+        primitive: _MembershipKey(
+            source.name,
+            primitive.window,
+            tuple(dict.fromkeys(context.available for context in contexts)),
+        )
+        for primitive, contexts in primitives.items()
+    }
+
+
+def _available(table: ibis.Table, membership: _MembershipKey):
+    if not membership.available:
+        return ibis.literal(False)
+    names = iter(membership.available)
+    active = table[next(names)]
+    for name in names:
+        active |= table[name]
+    return active
+
+
+def _attach_timestamp_comparison_key(
+    table: ibis.Table,
+    timestamp: ir.TimestampValue,
+    *,
+    rank_name: str,
+    coordinate_name: str,
+) -> tuple[ibis.Table, _TimestampComparisonKey]:
+    key = _timestamp_comparison_key(timestamp)
+    table = table.mutate(**{rank_name: key.rank, coordinate_name: key.nanoseconds})
+    return table, _TimestampComparisonKey(
+        cast(ir.IntegerValue, table[rank_name]),
+        cast(ir.DecimalValue, table[coordinate_name]),
     )
+
+
+def _interval(
+    timestamp,
+    t0,
+    window: Window,
+    *,
+    timestamp_key: _TimestampComparisonKey | None = None,
+    t0_key: _TimestampComparisonKey | None = None,
+    shifted_points: Mapping[int, ir.TimestampValue] | None = None,
+):
+    def compare(offset: int, op: Literal["ge", "lt"]):
+        if shifted_points is not None and offset in shifted_points:
+            return compare_timestamps(timestamp, shifted_points[offset], op)
+        if (
+            timestamp_key is not None
+            and t0_key is not None
+            and (offset or current_dialect(timestamp, t0).comparison_keys(timestamp, t0) is None)
+        ):
+            return _compare_timestamp_keys(timestamp_key, t0_key, op, right_offset_seconds=offset)
+        return compare_timestamps(timestamp, t0, op, right_offset_seconds=offset)
+
+    return compare(window.start.seconds, "ge") & compare(window.end.seconds, "lt")
 
 
 def _reduce_source(
@@ -673,6 +802,7 @@ def _reduce_source(
     events: ibis.Table,
     source: BoundSource,
     primitives: Mapping[_Primitive, Sequence[_WindowContext]],
+    origin_bounds: tuple[datetime, datetime] | None,
 ) -> tuple[ibis.Table, dict[_Primitive, dict[str, str]], tuple[str, str]]:
     """Join one bounded event source and reduce each selected primitive at anchor grain."""
     unit, anchor_id, t0 = (builder.name(name) for name in ("unit", "anchor_id", "t0"))
@@ -683,21 +813,102 @@ def _reduce_source(
     points = table.select(
         table.unit.name(unit), table.anchor_id.name(anchor_id), table.t0.name(t0), *available
     )
+    timestamp_key = t0_key = None
+    key_names = None
+    offsets = dict.fromkeys(
+        offset
+        for primitive in primitives
+        for offset in (primitive.window.start.seconds, primitive.window.end.seconds)
+    )
+    dialect = current_dialect(events._timestamp, points[t0])
+    shifted_names = {}
+    shifted_values = {}
+    if origin_bounds is not None:
+        for offset in offsets:
+            if offset:
+                native = dialect.native_shifted_comparison_keys(
+                    events._timestamp,
+                    points[t0],
+                    offset_seconds=offset,
+                    right_bounds=origin_bounds,
+                )
+                if native is not None:
+                    name = builder.name("shifted_point")
+                    shifted_names[offset] = name
+                    shifted_values[name] = native[1]
+    if shifted_values:
+        points = points.mutate(**shifted_values)
+    if any(
+        offset not in shifted_names
+        and (offset or dialect.comparison_keys(events._timestamp, points[t0]) is None)
+        for offset in offsets
+    ):
+        event_rank, event_coordinate, point_rank, point_coordinate = (
+            builder.name(name)
+            for name in ("event_rank", "event_coordinate", "point_rank", "point_coordinate")
+        )
+        key_names = event_rank, event_coordinate, point_rank, point_coordinate
+        events, timestamp_key = _attach_timestamp_comparison_key(
+            events,
+            events._timestamp,
+            rank_name=event_rank,
+            coordinate_name=event_coordinate,
+        )
+        points, t0_key = _attach_timestamp_comparison_key(
+            points,
+            points[t0],
+            rank_name=point_rank,
+            coordinate_name=point_coordinate,
+        )
+    shifted_points = {
+        offset: cast(ir.TimestampValue, points[name]) for offset, name in shifted_names.items()
+    }
+    membership_keys = _membership_keys(source, primitives)
+    unique_memberships = dict.fromkeys(membership_keys.values())
     matched = ibis.literal(False)
-    for primitive, contexts in primitives.items():
-        active = ibis.literal(False)
-        for context in contexts:
-            active |= points[context.available]
-        matched |= active & _interval(events._timestamp, points[t0], primitive.window)
+    for membership in unique_memberships:
+        matched |= _available(points, membership) & _interval(
+            events._timestamp,
+            points[t0],
+            membership.window,
+            timestamp_key=timestamp_key,
+            t0_key=t0_key,
+            shifted_points=shifted_points,
+        )
     joined = events.inner_join(points, (events._unit == points[unit]) & matched)
+    if key_names is not None:
+        event_rank, event_coordinate, point_rank, point_coordinate = key_names
+        timestamp_key = _TimestampComparisonKey(
+            cast(ir.IntegerValue, joined[event_rank]),
+            cast(ir.DecimalValue, joined[event_coordinate]),
+        )
+        t0_key = _TimestampComparisonKey(
+            cast(ir.IntegerValue, joined[point_rank]),
+            cast(ir.DecimalValue, joined[point_coordinate]),
+        )
+    shifted_points = {
+        offset: cast(ir.TimestampValue, joined[name]) for offset, name in shifted_names.items()
+    }
+    masks = {membership: builder.name("consumed") for membership in unique_memberships}
+    joined = joined.mutate(
+        **{
+            name: _available(joined, membership)
+            & _interval(
+                joined._timestamp,
+                joined[t0],
+                membership.window,
+                timestamp_key=timestamp_key,
+                t0_key=t0_key,
+                shifted_points=shifted_points,
+            )
+            for membership, name in masks.items()
+        }
+    )
     aliases: dict[_Primitive, dict[str, str]] = {}
     payload = []
     branches = []
-    for primitive, contexts in primitives.items():
-        active = ibis.literal(False)
-        for context in contexts:
-            active |= joined[context.available]
-        consumed = active & _interval(joined._timestamp, joined[t0], primitive.window)
+    for primitive in primitives:
+        consumed = joined[masks[membership_keys[primitive]]]
         projected, fields = contributions(
             joined,
             primitive.measure,
@@ -739,43 +950,149 @@ class _BucketPrimitive:
     counting: bool
 
 
-def _day_consumed(bucket, points, contexts):
+def _day_consumed(bucket, points, membership, contexts):
     """An available aligned request contains the fixed-offset bucket."""
-    consumed = ibis.literal(False)
-    for context in contexts:
-        consumed |= (
-            points[context.available]
-            & (bucket >= points[context.start])
-            & (bucket < points[context.end])
-        )
-    return consumed
+    context = contexts[membership.available[0]]
+    return (
+        _available(points, membership)
+        & (bucket >= points[context.start])
+        & (bucket < points[context.end])
+    )
+
+
+def _attach_timestamp_parts(
+    table: ibis.Table,
+    timestamp: ir.TimestampValue,
+    *,
+    names: tuple[str, str, str],
+) -> tuple[ibis.Table, tuple[ir.IntegerValue, ir.IntegerValue, ir.IntegerValue]]:
+    """Project lossless integer coordinates before repeated endpoint comparisons."""
+    parts = timestamp_parts(timestamp)
+    fields = tuple(part.op() for part in parts)
+    if current_dialect(timestamp).comparison_keys(timestamp, timestamp) is not None and all(
+        isinstance(part, ops.StructField) for part in fields
+    ):
+        struct_fields = cast(tuple[ops.StructField, ...], fields)
+        key = struct_fields[0].arg
+        if all(part.arg == key for part in struct_fields):
+            # Keep the complete nullable key intact: its guards still withhold
+            # unsafe instants before conversion, even when the fields are shared.
+            name = f"{names[0]}_key"
+            used = {column.casefold() for column in (*table.columns, *names)}
+            while name.casefold() in used:
+                name += "_"
+            table = table.mutate(**{name: key.to_expr()})
+            parts = cast(
+                tuple[ir.IntegerValue, ir.IntegerValue, ir.IntegerValue],
+                tuple(table[name][part.field] for part in struct_fields),
+            )
+    table = table.mutate(**dict(zip(names, parts, strict=True)))
+    return table, cast(
+        tuple[ir.IntegerValue, ir.IntegerValue, ir.IntegerValue],
+        tuple(table[name] for name in names),
+    )
 
 
 def _masked_day_events(
-    builder: _Builder, events: ibis.Table, contexts: Iterable[_WindowContext]
+    builder: _Builder,
+    events: ibis.Table,
+    contexts: Iterable[_WindowContext],
+    *,
+    endpoint_bounds: tuple[datetime, datetime] | None = None,
 ) -> tuple[ibis.Table, str]:
     """Mask unused instants before any fixed-offset calendar conversion."""
+    original_fields = events.columns
+    builder.used.update(name.casefold() for name in events.columns)
     table = builder.table
     unit, lower, upper, timestamp = (
         builder.name(name) for name in ("scope_unit", "scope_start", "scope_end", "day_timestamp")
     )
     starts, ends = [], []
     for context in contexts:
-        active = table[context.available].fill_null(False)
-        for check in context.row_checks:
-            active &= ~table[check.column].fill_null(True)
+        active = table[context.available]
+        if context.unaligned is not None:
+            active &= ~table[context.unaligned].fill_null(True)
         start, end = table[context.start], table[context.end]
         starts.append(active.ifelse(start, ibis.null(start.type())))
         ends.append(active.ifelse(end, ibis.null(end.type())))
     rows = table.select(table.unit.name(unit), **{lower: least(*starts), upper: greatest(*ends)})
     envelope = rows.group_by(unit).aggregate(**{lower: rows[lower].min(), upper: rows[upper].max()})
+    dialect = current_dialect(events._timestamp, envelope[lower], envelope[upper])
+    comparison_fields = {lower: lower, upper: upper}
+    event_type = cast(dt.Timestamp, events._timestamp.type())
+    # Active envelope endpoints are requested bounds, all covered by the derived
+    # finite host interval. Unbounded UTC timestamps need not survive conversion.
+    if (
+        endpoint_bounds is not None
+        and event_type.timezone is None
+        and event_type.scale in (None, 6)
+        and dialect.comparison_keys(events._timestamp, events._timestamp) is not None
+    ):
+        clocks = {}
+        for name in (lower, upper):
+            dtype = cast(dt.Timestamp, envelope[name].type())
+            if (
+                dtype.timezone == "UTC"
+                and dtype.scale in (None, 6)
+                and dialect.comparison_keys(events._timestamp, envelope[name]) is None
+            ):
+                clock = utc_wall_clock(envelope[name])
+                if dialect.comparison_keys(events._timestamp, clock) is not None:
+                    field = builder.name("scope_clock")
+                    clocks[field] = clock
+                    comparison_fields[name] = field
+        if clocks:
+            envelope = envelope.mutate(**clocks)
+    fallback = {
+        name
+        for name in (lower, upper)
+        if dialect.comparison_keys(events._timestamp, envelope[comparison_fields[name]]) is None
+    }
+    event_names = None
+    endpoint_names = {}
+    if fallback:
+        event_names = cast(
+            tuple[str, str, str],
+            tuple(builder.name(label) for label in ("event_rank", "event_seconds", "event_nanos")),
+        )
+        events, _ = _attach_timestamp_parts(events, events._timestamp, names=event_names)
+        branches = []
+        for name in (lower, upper):
+            if name not in fallback:
+                continue
+            names = cast(
+                tuple[str, str, str],
+                tuple(
+                    builder.name(label) for label in ("bound_rank", "bound_seconds", "bound_nanos")
+                ),
+            )
+            projected, _ = _attach_timestamp_parts(
+                envelope, envelope[comparison_fields[name]], names=names
+            )
+            branches.append(projected)
+            endpoint_names[name] = names
+        envelope = _batch_projections(envelope, branches)
     joined = events.left_join(envelope, events._unit == envelope[unit])
+
+    def compare(name: str, op: Literal["ge", "lt"]) -> ir.BooleanValue:
+        if event_names is None or name not in endpoint_names:
+            return compare_timestamps(joined._timestamp, joined[comparison_fields[name]], op)
+        return _compare_timestamp_parts(
+            cast(
+                tuple[ir.IntegerValue, ir.IntegerValue, ir.IntegerValue],
+                tuple(joined[field] for field in event_names),
+            ),
+            cast(
+                tuple[ir.IntegerValue, ir.IntegerValue, ir.IntegerValue],
+                tuple(joined[field] for field in endpoint_names[name]),
+            ),
+            op,
+        )
+
+    inside = compare(lower, "ge") & compare(upper, "lt")
     instant = joined._timestamp
-    inside = compare_timestamps(instant, joined[lower], "ge") & compare_timestamps(
-        instant, joined[upper], "lt"
-    )
-    masked = inside.fill_null(ibis.literal(False)).ifelse(instant, ibis.null(instant.type()))
-    return joined.mutate(**{timestamp: masked}), timestamp
+    masked = inside.ifelse(instant, ibis.null(instant.type()))
+    return joined.select(*original_fields, **{timestamp: masked}), timestamp
 
 
 def _reduce_daily_source(
@@ -784,6 +1101,7 @@ def _reduce_daily_source(
     source: BoundSource,
     primitives: Mapping[_Primitive, Sequence[_WindowContext]],
     boundary: str,
+    origin_bounds: tuple[datetime, datetime] | None,
 ) -> tuple[ibis.Table, dict[_Primitive, dict[str, str]], tuple[str, str]]:
     """Scope unique unit/day identities before evaluating any numerical payload."""
     offset = boundary_timezone(boundary).utcoffset(None)
@@ -794,7 +1112,23 @@ def _reduce_daily_source(
     window_contexts = {
         context.available: context for contexts in primitives.values() for context in contexts
     }
-    events, timestamp = _masked_day_events(builder, events, window_contexts.values())
+    endpoint_bounds = None
+    if origin_bounds is not None:
+        offsets = [
+            seconds
+            for primitive in primitives
+            for seconds in (primitive.window.start.seconds, primitive.window.end.seconds)
+        ]
+        try:
+            endpoint_bounds = (
+                origin_bounds[0] + timedelta(seconds=min(offsets)),
+                origin_bounds[1] + timedelta(seconds=max(offsets)),
+            )
+        except OverflowError:
+            pass
+    events, timestamp = _masked_day_events(
+        builder, events, window_contexts.values(), endpoint_bounds=endpoint_bounds
+    )
     events = events.mutate(**{bucket: local_day(events[timestamp], minutes)[1]})
     identities = events.select(
         events._unit.name(scope_unit), events[bucket].name(scope_bucket)
@@ -807,25 +1141,69 @@ def _reduce_daily_source(
     )
     table = builder.table
     points = table.select(table.unit.name(unit), table.anchor_id.name(anchor_id), *bounds)
+    membership_keys = _membership_keys(source, primitives)
     buckets: dict[_BucketPrimitive, str] = {}
-    membership = {}
-    matched = ibis.literal(False)
-    for primitive, contexts in primitives.items():
+    bucket_memberships: dict[_BucketPrimitive, dict[_MembershipKey, None]] = {}
+    for primitive, membership in membership_keys.items():
         key = _BucketPrimitive(primitive.measure, primitive.counting)
         if key not in buckets:
             buckets[key] = builder.name("consumed")
-        consumed = _day_consumed(identities[scope_bucket], points, contexts)
-        membership[key] = membership.get(key, ibis.literal(False)) | consumed
-        matched |= consumed
-    required = identities.inner_join(points, (identities[scope_unit] == points[unit]) & matched)
+        bucket_memberships.setdefault(key, {})[membership] = None
+    count_donors = {}
+    # An unfiltered day's row count is independent of its value binding. A donor
+    # can cover extra days, but each count keeps its own anchor/window mask below.
+    for key, windows in bucket_memberships.items():
+        if key.counting and not key.measure.filters and not source.where:
+            for donor, donor_windows in bucket_memberships.items():
+                if (
+                    not donor.counting
+                    and not donor.measure.filters
+                    and windows.keys() <= donor_windows.keys()
+                ):
+                    count_donors[key] = donor
+                    break
+    masks = {
+        membership: builder.name("consumed")
+        for membership in dict.fromkeys(membership_keys.values())
+    }
+    required = identities.inner_join(points, identities[scope_unit] == points[unit])
     required = required.select(
         scope_unit,
         scope_bucket,
-        **{buckets[key]: expression for key, expression in membership.items()},
+        unit,
+        anchor_id,
+        **{
+            name: _day_consumed(required[scope_bucket], required, membership, window_contexts)
+            for membership, name in masks.items()
+        },
     )
-    scope = required.group_by(scope_unit, scope_bucket).aggregate(
-        **{name: required[name].any() for name in buckets.values()}
-    )
+    names = iter(masks.values())
+    matched = required[next(names)]
+    for name in names:
+        matched |= required[name]
+    required = required.filter(matched)
+    bucket_predicates = {}
+    # The required rows already satisfy at least one complete membership.
+    always_consumed = {
+        key
+        for key, windows in bucket_memberships.items()
+        if not key.measure.filters and not source.where and windows.keys() == masks.keys()
+    }
+    for key, windows in bucket_memberships.items():
+        if key in count_donors or key in always_consumed:
+            continue
+        members = iter(windows)
+        predicate = required[masks[next(members)]]
+        for window in members:
+            predicate |= required[masks[window]]
+        bucket_predicates[buckets[key]] = predicate
+    if bucket_predicates:
+        scope = required.mutate(**bucket_predicates)
+        scope = scope.group_by(scope_unit, scope_bucket).aggregate(
+            **{name: scope[name].any() for name in bucket_predicates}
+        )
+    else:
+        scope = required.select(scope_unit, scope_bucket).distinct()
     selected = events.inner_join(
         scope,
         (events._unit == scope[scope_unit]) & (events[bucket] == scope[scope_bucket]),
@@ -834,11 +1212,15 @@ def _reduce_daily_source(
     payload = []
     branches = []
     for key, mask in buckets.items():
+        if key in count_donors:
+            continue
         projected, fields = contributions(
             selected,
             key.measure,
             source=source,
-            consumed=selected[mask],
+            consumed=cast(
+                ir.BooleanValue, ibis.literal(True) if key in always_consumed else selected[mask]
+            ),
             counting=key.counting,
             _name=builder.name,
         )
@@ -848,23 +1230,57 @@ def _reduce_daily_source(
         branches.append(projected.select(**{names[name]: value for name, value in fields.items()}))
     leaf = _batch_projections(selected, branches).select(scope_unit, scope_bucket, *payload)
     daily = _reduce_payload(leaf, bucket_aliases, [scope_unit, scope_bucket])
-    matched = ibis.literal(False)
-    for contexts in primitives.values():
-        matched |= _day_consumed(daily[scope_bucket], points, contexts)
-    joined = daily.inner_join(points, (daily[scope_unit] == points[unit]) & matched)
+    for key, donor in count_donors.items():
+        bucket_aliases[key] = {"event_count": bucket_aliases[donor]["event_count"]}
+    joined = daily.inner_join(
+        required,
+        (daily[scope_unit] == required[scope_unit])
+        & (daily[scope_bucket] == required[scope_bucket]),
+    )
     aliases = {}
     payload = {}
-    for primitive, contexts in primitives.items():
+    event_counts = {}
+    for primitive, membership in membership_keys.items():
         key = _BucketPrimitive(primitive.measure, primitive.counting)
-        consumed = _day_consumed(joined[scope_bucket], joined, contexts)
-        names = {name: builder.name(name) for name in bucket_aliases[key]}
+        consumed_flag = joined[masks[membership]]
+        names = {}
         aliases[primitive] = names
         for name, original in bucket_aliases[key].items():
+            term = membership, original
+            if name == "event_count" and term in event_counts:
+                names[name] = event_counts[term]
+                continue
+            names[name] = builder.name(name)
+            if name == "event_count":
+                event_counts[term] = names[name]
             value = joined[original]
-            payload[names[name]] = consumed.ifelse(value, ibis.null(value.type()))
+            payload[names[name]] = consumed_flag.ifelse(value, ibis.null(value.type()))
     leaf = joined.select(unit, anchor_id, **payload)
     reduced = _reduce_payload(leaf, aliases, [unit, anchor_id])
     return reduced, aliases, (unit, anchor_id)
+
+
+def _finalization_fields(
+    anchors: ibis.Table,
+    context: _WindowContext,
+    keys: Sequence[_Primitive],
+    reduced_fields: Mapping[_Primitive, Mapping[str, str]],
+) -> tuple[str, ...]:
+    """Keep the original anchors and this output's payload, support and checks."""
+    names = list(anchors.columns)
+    for key in keys:
+        names.extend(reduced_fields[key].values())
+    names.extend(
+        (
+            context.available,
+            context.unavailable,
+            context.observed_from,
+            context.observed_until,
+        )
+    )
+    if context.unaligned is not None:
+        names.append(context.unaligned)
+    return tuple(dict.fromkeys(names))
 
 
 def aggregate_windows(
@@ -875,6 +1291,7 @@ def aggregate_windows(
     *,
     boundary: str,
     resolution: Literal["event", "day"] = "event",
+    _origin_bounds: tuple[datetime, datetime] | None = None,
 ) -> TemporalResult:
     """Reduce selected raw or scoped daily contributions for half-open windows.
 
@@ -897,6 +1314,10 @@ def aggregate_windows(
         name.casefold() for events, _ in sources.values() for name in events.columns
     )
     contexts = []
+    context_checks = []
+    shared_contexts: dict[_WindowContextKey, _WindowContext] = {}
+    # Data aliases share this exact anchor relation; checks remain per request.
+    shared_support: dict[tuple[Any, ...], tuple[str, str]] = {}
     context_branches = []
     primitives: dict[str, dict[_Primitive, list[_WindowContext]]] = {}
     components = []
@@ -923,8 +1344,20 @@ def aggregate_windows(
         if len(metric.measures) != (2 if metric.kind == "ratio" else 1):
             raise ValueError("metric kind has an invalid number of measures")
         branch = builder.fork(anchors)
-        context = _window_context(branch, metric, window, readiness, boundary, output, resolution)
-        context_branches.append(branch.table)
+        context, checks = _window_context(
+            branch,
+            metric,
+            window,
+            readiness,
+            boundary,
+            output,
+            resolution,
+            shared=shared_contexts,
+            shared_support=shared_support if resolution == "day" else None,
+        )
+        if branch.table is not anchors:
+            context_branches.append(branch.table)
+        context_checks.append(checks)
         contexts.append(context)
         keys = []
         for measure in metric.measures:
@@ -949,9 +1382,11 @@ def aggregate_windows(
     builder.table = _batch_projections(anchors, context_branches)
     reductions = [
         (
-            _reduce_daily_source(builder, *sources[name], source_primitives, boundary)
+            _reduce_daily_source(
+                builder, *sources[name], source_primitives, boundary, _origin_bounds
+            )
             if resolution == "day"
-            else _reduce_source(builder, *sources[name], source_primitives)
+            else _reduce_source(builder, *sources[name], source_primitives, _origin_bounds)
         )
         for name, source_primitives in primitives.items()
     ]
@@ -977,8 +1412,11 @@ def aggregate_windows(
     row_checks = []
     retained = builder.table
     output_branches = []
-    for request, context, keys in zip(requests, contexts, components, strict=True):
-        branch = builder.fork(retained)
+    for request, context, checks, keys in zip(
+        requests, contexts, context_checks, components, strict=True
+    ):
+        required_names = _finalization_fields(anchors, context, keys, reduced_fields)
+        branch = builder.fork(retained.select(*required_names))
         quantities, unknown_flags = [], []
         for measure, key in zip(request.metric.measures, keys, strict=True):
             fields = reduced_fields[key]
@@ -1003,7 +1441,7 @@ def aggregate_windows(
             )
         result = _finalize_window(
             branch,
-            retained,
+            anchors,
             request.metric,
             request.window,
             request.output,
@@ -1013,7 +1451,7 @@ def aggregate_windows(
             context.unavailable,
             context.observed_from,
             context.observed_until,
-            list(context.row_checks),
+            list(checks),
             unknown_flags,
         )
         output_branches.append(result.table)

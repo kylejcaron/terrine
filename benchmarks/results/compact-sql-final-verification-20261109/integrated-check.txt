@@ -1,0 +1,1121 @@
+uv run ruff check terrine tests integration benchmarks
+All checks passed!
+uv run vulture terrine
+# Isolated: pydoclint's docstring-parser-fork and dagster's docstring-parser
+# install the same module and would overwrite each other.
+uv run --isolated --no-project --with pydoclint==0.11.1 pydoclint terrine
+Skipping files that match this pattern: \.git|\.tox
+terrine/__init__.py
+terrine/_refusal_codes.py
+terrine/_time.py
+terrine/adapters/__init__.py
+terrine/adapters/increment.py
+terrine/adapters/opentelemetry.py
+terrine/agent/__init__.py
+terrine/agent/definitions.py
+terrine/agent/design_schema.py
+terrine/agent/policy.py
+terrine/agent/schemas.py
+terrine/agent/tools.py
+terrine/backends/__init__.py
+terrine/backends/capabilities.py
+terrine/backends/dialect.py
+terrine/backends/engines/__init__.py
+terrine/backends/engines/bigquery.py
+terrine/backends/engines/duckdb.py
+terrine/backends/engines/postgres.py
+terrine/backends/engines/snowflake.py
+terrine/backends/extrema.py
+terrine/backends/joins.py
+terrine/backends/numeric.py
+terrine/backends/registry.py
+terrine/backends/sequences.py
+terrine/backends/timestamps.py
+terrine/compile/__init__.py
+terrine/compile/_asof.py
+terrine/compile/_predicates.py
+terrine/compile/anchors.py
+terrine/compile/columns.py
+terrine/compile/cost.py
+terrine/compile/dispatch.py
+terrine/compile/layers.py
+terrine/compile/materialize.py
+terrine/compile/numeric.py
+terrine/compile/provenance.py
+terrine/compile/prune.py
+terrine/compile/ranges.py
+terrine/compile/retention.py
+terrine/compile/shapes/__init__.py
+terrine/compile/shapes/_observations.py
+terrine/compile/shapes/calendar_comparison.py
+terrine/compile/shapes/cohorts.py
+terrine/compile/shapes/event_panel.py
+terrine/compile/shapes/event_sequence.py
+terrine/compile/shapes/life_table.py
+terrine/compile/shapes/ltv.py
+terrine/compile/shapes/matched_t0.py
+terrine/compile/shapes/sequential.py
+terrine/compile/shapes/state_panel.py
+terrine/compile/shapes/time_to_event.py
+terrine/data.py
+terrine/dataset/__init__.py
+terrine/dataset/export.py
+terrine/dataset/manifest.py
+terrine/dataset/reference.py
+terrine/dataset/splits.py
+terrine/dataset/training.py
+terrine/dataset/transforms.py
+terrine/errors.py
+terrine/execution/__init__.py
+terrine/execution/_bigquery.py
+terrine/execution/_generic.py
+terrine/execution/_metadata.py
+terrine/execution/_native.py
+terrine/execution/_postgres.py
+terrine/execution/_publish.py
+terrine/execution/_snowflake.py
+terrine/execution/backend.py
+terrine/execution/gates.py
+terrine/execution/inputs.py
+terrine/export/__init__.py
+terrine/export/diff_diff.py
+terrine/export/lifelines.py
+terrine/export/preflight.py
+terrine/export/surrogate.py
+terrine/frame.py
+terrine/metrics.py
+terrine/model.py
+terrine/orchestration/__init__.py
+terrine/orchestration/airflow.py
+terrine/orchestration/dagster.py
+terrine/reasons.py
+terrine/recipes.py
+terrine/runtime/__init__.py
+terrine/runtime/api.py
+terrine/runtime/arrow.py
+terrine/runtime/backends/base.py
+terrine/runtime/backends/duckdb.py
+terrine/runtime/changes.py
+terrine/runtime/cli.py
+terrine/runtime/control.py
+terrine/runtime/cost.py
+terrine/runtime/events.py
+terrine/runtime/execute.py
+terrine/runtime/gc.py
+terrine/runtime/graph.py
+terrine/runtime/layers.py
+terrine/runtime/leases.py
+terrine/runtime/materialize.py
+terrine/runtime/owner.py
+terrine/runtime/planner.py
+terrine/runtime/planning.py
+terrine/runtime/saved_plan.py
+terrine/runtime/schema.py
+terrine/runtime/snapshot.py
+terrine/runtime/state.py
+terrine/runtime/status.py
+terrine/runtime/synchronization.py
+terrine/semantic/__init__.py
+terrine/semantic/attributes.py
+terrine/semantic/bind.py
+terrine/semantic/io.py
+terrine/semantic/models.py
+terrine/semantic/predicates.py
+terrine/semantic/rules.py
+terrine/semantic/sql.py
+terrine/semantic/time.py
+terrine/simulate/__init__.py
+terrine/simulate/generate.py
+terrine/simulate/scale.py
+terrine/simulate/world.py
+terrine/spec/__init__.py
+terrine/spec/_columns.py
+terrine/spec/anchors.py
+terrine/spec/dataset.py
+terrine/spec/describe.py
+terrine/spec/design.py
+terrine/spec/expressions.py
+terrine/spec/io.py
+terrine/spec/panels.py
+terrine/spec/sequence.py
+terrine/spec/state_panel.py
+terrine/spec/trajectory.py
+terrine/spec/transforms.py
+terrine/spec/validate.py
+terrine/temporal/__init__.py
+terrine/temporal/aggregate.py
+terrine/temporal/attributes.py
+terrine/temporal/daily.py
+terrine/temporal/first.py
+terrine/temporal/nonadditive.py
+terrine/temporal/ranges.py
+terrine/temporal/readiness.py
+terrine/temporal/retention.py
+terrine/temporal/sequence.py
+terrine/temporal/sessionize.py
+terrine/temporal/sketches.py
+terrine/windows.py
+🎉 No violations 🎉
+uv run tach check
+✅ All modules validated!
+uv run ty check terrine tests integration benchmarks
+All checks passed!
+uv run pytest -n 0 tests/backends/test_timestamps.py tests/temporal tests/compile tests/test_frame.py tests/test_frame_runtime.py integration/temporal integration/compile integration/test_frame.py integration/backends integration/execution integration/conformance
+============================= test session starts ==============================
+platform darwin -- Python 3.12.11, pytest-8.4.2, pluggy-1.7.0
+rootdir: /Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql
+configfile: pyproject.toml
+plugins: tach-0.35.3, hypothesis-6.170.1, xdist-3.8.0, split-0.11.0, platformdirs-4.13.4, anyio-4.15.1
+collected 944 items / 71 deselected / 873 selected
+[Tach] 1 test in 7 files unaffected by changes. Skip with: pytest --tach
+[Tach] To disable: pytest -p no:tach (https://docs.gauge.sh/usage/commands#using-the-pytest-plugin-directly)
+
+tests/backends/test_timestamps.py ...............                        [  1%]
+tests/temporal/test_first_occurrence.py ...............                  [  3%]
+tests/temporal/test_nonadditive.py ......                                [  4%]
+tests/temporal/test_range_scaling.py ..........                          [  5%]
+tests/temporal/test_readiness.py .                                       [  5%]
+tests/temporal/test_retention.py ...........                             [  6%]
+tests/temporal/test_scd2_attributes.py ......................            [  9%]
+tests/temporal/test_semantic_binding.py ..................               [ 11%]
+tests/temporal/test_sequence.py ..........                               [ 12%]
+tests/temporal/test_sessionize.py ......                                 [ 13%]
+tests/temporal/test_sketches.py .....                                    [ 13%]
+tests/temporal/test_sparse_state.py .................................... [ 17%]
+....................                                                     [ 20%]
+tests/temporal/test_window_aggregates.py ............................... [ 23%]
+..........................................................               [ 30%]
+tests/compile/test_anchors.py .......................................... [ 35%]
+                                                                         [ 35%]
+tests/compile/test_cohorts.py .........................                  [ 37%]
+tests/compile/test_columns.py .......................................... [ 42%]
+.............................                                            [ 46%]
+tests/compile/test_completeness_columns.py .....                         [ 46%]
+tests/compile/test_cost_estimates.py .                                   [ 46%]
+tests/compile/test_event_sequence.py ..................................  [ 50%]
+tests/compile/test_ltv.py ............                                   [ 52%]
+tests/compile/test_matched_t0.py .....                                   [ 52%]
+tests/compile/test_nonadditive.py ................                       [ 54%]
+tests/compile/test_panels.py .........................                   [ 57%]
+tests/compile/test_persisted_layers.py ......................            [ 59%]
+tests/compile/test_predicates.py .........                               [ 60%]
+tests/compile/test_prune.py ..                                           [ 61%]
+tests/compile/test_range_scaling.py ............                         [ 62%]
+tests/compile/test_retention.py ....                                     [ 62%]
+tests/compile/test_state_panel.py ...................................... [ 67%]
+.......                                                                  [ 68%]
+tests/compile/test_survival_bounds.py ...                                [ 68%]
+tests/compile/test_time_to_event.py ...........                          [ 69%]
+tests/compile/test_winsorization.py .......                              [ 70%]
+tests/test_frame.py ....................                                 [ 72%]
+tests/test_frame_runtime.py ...............                              [ 74%]
+integration/temporal/test_aggregate.py .                                 [ 74%]
+integration/temporal/test_retention_bands.py ....                        [ 75%]
+integration/temporal/test_window_quotient_composition.py ............... [ 76%]
+..................                                                       [ 78%]
+integration/compile/test_boolean_outputs.py ............                 [ 80%]
+integration/compile/test_column_runtime_contracts.py ...............     [ 81%]
+integration/compile/test_design_describe.py .........................    [ 84%]
+integration/compile/test_frame_runtime_window_export.py .............    [ 86%]
+integration/compile/test_ltv.py .....                                    [ 86%]
+integration/compile/test_numeric_lowering.py ..............              [ 88%]
+integration/compile/test_retention.py ..                                 [ 88%]
+integration/compile/test_time_to_event.py ........................       [ 91%]
+integration/test_frame.py ......                                         [ 92%]
+integration/backends/test_duckdb_version.py .....                        [ 92%]
+integration/backends/test_engine_registry.py .                           [ 92%]
+integration/backends/test_generic.py ......................              [ 95%]
+integration/backends/test_numeric.py ...                                 [ 95%]
+integration/execution/test_generic_provider.py .....FFFF..........       [ 97%]
+integration/execution/test_native_admission.py ...                       [ 98%]
+integration/conformance/test_engines.py .......s........                 [100%]
+
+=================================== FAILURES ===================================
+__ test_asof_admission_inspects_only_the_columns_it_reads[sqlite-materialize] __
+
+value = 1e+29, precision = 38, scale = 9, strict = False
+
+    def normalize_decimal(
+        value,
+        precision: int | None = None,
+        scale: int | None = None,
+        strict: bool = True,
+    ) -> Decimal:
+        context = Context(prec=38 if precision is None else precision)
+    
+        try:
+            if isinstance(value, float):
+                out = Decimal(str(value))
+            else:
+                out = Decimal(value)
+        except InvalidOperation:
+            raise TypeError(f"Unable to construct decimal from {value!r}")
+    
+        out = out.normalize(context=context)
+        components = out.as_tuple()
+        n_digits = len(components.digits)
+        exponent = components.exponent
+    
+        if precision is not None and precision < n_digits:
+            raise TypeError(
+                f"Decimal value {value} has too many digits for precision: {precision}"
+            )
+    
+        if scale is not None:
+            if strict and exponent < -scale:
+                raise TypeError(
+                    f"Normalizing {value} with scale {exponent} to scale -{scale} "
+                    "would loose precision"
+                )
+    
+            other = Decimal(10) ** -scale
+            try:
+>               out = out.quantize(other, context=context)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E               decimal.InvalidOperation: [<class 'decimal.InvalidOperation'>]
+
+.venv/lib/python3.12/site-packages/ibis/common/numeric.py:41: InvalidOperation
+
+During handling of the above exception, another exception occurred:
+
+self = <terrine.execution._generic.NoSnapshotSession object at 0x351078320>
+operation = 'exact_state'
+action = <function NoSnapshotSession._witness.<locals>.<lambda> at 0x16acbc9a0>
+
+    def _call_backend(self, operation: str, action: Callable[[], Any]) -> Any:
+        try:
+>           return action()
+                   ^^^^^^^^
+
+terrine/execution/_generic.py:222: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+terrine/execution/_generic.py:233: in <lambda>
+    result = self._call_backend(operation, lambda: self.con.to_pyarrow(witness))
+                                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/ibis/backends/__init__.py:257: in to_pyarrow
+    with self.to_pyarrow_batches(
+.venv/lib/python3.12/site-packages/ibis/backends/sqlite/__init__.py:354: in to_pyarrow_batches
+    df = self._fetch_from_cursor(cursor, schema)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/ibis/backends/sqlite/__init__.py:333: in _fetch_from_cursor
+    return SQLitePandasData.convert_table(df, schema)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/ibis/formats/pandas.py:133: in convert_table
+    name: cls.convert_column(df[name], dtype) for name, dtype in schema.items()
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/ibis/formats/pandas.py:162: in convert_column
+    result = convert_method(obj, dtype, pandas_type)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/ibis/formats/pandas.py:284: in convert_Decimal
+    return s.map(func, na_action="ignore")
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/pandas/core/series.py:4719: in map
+    new_values = self._map_values(arg, na_action=na_action)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/pandas/core/base.py:925: in _map_values
+    return algorithms.map_array(arr, mapper, na_action=na_action, convert=convert)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/pandas/core/algorithms.py:1745: in map_array
+    return lib.map_infer_mask(
+pandas/_libs/lib.pyx:2922: in pandas._libs.lib.map_infer_mask
+    ???
+pandas/_libs/lib.pyx:2959: in pandas._libs.lib._map_infer_mask
+    ???
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+value = 1e+29, precision = 38, scale = 9, strict = False
+
+    def normalize_decimal(
+        value,
+        precision: int | None = None,
+        scale: int | None = None,
+        strict: bool = True,
+    ) -> Decimal:
+        context = Context(prec=38 if precision is None else precision)
+    
+        try:
+            if isinstance(value, float):
+                out = Decimal(str(value))
+            else:
+                out = Decimal(value)
+        except InvalidOperation:
+            raise TypeError(f"Unable to construct decimal from {value!r}")
+    
+        out = out.normalize(context=context)
+        components = out.as_tuple()
+        n_digits = len(components.digits)
+        exponent = components.exponent
+    
+        if precision is not None and precision < n_digits:
+            raise TypeError(
+                f"Decimal value {value} has too many digits for precision: {precision}"
+            )
+    
+        if scale is not None:
+            if strict and exponent < -scale:
+                raise TypeError(
+                    f"Normalizing {value} with scale {exponent} to scale -{scale} "
+                    "would loose precision"
+                )
+    
+            other = Decimal(10) ** -scale
+            try:
+                out = out.quantize(other, context=context)
+            except InvalidOperation:
+>               raise TypeError(
+                    f"Unable to normalize {value!r} as decimal with precision {precision} "
+                    f"and scale {scale}"
+                )
+E               TypeError: Unable to normalize 1e+29 as decimal with precision 38 and scale 9
+
+.venv/lib/python3.12/site-packages/ibis/common/numeric.py:43: TypeError
+
+The above exception was the direct cause of the following exception:
+
+unregistered = <ibis.backends.sqlite.Backend object at 0x12c9910d0>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x11dd0a810>
+entry = 'materialize'
+
+    @pytest.mark.parametrize("entry", ["materialize", "preview"])
+    def test_asof_admission_inspects_only_the_columns_it_reads(unregistered, monkeypatch, entry):
+        """A static string as-of lookup over a dimension table carrying an unused
+        decimal column never asks for the decimal witness: admission inspects the
+        lookup and its validation queries projected to their columns, not the whole
+        table. Neither backend completes the lookup (Ibis's SQLite compiler has no
+        timestamp-delta rule, so the UTC witness refuses it by code before any read;
+        the DuckDB-based backend's portable timestamp SQL uses functions outside the
+        fail-closed read-only allowlist), but the only witness ever attempted is the
+        timestamp one, and no source row is read before a refusal."""
+        from terrine import UnverifiedBackendWarning, asof, preview
+        from terrine.execution import _generic
+    
+        statements: list[str] = []
+        original = _generic.NoSnapshotSession._call_backend
+    
+        def recording(self, operation, action):
+            statements.append(operation)
+            return original(self, operation, action)
+    
+        monkeypatch.setattr(_generic.NoSnapshotSession, "_call_backend", recording)
+        executed: list[str] = []
+        if unregistered.name == "sqlite":
+            unregistered.con.set_trace_callback(executed.append)
+        assert unregistered.table("tiers").schema()["balance"].is_decimal()
+        definitions = catalog().model_dump()
+        definitions["dialect"] = unregistered.name
+        definitions["sources"]["events"]["properties"] = ["tier"]
+        definitions["sources"]["events"]["dimensions"] = ["accounts"]
+        definitions["properties"]["tier"] = {
+            "source": "events",
+            "column": "tier",
+            "dtype": "string",
+            "as_of": "static",
+            "dimension": "accounts",
+        }
+        definitions["dimensions"]["accounts"] = {
+            "relation": {"kind": "table", "name": "tiers"},
+            "unit": "user",
+            "key": "user_id",
+            "properties": ["tier"],
+        }
+        with pytest.warns(UnverifiedBackendWarning):
+            model = Model.from_catalog(
+                type(catalog()).model_validate(definitions),
+                con=unregistered,
+                allow_unverified=True,
+                readiness={"events": Coverage(date(2025, 1, 1), date(2025, 1, 2))},
+                units={"user": UnitSource("users", "user_id")},
+            )
+        design = Design(
+            "user",
+            FixedDate(datetime(2025, 1, 2, tzinfo=UTC)),
+            features={"tier": asof("tier", before="0s")},
+        )
+        try:
+            if entry == "materialize":
+>               outcome = design.build(model).materialize().table["tier"].to_pylist()
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+integration/execution/test_generic_provider.py:264: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+terrine/frame.py:720: in materialize
+    return self._materialize(budget)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+terrine/frame.py:767: in _materialize
+    context.admit(*compiled.reads())
+terrine/execution/inputs.py:670: in admit
+    self._admit(*queries)
+terrine/execution/_generic.py:246: in admit_primitives
+    self._witness("exact_state", *_decimal_witnesses())
+terrine/execution/_generic.py:233: in _witness
+    result = self._call_backend(operation, lambda: self.con.to_pyarrow(witness))
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+integration/execution/test_generic_provider.py:225: in recording
+    return original(self, operation, action)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <terrine.execution._generic.NoSnapshotSession object at 0x351078320>
+operation = 'exact_state'
+action = <function NoSnapshotSession._witness.<locals>.<lambda> at 0x16acbc9a0>
+
+    def _call_backend(self, operation: str, action: Callable[[], Any]) -> Any:
+        try:
+            return action()
+        except (TerrineError, StopIteration):
+            raise
+        except Exception as exc:
+>           raise self._unavailable(operation) from exc
+E           terrine.errors.TerrineError: Backend 'sqlite' cannot provide 'exact_state': unverified. Use a verified Ibis backend providing this operation: DuckDB, PostgreSQL, BigQuery, Snowflake.
+
+terrine/execution/_generic.py:226: TerrineError
+
+During handling of the above exception, another exception occurred:
+
+unregistered = <ibis.backends.sqlite.Backend object at 0x12c9910d0>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x11dd0a810>
+entry = 'materialize'
+
+    @pytest.mark.parametrize("entry", ["materialize", "preview"])
+    def test_asof_admission_inspects_only_the_columns_it_reads(unregistered, monkeypatch, entry):
+        """A static string as-of lookup over a dimension table carrying an unused
+        decimal column never asks for the decimal witness: admission inspects the
+        lookup and its validation queries projected to their columns, not the whole
+        table. Neither backend completes the lookup (Ibis's SQLite compiler has no
+        timestamp-delta rule, so the UTC witness refuses it by code before any read;
+        the DuckDB-based backend's portable timestamp SQL uses functions outside the
+        fail-closed read-only allowlist), but the only witness ever attempted is the
+        timestamp one, and no source row is read before a refusal."""
+        from terrine import UnverifiedBackendWarning, asof, preview
+        from terrine.execution import _generic
+    
+        statements: list[str] = []
+        original = _generic.NoSnapshotSession._call_backend
+    
+        def recording(self, operation, action):
+            statements.append(operation)
+            return original(self, operation, action)
+    
+        monkeypatch.setattr(_generic.NoSnapshotSession, "_call_backend", recording)
+        executed: list[str] = []
+        if unregistered.name == "sqlite":
+            unregistered.con.set_trace_callback(executed.append)
+        assert unregistered.table("tiers").schema()["balance"].is_decimal()
+        definitions = catalog().model_dump()
+        definitions["dialect"] = unregistered.name
+        definitions["sources"]["events"]["properties"] = ["tier"]
+        definitions["sources"]["events"]["dimensions"] = ["accounts"]
+        definitions["properties"]["tier"] = {
+            "source": "events",
+            "column": "tier",
+            "dtype": "string",
+            "as_of": "static",
+            "dimension": "accounts",
+        }
+        definitions["dimensions"]["accounts"] = {
+            "relation": {"kind": "table", "name": "tiers"},
+            "unit": "user",
+            "key": "user_id",
+            "properties": ["tier"],
+        }
+        with pytest.warns(UnverifiedBackendWarning):
+            model = Model.from_catalog(
+                type(catalog()).model_validate(definitions),
+                con=unregistered,
+                allow_unverified=True,
+                readiness={"events": Coverage(date(2025, 1, 1), date(2025, 1, 2))},
+                units={"user": UnitSource("users", "user_id")},
+            )
+        design = Design(
+            "user",
+            FixedDate(datetime(2025, 1, 2, tzinfo=UTC)),
+            features={"tier": asof("tier", before="0s")},
+        )
+        try:
+            if entry == "materialize":
+                outcome = design.build(model).materialize().table["tier"].to_pylist()
+            else:
+                outcome = preview(design, model, bounded_count=1).candidate_rows
+        except TerrineError as error:
+>           assert error.context.get("operation") != "exact_state"
+E           assert 'exact_state' != 'exact_state'
+E            +  where 'exact_state' = get('operation')
+E            +    where get = FrozenMap({'backend': 'sqlite', 'operation': 'exact_state', 'status': 'unverified', 'route': 'Use a verified Ibis backend providing this operation: DuckDB, PostgreSQL, BigQuery, Snowflake.'}).get
+E            +      where FrozenMap({'backend': 'sqlite', 'operation': 'exact_state', 'status': 'unverified', 'route': 'Use a verified Ibis backend providing this operation: DuckDB, PostgreSQL, BigQuery, Snowflake.'}) = TerrineError("Backend 'sqlite' cannot provide 'exact_state': unverified. Use a verified Ibis backend providing this operation: DuckDB, PostgreSQL, BigQuery, Snowflake.").context
+
+integration/execution/test_generic_provider.py:268: AssertionError
+____ test_asof_admission_inspects_only_the_columns_it_reads[sqlite-preview] ____
+
+value = 1e+29, precision = 38, scale = 9, strict = False
+
+    def normalize_decimal(
+        value,
+        precision: int | None = None,
+        scale: int | None = None,
+        strict: bool = True,
+    ) -> Decimal:
+        context = Context(prec=38 if precision is None else precision)
+    
+        try:
+            if isinstance(value, float):
+                out = Decimal(str(value))
+            else:
+                out = Decimal(value)
+        except InvalidOperation:
+            raise TypeError(f"Unable to construct decimal from {value!r}")
+    
+        out = out.normalize(context=context)
+        components = out.as_tuple()
+        n_digits = len(components.digits)
+        exponent = components.exponent
+    
+        if precision is not None and precision < n_digits:
+            raise TypeError(
+                f"Decimal value {value} has too many digits for precision: {precision}"
+            )
+    
+        if scale is not None:
+            if strict and exponent < -scale:
+                raise TypeError(
+                    f"Normalizing {value} with scale {exponent} to scale -{scale} "
+                    "would loose precision"
+                )
+    
+            other = Decimal(10) ** -scale
+            try:
+>               out = out.quantize(other, context=context)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E               decimal.InvalidOperation: [<class 'decimal.InvalidOperation'>]
+
+.venv/lib/python3.12/site-packages/ibis/common/numeric.py:41: InvalidOperation
+
+During handling of the above exception, another exception occurred:
+
+self = <terrine.execution._generic.NoSnapshotSession object at 0x177a57b30>
+operation = 'exact_state'
+action = <function NoSnapshotSession._witness.<locals>.<lambda> at 0x376c98720>
+
+    def _call_backend(self, operation: str, action: Callable[[], Any]) -> Any:
+        try:
+>           return action()
+                   ^^^^^^^^
+
+terrine/execution/_generic.py:222: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+terrine/execution/_generic.py:233: in <lambda>
+    result = self._call_backend(operation, lambda: self.con.to_pyarrow(witness))
+                                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/ibis/backends/__init__.py:257: in to_pyarrow
+    with self.to_pyarrow_batches(
+.venv/lib/python3.12/site-packages/ibis/backends/sqlite/__init__.py:354: in to_pyarrow_batches
+    df = self._fetch_from_cursor(cursor, schema)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/ibis/backends/sqlite/__init__.py:333: in _fetch_from_cursor
+    return SQLitePandasData.convert_table(df, schema)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/ibis/formats/pandas.py:133: in convert_table
+    name: cls.convert_column(df[name], dtype) for name, dtype in schema.items()
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/ibis/formats/pandas.py:162: in convert_column
+    result = convert_method(obj, dtype, pandas_type)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/ibis/formats/pandas.py:284: in convert_Decimal
+    return s.map(func, na_action="ignore")
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/pandas/core/series.py:4719: in map
+    new_values = self._map_values(arg, na_action=na_action)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/pandas/core/base.py:925: in _map_values
+    return algorithms.map_array(arr, mapper, na_action=na_action, convert=convert)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/pandas/core/algorithms.py:1745: in map_array
+    return lib.map_infer_mask(
+pandas/_libs/lib.pyx:2922: in pandas._libs.lib.map_infer_mask
+    ???
+pandas/_libs/lib.pyx:2959: in pandas._libs.lib._map_infer_mask
+    ???
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+value = 1e+29, precision = 38, scale = 9, strict = False
+
+    def normalize_decimal(
+        value,
+        precision: int | None = None,
+        scale: int | None = None,
+        strict: bool = True,
+    ) -> Decimal:
+        context = Context(prec=38 if precision is None else precision)
+    
+        try:
+            if isinstance(value, float):
+                out = Decimal(str(value))
+            else:
+                out = Decimal(value)
+        except InvalidOperation:
+            raise TypeError(f"Unable to construct decimal from {value!r}")
+    
+        out = out.normalize(context=context)
+        components = out.as_tuple()
+        n_digits = len(components.digits)
+        exponent = components.exponent
+    
+        if precision is not None and precision < n_digits:
+            raise TypeError(
+                f"Decimal value {value} has too many digits for precision: {precision}"
+            )
+    
+        if scale is not None:
+            if strict and exponent < -scale:
+                raise TypeError(
+                    f"Normalizing {value} with scale {exponent} to scale -{scale} "
+                    "would loose precision"
+                )
+    
+            other = Decimal(10) ** -scale
+            try:
+                out = out.quantize(other, context=context)
+            except InvalidOperation:
+>               raise TypeError(
+                    f"Unable to normalize {value!r} as decimal with precision {precision} "
+                    f"and scale {scale}"
+                )
+E               TypeError: Unable to normalize 1e+29 as decimal with precision 38 and scale 9
+
+.venv/lib/python3.12/site-packages/ibis/common/numeric.py:43: TypeError
+
+The above exception was the direct cause of the following exception:
+
+unregistered = <ibis.backends.sqlite.Backend object at 0x14f64ab10>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x16b5047a0>
+entry = 'preview'
+
+    @pytest.mark.parametrize("entry", ["materialize", "preview"])
+    def test_asof_admission_inspects_only_the_columns_it_reads(unregistered, monkeypatch, entry):
+        """A static string as-of lookup over a dimension table carrying an unused
+        decimal column never asks for the decimal witness: admission inspects the
+        lookup and its validation queries projected to their columns, not the whole
+        table. Neither backend completes the lookup (Ibis's SQLite compiler has no
+        timestamp-delta rule, so the UTC witness refuses it by code before any read;
+        the DuckDB-based backend's portable timestamp SQL uses functions outside the
+        fail-closed read-only allowlist), but the only witness ever attempted is the
+        timestamp one, and no source row is read before a refusal."""
+        from terrine import UnverifiedBackendWarning, asof, preview
+        from terrine.execution import _generic
+    
+        statements: list[str] = []
+        original = _generic.NoSnapshotSession._call_backend
+    
+        def recording(self, operation, action):
+            statements.append(operation)
+            return original(self, operation, action)
+    
+        monkeypatch.setattr(_generic.NoSnapshotSession, "_call_backend", recording)
+        executed: list[str] = []
+        if unregistered.name == "sqlite":
+            unregistered.con.set_trace_callback(executed.append)
+        assert unregistered.table("tiers").schema()["balance"].is_decimal()
+        definitions = catalog().model_dump()
+        definitions["dialect"] = unregistered.name
+        definitions["sources"]["events"]["properties"] = ["tier"]
+        definitions["sources"]["events"]["dimensions"] = ["accounts"]
+        definitions["properties"]["tier"] = {
+            "source": "events",
+            "column": "tier",
+            "dtype": "string",
+            "as_of": "static",
+            "dimension": "accounts",
+        }
+        definitions["dimensions"]["accounts"] = {
+            "relation": {"kind": "table", "name": "tiers"},
+            "unit": "user",
+            "key": "user_id",
+            "properties": ["tier"],
+        }
+        with pytest.warns(UnverifiedBackendWarning):
+            model = Model.from_catalog(
+                type(catalog()).model_validate(definitions),
+                con=unregistered,
+                allow_unverified=True,
+                readiness={"events": Coverage(date(2025, 1, 1), date(2025, 1, 2))},
+                units={"user": UnitSource("users", "user_id")},
+            )
+        design = Design(
+            "user",
+            FixedDate(datetime(2025, 1, 2, tzinfo=UTC)),
+            features={"tier": asof("tier", before="0s")},
+        )
+        try:
+            if entry == "materialize":
+                outcome = design.build(model).materialize().table["tier"].to_pylist()
+            else:
+>               outcome = preview(design, model, bounded_count=1).candidate_rows
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+integration/execution/test_generic_provider.py:266: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+terrine/compile/cost.py:105: in preview
+    context.admit(*compiled.reads())
+terrine/execution/inputs.py:670: in admit
+    self._admit(*queries)
+terrine/execution/_generic.py:246: in admit_primitives
+    self._witness("exact_state", *_decimal_witnesses())
+terrine/execution/_generic.py:233: in _witness
+    result = self._call_backend(operation, lambda: self.con.to_pyarrow(witness))
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+integration/execution/test_generic_provider.py:225: in recording
+    return original(self, operation, action)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <terrine.execution._generic.NoSnapshotSession object at 0x177a57b30>
+operation = 'exact_state'
+action = <function NoSnapshotSession._witness.<locals>.<lambda> at 0x376c98720>
+
+    def _call_backend(self, operation: str, action: Callable[[], Any]) -> Any:
+        try:
+            return action()
+        except (TerrineError, StopIteration):
+            raise
+        except Exception as exc:
+>           raise self._unavailable(operation) from exc
+E           terrine.errors.TerrineError: Backend 'sqlite' cannot provide 'exact_state': unverified. Use a verified Ibis backend providing this operation: DuckDB, PostgreSQL, BigQuery, Snowflake.
+
+terrine/execution/_generic.py:226: TerrineError
+
+During handling of the above exception, another exception occurred:
+
+unregistered = <ibis.backends.sqlite.Backend object at 0x14f64ab10>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x16b5047a0>
+entry = 'preview'
+
+    @pytest.mark.parametrize("entry", ["materialize", "preview"])
+    def test_asof_admission_inspects_only_the_columns_it_reads(unregistered, monkeypatch, entry):
+        """A static string as-of lookup over a dimension table carrying an unused
+        decimal column never asks for the decimal witness: admission inspects the
+        lookup and its validation queries projected to their columns, not the whole
+        table. Neither backend completes the lookup (Ibis's SQLite compiler has no
+        timestamp-delta rule, so the UTC witness refuses it by code before any read;
+        the DuckDB-based backend's portable timestamp SQL uses functions outside the
+        fail-closed read-only allowlist), but the only witness ever attempted is the
+        timestamp one, and no source row is read before a refusal."""
+        from terrine import UnverifiedBackendWarning, asof, preview
+        from terrine.execution import _generic
+    
+        statements: list[str] = []
+        original = _generic.NoSnapshotSession._call_backend
+    
+        def recording(self, operation, action):
+            statements.append(operation)
+            return original(self, operation, action)
+    
+        monkeypatch.setattr(_generic.NoSnapshotSession, "_call_backend", recording)
+        executed: list[str] = []
+        if unregistered.name == "sqlite":
+            unregistered.con.set_trace_callback(executed.append)
+        assert unregistered.table("tiers").schema()["balance"].is_decimal()
+        definitions = catalog().model_dump()
+        definitions["dialect"] = unregistered.name
+        definitions["sources"]["events"]["properties"] = ["tier"]
+        definitions["sources"]["events"]["dimensions"] = ["accounts"]
+        definitions["properties"]["tier"] = {
+            "source": "events",
+            "column": "tier",
+            "dtype": "string",
+            "as_of": "static",
+            "dimension": "accounts",
+        }
+        definitions["dimensions"]["accounts"] = {
+            "relation": {"kind": "table", "name": "tiers"},
+            "unit": "user",
+            "key": "user_id",
+            "properties": ["tier"],
+        }
+        with pytest.warns(UnverifiedBackendWarning):
+            model = Model.from_catalog(
+                type(catalog()).model_validate(definitions),
+                con=unregistered,
+                allow_unverified=True,
+                readiness={"events": Coverage(date(2025, 1, 1), date(2025, 1, 2))},
+                units={"user": UnitSource("users", "user_id")},
+            )
+        design = Design(
+            "user",
+            FixedDate(datetime(2025, 1, 2, tzinfo=UTC)),
+            features={"tier": asof("tier", before="0s")},
+        )
+        try:
+            if entry == "materialize":
+                outcome = design.build(model).materialize().table["tier"].to_pylist()
+            else:
+                outcome = preview(design, model, bounded_count=1).candidate_rows
+        except TerrineError as error:
+>           assert error.context.get("operation") != "exact_state"
+E           assert 'exact_state' != 'exact_state'
+E            +  where 'exact_state' = get('operation')
+E            +    where get = FrozenMap({'backend': 'sqlite', 'operation': 'exact_state', 'status': 'unverified', 'route': 'Use a verified Ibis backend providing this operation: DuckDB, PostgreSQL, BigQuery, Snowflake.'}).get
+E            +      where FrozenMap({'backend': 'sqlite', 'operation': 'exact_state', 'status': 'unverified', 'route': 'Use a verified Ibis backend providing this operation: DuckDB, PostgreSQL, BigQuery, Snowflake.'}) = TerrineError("Backend 'sqlite' cannot provide 'exact_state': unverified. Use a verified Ibis backend providing this operation: DuckDB, PostgreSQL, BigQuery, Snowflake.").context
+
+integration/execution/test_generic_provider.py:268: AssertionError
+__ test_asof_admission_inspects_only_the_columns_it_reads[duckdb-materialize] __
+
+unregistered = <test_generic_provider.unregistered.<locals>.UnregisteredDuckDB object at 0x3510ab8f0>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x14f64a480>
+entry = 'materialize'
+
+    @pytest.mark.parametrize("entry", ["materialize", "preview"])
+    def test_asof_admission_inspects_only_the_columns_it_reads(unregistered, monkeypatch, entry):
+        """A static string as-of lookup over a dimension table carrying an unused
+        decimal column never asks for the decimal witness: admission inspects the
+        lookup and its validation queries projected to their columns, not the whole
+        table. Neither backend completes the lookup (Ibis's SQLite compiler has no
+        timestamp-delta rule, so the UTC witness refuses it by code before any read;
+        the DuckDB-based backend's portable timestamp SQL uses functions outside the
+        fail-closed read-only allowlist), but the only witness ever attempted is the
+        timestamp one, and no source row is read before a refusal."""
+        from terrine import UnverifiedBackendWarning, asof, preview
+        from terrine.execution import _generic
+    
+        statements: list[str] = []
+        original = _generic.NoSnapshotSession._call_backend
+    
+        def recording(self, operation, action):
+            statements.append(operation)
+            return original(self, operation, action)
+    
+        monkeypatch.setattr(_generic.NoSnapshotSession, "_call_backend", recording)
+        executed: list[str] = []
+        if unregistered.name == "sqlite":
+            unregistered.con.set_trace_callback(executed.append)
+        assert unregistered.table("tiers").schema()["balance"].is_decimal()
+        definitions = catalog().model_dump()
+        definitions["dialect"] = unregistered.name
+        definitions["sources"]["events"]["properties"] = ["tier"]
+        definitions["sources"]["events"]["dimensions"] = ["accounts"]
+        definitions["properties"]["tier"] = {
+            "source": "events",
+            "column": "tier",
+            "dtype": "string",
+            "as_of": "static",
+            "dimension": "accounts",
+        }
+        definitions["dimensions"]["accounts"] = {
+            "relation": {"kind": "table", "name": "tiers"},
+            "unit": "user",
+            "key": "user_id",
+            "properties": ["tier"],
+        }
+        with pytest.warns(UnverifiedBackendWarning):
+            model = Model.from_catalog(
+                type(catalog()).model_validate(definitions),
+                con=unregistered,
+                allow_unverified=True,
+                readiness={"events": Coverage(date(2025, 1, 1), date(2025, 1, 2))},
+                units={"user": UnitSource("users", "user_id")},
+            )
+        design = Design(
+            "user",
+            FixedDate(datetime(2025, 1, 2, tzinfo=UTC)),
+            features={"tier": asof("tier", before="0s")},
+        )
+        try:
+            if entry == "materialize":
+                outcome = design.build(model).materialize().table["tier"].to_pylist()
+            else:
+                outcome = preview(design, model, bounded_count=1).candidate_rows
+        except TerrineError as error:
+            assert error.context.get("operation") != "exact_state"
+            if unregistered.name == "sqlite":
+                assert error.code == "terrine.backend.capability_unavailable"
+                assert error.context["operation"] == "utc_wall_clock"
+                assert _source_reads(executed) == []
+            else:
+                assert error.code == "terrine.sql.invalid_read_query"
+        else:
+            assert outcome in (["gold"], 1)
+        assert "utc_wall_clock" in statements
+>       assert "exact_state" not in statements
+E       AssertionError: assert 'exact_state' not in ['query', 'query', 'query', 'query', 'query', 'query', ...]
+
+integration/execution/test_generic_provider.py:278: AssertionError
+____ test_asof_admission_inspects_only_the_columns_it_reads[duckdb-preview] ____
+
+unregistered = <test_generic_provider.unregistered.<locals>.UnregisteredDuckDB object at 0x3511276b0>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x351127170>
+entry = 'preview'
+
+    @pytest.mark.parametrize("entry", ["materialize", "preview"])
+    def test_asof_admission_inspects_only_the_columns_it_reads(unregistered, monkeypatch, entry):
+        """A static string as-of lookup over a dimension table carrying an unused
+        decimal column never asks for the decimal witness: admission inspects the
+        lookup and its validation queries projected to their columns, not the whole
+        table. Neither backend completes the lookup (Ibis's SQLite compiler has no
+        timestamp-delta rule, so the UTC witness refuses it by code before any read;
+        the DuckDB-based backend's portable timestamp SQL uses functions outside the
+        fail-closed read-only allowlist), but the only witness ever attempted is the
+        timestamp one, and no source row is read before a refusal."""
+        from terrine import UnverifiedBackendWarning, asof, preview
+        from terrine.execution import _generic
+    
+        statements: list[str] = []
+        original = _generic.NoSnapshotSession._call_backend
+    
+        def recording(self, operation, action):
+            statements.append(operation)
+            return original(self, operation, action)
+    
+        monkeypatch.setattr(_generic.NoSnapshotSession, "_call_backend", recording)
+        executed: list[str] = []
+        if unregistered.name == "sqlite":
+            unregistered.con.set_trace_callback(executed.append)
+        assert unregistered.table("tiers").schema()["balance"].is_decimal()
+        definitions = catalog().model_dump()
+        definitions["dialect"] = unregistered.name
+        definitions["sources"]["events"]["properties"] = ["tier"]
+        definitions["sources"]["events"]["dimensions"] = ["accounts"]
+        definitions["properties"]["tier"] = {
+            "source": "events",
+            "column": "tier",
+            "dtype": "string",
+            "as_of": "static",
+            "dimension": "accounts",
+        }
+        definitions["dimensions"]["accounts"] = {
+            "relation": {"kind": "table", "name": "tiers"},
+            "unit": "user",
+            "key": "user_id",
+            "properties": ["tier"],
+        }
+        with pytest.warns(UnverifiedBackendWarning):
+            model = Model.from_catalog(
+                type(catalog()).model_validate(definitions),
+                con=unregistered,
+                allow_unverified=True,
+                readiness={"events": Coverage(date(2025, 1, 1), date(2025, 1, 2))},
+                units={"user": UnitSource("users", "user_id")},
+            )
+        design = Design(
+            "user",
+            FixedDate(datetime(2025, 1, 2, tzinfo=UTC)),
+            features={"tier": asof("tier", before="0s")},
+        )
+        try:
+            if entry == "materialize":
+                outcome = design.build(model).materialize().table["tier"].to_pylist()
+            else:
+                outcome = preview(design, model, bounded_count=1).candidate_rows
+        except TerrineError as error:
+            assert error.context.get("operation") != "exact_state"
+            if unregistered.name == "sqlite":
+                assert error.code == "terrine.backend.capability_unavailable"
+                assert error.context["operation"] == "utc_wall_clock"
+                assert _source_reads(executed) == []
+            else:
+                assert error.code == "terrine.sql.invalid_read_query"
+        else:
+            assert outcome in (["gold"], 1)
+        assert "utc_wall_clock" in statements
+>       assert "exact_state" not in statements
+E       AssertionError: assert 'exact_state' not in ['query', 'query', 'query', 'query', 'query', 'query', ...]
+
+integration/execution/test_generic_provider.py:278: AssertionError
+=============================== warnings summary ===============================
+tests/backends/test_timestamps.py: 8 warnings
+tests/temporal/test_first_occurrence.py: 24 warnings
+tests/temporal/test_range_scaling.py: 19 warnings
+tests/temporal/test_retention.py: 16 warnings
+tests/temporal/test_scd2_attributes.py: 1 warning
+tests/temporal/test_semantic_binding.py: 48 warnings
+tests/temporal/test_sessionize.py: 4 warnings
+tests/temporal/test_sparse_state.py: 81 warnings
+tests/temporal/test_window_aggregates.py: 115 warnings
+tests/compile/test_anchors.py: 191 warnings
+tests/compile/test_cohorts.py: 33 warnings
+tests/compile/test_columns.py: 145 warnings
+tests/compile/test_cost_estimates.py: 2 warnings
+tests/compile/test_event_sequence.py: 106 warnings
+tests/compile/test_ltv.py: 36 warnings
+tests/compile/test_matched_t0.py: 39 warnings
+tests/compile/test_nonadditive.py: 96 warnings
+tests/compile/test_panels.py: 150 warnings
+tests/compile/test_persisted_layers.py: 52 warnings
+tests/compile/test_prune.py: 2 warnings
+tests/compile/test_range_scaling.py: 68 warnings
+tests/compile/test_retention.py: 30 warnings
+tests/compile/test_state_panel.py: 355 warnings
+tests/compile/test_time_to_event.py: 41 warnings
+tests/compile/test_winsorization.py: 6 warnings
+tests/test_frame.py: 107 warnings
+tests/test_frame_runtime.py: 87 warnings
+integration/temporal/test_aggregate.py: 6 warnings
+integration/temporal/test_retention_bands.py: 8 warnings
+integration/temporal/test_window_quotient_composition.py: 58 warnings
+integration/compile/test_boolean_outputs.py: 29 warnings
+integration/compile/test_column_runtime_contracts.py: 71 warnings
+integration/compile/test_design_describe.py: 129 warnings
+integration/compile/test_frame_runtime_window_export.py: 113 warnings
+integration/compile/test_ltv.py: 10 warnings
+integration/compile/test_numeric_lowering.py: 103 warnings
+integration/compile/test_retention.py: 8 warnings
+integration/compile/test_time_to_event.py: 144 warnings
+integration/test_frame.py: 64 warnings
+integration/backends/test_duckdb_version.py: 50 warnings
+integration/backends/test_generic.py: 101 warnings
+integration/backends/test_numeric.py: 3 warnings
+integration/execution/test_generic_provider.py: 46 warnings
+integration/execution/test_native_admission.py: 20 warnings
+integration/conformance/test_engines.py: 63 warnings
+  /Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/.venv/lib/python3.12/site-packages/ibis/backends/duckdb/__init__.py:332: DeprecationWarning: fetch_arrow_table() is deprecated, use to_arrow_table() instead.
+    meta = result.fetch_arrow_table()
+
+tests/backends/test_timestamps.py: 1 warning
+tests/temporal/test_first_occurrence.py: 9 warnings
+tests/temporal/test_scd2_attributes.py: 8 warnings
+tests/temporal/test_semantic_binding.py: 2 warnings
+tests/temporal/test_sparse_state.py: 4 warnings
+tests/temporal/test_window_aggregates.py: 104 warnings
+tests/compile/test_columns.py: 1 warning
+tests/compile/test_predicates.py: 1 warning
+tests/compile/test_range_scaling.py: 1 warning
+tests/compile/test_survival_bounds.py: 3 warnings
+tests/test_frame_runtime.py: 3 warnings
+integration/temporal/test_window_quotient_composition.py: 49 warnings
+integration/compile/test_column_runtime_contracts.py: 1 warning
+integration/compile/test_numeric_lowering.py: 8 warnings
+  /Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/.venv/lib/python3.12/site-packages/ibis/backends/duckdb/__init__.py:1718: DeprecationWarning: fetch_arrow_table() is deprecated, use to_arrow_table() instead.
+    rows = cur.fetch_arrow_table()
+
+tests/compile/test_nonadditive.py::test_approximate_quantile_frame_matches_type7_tolerance_and_is_reproducible
+tests/compile/test_nonadditive.py::test_approximate_quantile_frame_matches_type7_tolerance_and_is_reproducible
+tests/compile/test_nonadditive.py::test_approximate_quantile_preserves_incomplete_window_nulls
+tests/compile/test_nonadditive.py::test_approximate_quantile_populates_reused_expression_aliases
+integration/compile/test_column_runtime_contracts.py::test_approx_quantile_needs_no_sketch_settings
+  /Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/.venv/lib/python3.12/site-packages/ibis/backends/duckdb/__init__.py:1380: DeprecationWarning: fetch_record_batch() is deprecated, use to_arrow_reader() instead.
+    yield from cur.fetch_record_batch(rows_per_batch=chunk_size)
+
+tests/compile/test_state_panel.py: 38 warnings
+  /Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/.venv/lib/python3.12/site-packages/ibis/backends/duckdb/__init__.py:901: DeprecationWarning: fetch_arrow_table() is deprecated, use to_arrow_table() instead.
+    out = self.con.execute(sql).fetch_arrow_table()
+
+tests/test_frame_runtime.py::test_strict_scan_policy_precedes_integrity_reads
+  /Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/terrine/frame.py:720: RuntimeWarning: Source scan bytes are unknown; output limits do not bound upstream scan or work.
+    return self._materialize(budget)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================== slowest durations ===============================
+6.83s call     integration/compile/test_boolean_outputs.py::test_time_split_assigns_boolean_label_by_its_window
+
+(2618 durations < 5s hidden.)
+=========================== short test summary info ============================
+SKIPPED [1] integration/conformance/test_engines.py:259: The native coefficient domain admits this sum.
+FAILED integration/execution/test_generic_provider.py::test_asof_admission_inspects_only_the_columns_it_reads[sqlite-materialize] - assert 'exact_state' != 'exact_state'
+ +  where 'exact_state' = get('operation')
+ +    where get = FrozenMap({'backend': 'sqlite', 'operation': 'exact_state', 'status': 'unverified', 'route': 'Use a verified Ibis backend providing this operation: DuckDB, PostgreSQL, BigQuery, Snowflake.'}).get
+ +      where FrozenMap({'backend': 'sqlite', 'operation': 'exact_state', 'status': 'unverified', 'route': 'Use a verified Ibis backend providing this operation: DuckDB, PostgreSQL, BigQuery, Snowflake.'}) = TerrineError("Backend 'sqlite' cannot provide 'exact_state': unverified. Use a verified Ibis backend providing this operation: DuckDB, PostgreSQL, BigQuery, Snowflake.").context
+FAILED integration/execution/test_generic_provider.py::test_asof_admission_inspects_only_the_columns_it_reads[sqlite-preview] - assert 'exact_state' != 'exact_state'
+ +  where 'exact_state' = get('operation')
+ +    where get = FrozenMap({'backend': 'sqlite', 'operation': 'exact_state', 'status': 'unverified', 'route': 'Use a verified Ibis backend providing this operation: DuckDB, PostgreSQL, BigQuery, Snowflake.'}).get
+ +      where FrozenMap({'backend': 'sqlite', 'operation': 'exact_state', 'status': 'unverified', 'route': 'Use a verified Ibis backend providing this operation: DuckDB, PostgreSQL, BigQuery, Snowflake.'}) = TerrineError("Backend 'sqlite' cannot provide 'exact_state': unverified. Use a verified Ibis backend providing this operation: DuckDB, PostgreSQL, BigQuery, Snowflake.").context
+FAILED integration/execution/test_generic_provider.py::test_asof_admission_inspects_only_the_columns_it_reads[duckdb-materialize] - AssertionError: assert 'exact_state' not in ['query', 'query', 'query', 'query', 'query', 'query', ...]
+FAILED integration/execution/test_generic_provider.py::test_asof_admission_inspects_only_the_columns_it_reads[duckdb-preview] - AssertionError: assert 'exact_state' not in ['query', 'query', 'query', 'query', 'query', 'query', ...]
+= 4 failed, 868 passed, 1 skipped, 71 deselected, 3127 warnings in 260.11s (0:04:20) =
+make: *** [test] Error 1

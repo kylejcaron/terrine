@@ -1,0 +1,11 @@
+{
+  "command": "uv run python -c 'import json,ibis\nfrom tests.fixtures.readme import readme_design,readme_model\nfrom integration.test_cost_budget import test_five_metrics_by_ten_windows_compile_under_the_bigquery_limit\nsizes={\"readme_private_consumer\":len(ibis.to_sql(readme_design().build(readme_model()).expr))}\noriginal=ibis.to_sql\ndef recording(*args,**kwargs):\n sql=original(*args,**kwargs)\n if kwargs.get(\"dialect\")==\"bigquery\": sizes[\"bigquery_metadata_consumer\"]=len(sql)\n return sql\nibis.to_sql=recording\ntest_five_metrics_by_ten_windows_compile_under_the_bigquery_limit()\nassert sizes[\"readme_private_consumer\"] <= 20000\nprint(json.dumps(sizes))\n'",
+  "exit": 0,
+  "stdout": "{\"readme_private_consumer\": 19520, \"bigquery_metadata_consumer\": 514334}\n",
+  "stderr": "",
+  "characters": {
+    "readme_private_consumer": 19520,
+    "bigquery_metadata_consumer": 514334,
+    "state_private_consumer": 18525
+  }
+}

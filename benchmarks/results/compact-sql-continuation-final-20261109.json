@@ -1,0 +1,1814 @@
+{
+  "date": "2026-11-09",
+  "production_revision": "24e057377953b11828035a20bfe44e1b3805f058",
+  "final_measurements_reused_not_rerun": true,
+  "scope": "Matched native DuckDB SQL-to-Arrow performance, richer public path reported separately. Local PostgreSQL correctness only; no cloud live execution or performance claim.",
+  "frozen_helpers": {
+    "benchmarks/compare_sql.py": "6bf68e1d6ed5a296f086a6394dd9ec554ce78b54256666b37fbc08bdbff7c00f",
+    "benchmarks/run_overhead.py": "7a64bb9547e5f645a432b858cfb301b964d592f15abd7f084120f7bd4c1302dd"
+  },
+  "previous_manifest": {
+    "path": "benchmarks/results/compact-sql-final-20261109.json",
+    "sha256": "5db4e21c493c52752604a80604e8f69b224b5345b362bde953c3b6ca41fd312e",
+    "status": "Historical initial checkpoint at8013692; failed budgets preserved, superseded only by observed passing final consumer gates."
+  },
+  "v2_manifest": {
+    "path": "benchmarks/results/direct-sql-comparison-20261109-v2.json",
+    "sha256": "30bee973df423fb9ef371dd26dafa15a9911a735d0392f00a09e03e54a2c2bfb",
+    "all_recorded_file_hashes_verified_unchanged": true
+  },
+  "cases": {
+    "readme": {
+      "directory": "benchmarks/results/compact-sql-task7-20261109-readme",
+      "file_sha256": {
+        "environment.json": "705a83054457d3355e41f9fa1ec39670ff77f837b7d5027aa66c56e0b63f1044",
+        "handwritten.sql": "9fdfc1319ab7bcf9a3862ea1b3a433b6dc310529259a0cdeebaa8aa30a1eede8",
+        "public-study-statement-0.sql": "f65b6ce2fed90cd3ec3328a21fc55424534c16e793dfc27f51b665bc1a8c78f6",
+        "public-study-statement-1.sql": "119c43cb3904a6a45a41130fd006157b48bf752a249b24e2f041aefd0b85e679",
+        "public-study-statement-2.sql": "90e2327e4d328b9d6826a41cb84928b9fa6b7ca56fc23203e783c6c91c86c5e5",
+        "result.json": "22809fb19e889add7897c368507e63d106ea8b6760df90ea99577e68b69d1778",
+        "terrine-full-expression.sql": "aa5b5b787eaeba69dd3d5d603a4ce5e94ae872a7752d039a10277c95c23d1641",
+        "terrine-projected.sql": "ea03b82dee0f46a3cbdfd13786cc627e040de2d6334ad07859784434a8e1ec8c"
+      },
+      "source_hashes_verified": 155,
+      "environment": {
+        "repository_revision": "24e057377953b11828035a20bfe44e1b3805f058",
+        "production_revision": "24e057377953b11828035a20bfe44e1b3805f058",
+        "python": "3.12.11",
+        "duckdb": "1.5.6",
+        "ibis": "12.0.0",
+        "pyarrow": "23.0.1",
+        "threads": 1,
+        "argv": {
+          "case": "readme",
+          "units": 10000,
+          "events_per_unit": 30,
+          "repeats": 5,
+          "output": "benchmarks/results/compact-sql-task7-20261109-readme",
+          "diagnostics": false,
+          "profile": false
+        },
+        "source_sha256": {
+          "benchmarks/compare_sql.py": "6bf68e1d6ed5a296f086a6394dd9ec554ce78b54256666b37fbc08bdbff7c00f",
+          "tests/fixtures/readme.py": "45d90980df334146fe70b7c74d7b642a2b574e614f0a89858ca7529768e3ed90",
+          "benchmarks/workloads.py": "5fb426e313d601f135279d5010c55a5e3bc518bce3c548f4096c7943c704e3c7",
+          "benchmarks/query_strategy_spike.py": "c6599d83142b8b6b51b879212f1439cdbb6761a4eee36a803d86f4feebd96515",
+          "benchmarks/run_overhead.py": "7a64bb9547e5f645a432b858cfb301b964d592f15abd7f084120f7bd4c1302dd",
+          "terrine/__init__.py": "621c94aa653bb7cc96efa74c0808b07f70d35336919634757555a95217974493",
+          "terrine/_refusal_codes.py": "509402a0f624a4f1116530d256fc946692dae910a3777206718563522a56d646",
+          "terrine/_time.py": "4502d45fd4cc13488fc969949337ef830deb95876767c1026a0355d2094bc09b",
+          "terrine/adapters/__init__.py": "166ce6f480e40dc5fe0bc8282816b160637a2f7be3318e2b72baae43a6b0681f",
+          "terrine/adapters/increment.py": "5308c7666ae0697749ea57dbc0dc880c1f9f3060393c938fbc746bf47c0b31d2",
+          "terrine/adapters/opentelemetry.py": "3cac5672f1ed06604603cd64dd6337495abe2e2b8c33be7c6dba6d6729c18b53",
+          "terrine/agent/__init__.py": "4eef129a831db2b72b18efea7e9942d29346c45670b5b6f494ae3ade4ed9cb12",
+          "terrine/agent/definitions.py": "d4e78cec945e4ae42ba39661f5c949792bba3b2fc113b56dc96f07d161652335",
+          "terrine/agent/design_schema.py": "c70f762067045f6f899a4f979f244b6c2efae1605149792623ab7198daeb8653",
+          "terrine/agent/policy.py": "ddeb2331a66a5e7f55017013163241a8001e6801ef2215bf627e4c01460fb9e8",
+          "terrine/agent/schemas.py": "0fed9522af845286e5f88ee2e4a51f7dc0c852d5de7a29ebe3ca62d895fb9d9a",
+          "terrine/agent/tools.py": "7c6f893e19139499891cb3ae5eeed03ad2c78a40209eca822a3dad1e026625ac",
+          "terrine/backends/__init__.py": "15fdb783d20fc387301943ba5d6ee8c32535518098ad03c3e074b42ebbfbed1f",
+          "terrine/backends/capabilities.py": "7f8e4f2b43fab5fbe8f9e9c85d57a35859449c282baf0ae2e8c0e8eac20982c4",
+          "terrine/backends/dialect.py": "7b42da8e321e7e895be4478449f417412bcca2aa4bdc62713c2c428501db78ba",
+          "terrine/backends/engines/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "terrine/backends/engines/bigquery.py": "cf73f6f8eaaa2878034a7648fb947c5ee976b8cd68f242a20a12e9972fe1a5c1",
+          "terrine/backends/engines/duckdb.py": "81d7e3c9c10bfdd048b83e293817da5111958ffc7e01eeae911474e0f433f734",
+          "terrine/backends/engines/postgres.py": "e22ef7a818e10f43326b04b0676c86ad61afbab75316b8e6bd07e0456cd982c1",
+          "terrine/backends/engines/snowflake.py": "2dce3820a5a7d2c1631a4d2e6956b9e3b2d03322c20a2f637087aed6ae9fb5d9",
+          "terrine/backends/extrema.py": "9e9b3e5cab4d1a47fdae408818002918e2fbc25bda7ca27c7cc9bc4f29ec24a7",
+          "terrine/backends/joins.py": "e07e7c893e98416612a3070d0c9c74fbe9797733f0a1ebbf826a1a5f601d1691",
+          "terrine/backends/numeric.py": "b4436fe54e582ef7df16960b77e22711467aea5c81a9a8788caa7c8a78f930bc",
+          "terrine/backends/registry.py": "57cd46fb9caf3f3edeb53e1112cdfa544d4c977f3c102a86d881ef28bbc7cd40",
+          "terrine/backends/sequences.py": "97f8591d8b3bb6de9118697a9806408e38ea56b864bf925dc23a28a4359cc82b",
+          "terrine/backends/timestamps.py": "1b99a5eb757e3d4c8e7605e2bf159ebbd4672b949a1b361ad4087e3a4f36d762",
+          "terrine/compile/__init__.py": "49cd60544571f24bf952adc123263b95d53adaee1a07c63379d36ec14498c89d",
+          "terrine/compile/_asof.py": "63450c8f372cb3e79729fa861fdb6a67e0eb94c9410c63c1bff8417fc0276e51",
+          "terrine/compile/_predicates.py": "d828e95064646d9b4980ed917d09b4e7bcb7e69b82cf1f2a25003104ac1093cd",
+          "terrine/compile/anchors.py": "03841e459347e5c7104c258b98bcbe2b204f5cb97a8c1c440d1a13387142479c",
+          "terrine/compile/columns.py": "d02c806717476724bc203075c7279dcb7faf6b111f66fa031d6df6cbf28a2b10",
+          "terrine/compile/cost.py": "91c184b8907eb864f470c7d805f34a644dfe4d0416762ccbb4bb49f992341603",
+          "terrine/compile/dispatch.py": "cd5d008b626495b01752a7bbd0329dd0254c300512dcdc93546a3500c3c05c5b",
+          "terrine/compile/layers.py": "25d733899145d80dfd68902c62d582e0ebca6dff0e3759f91525768751f6fee1",
+          "terrine/compile/materialize.py": "d087d5b2d4546b3ef7889736f8efaf59def2ab0b3a3db123a5560ba52d8bd678",
+          "terrine/compile/numeric.py": "4ed994153d7ec59271da92226b75805658f44f7e7c0da6d9827df2c07cf32046",
+          "terrine/compile/provenance.py": "1ff1c2a184288015b2249dd7449be7877482ca9dca61655bc570284bf311be68",
+          "terrine/compile/prune.py": "ec963f01e29a83f7a37683ee8961cb1e92ebae89f3833cbfbb8d941131b5d0e6",
+          "terrine/compile/ranges.py": "22d198843db2e1cc3bc5bb10eb3e039314181c770240276ecd5184294bbe3622",
+          "terrine/compile/retention.py": "c2def5eda534d1b2d3be919be75d7ba5d794e2d9e89279a4324a02120615ddd0",
+          "terrine/compile/shapes/__init__.py": "4099f247f459c219e63dfd70261cd87ecbd335ac71bc7b9c472fc4b03f0f950f",
+          "terrine/compile/shapes/_observations.py": "4c9e04b906f3ca6b22508d8420574e028c51ce987b8e15c7242b439c703a8213",
+          "terrine/compile/shapes/calendar_comparison.py": "a45cd2797968611a0f251736529a2ddd780cf5d2970f9cc8cf067652dc36b983",
+          "terrine/compile/shapes/cohorts.py": "c79a09f8cc1fe228b86573e9b079243ab2309f3cae4fd967be9a2dcc4a2a5eef",
+          "terrine/compile/shapes/event_panel.py": "fb763729a724c0b33b5c89caf59675867581a3da8a1f8cf16ff76a424a088f23",
+          "terrine/compile/shapes/event_sequence.py": "fda5edfed3a81c354625665f5d32d9af53279400eaf51ac9ba24d79440d0c3b2",
+          "terrine/compile/shapes/life_table.py": "fe99ed7440136a95d855ca51a4962bae57b31dcf5df366942026677dfb0c4957",
+          "terrine/compile/shapes/ltv.py": "953aa1227db1879ce9aa6eccf389ecd8595e575aba04035cc05284d256a1ce39",
+          "terrine/compile/shapes/matched_t0.py": "1f2d8729d7044d467ce6670dd9ea937c9df12589b0a59c7fbb7c200cd9d83efe",
+          "terrine/compile/shapes/sequential.py": "e5b129e226f06b1e9b868f604eea512d45788dc239e7d866001b7988ef8a41bf",
+          "terrine/compile/shapes/state_panel.py": "2c9cd3176520b797002033cf8a5be95f2abace8daca03d67c370b52eb99f4afb",
+          "terrine/compile/shapes/time_to_event.py": "3e30a2c18840b4c8d37635a5e5e9df93d98261b64f7733cf2249a2d75541a010",
+          "terrine/data.py": "c795cbd1374964cda5a14de8aa91efe1a6375a24e7191dc368080701c065baca",
+          "terrine/dataset/__init__.py": "1df0ec426dd09b03e00ceb6f58823672b19378aa6bf2eafa15931b8b0b36037e",
+          "terrine/dataset/export.py": "f9a8f788df5288999a1a536e8baad71ae281b3ce1efdac6ad82572e9e05b8162",
+          "terrine/dataset/manifest.py": "c900d84b03e4666e2b37c39e9a664433bb62d73b0025af92ee1f7448aabe1ba2",
+          "terrine/dataset/reference.py": "b681993d61d8115be68b6116cf7bf8111d82524273c5c4fa68ea888b6202d629",
+          "terrine/dataset/splits.py": "83e95f10297ef1a9eb9f00d5ba56e8468d2e2217ebc80e61094469f11d46997d",
+          "terrine/dataset/training.py": "4c1f6dc0eca7d33834eb5309a2cdaccde59e3a70bd568120e712e5488a55c1e4",
+          "terrine/dataset/transforms.py": "87d647a8621dbc88eabcde538ef4da3f0a947e330e61b692af84ed2734518d35",
+          "terrine/errors.py": "c5d5d405282351b6ebaec996386018f2b56b4e4b5bc32939f6cc077dd645d2e3",
+          "terrine/execution/__init__.py": "c60edd1e78fa3e8f7274f46b284f9b2a129598e59b053726389e747cd0a33fbb",
+          "terrine/execution/_bigquery.py": "62f35d314e562336b009cb0dbf779bd56a1575476289defbbf1782ee24be3d39",
+          "terrine/execution/_generic.py": "4dd782b8565678513a28bec3aa1c90126175eb652c25020780797c943888b5c0",
+          "terrine/execution/_metadata.py": "57c70dba861e1af5a2e8878bb2e548269454543e0670e1d28710c18b65ac3fd9",
+          "terrine/execution/_native.py": "f72a332346d68dd3b671520eb2a62cccae794e30482be7ef65dad36791f18a14",
+          "terrine/execution/_postgres.py": "92aa959a39d6cd04d70b896811c65441faf49c8a1d0bacf95c3b222c5840c0d4",
+          "terrine/execution/_publish.py": "d2bc9a2de527247f5591d6db5532d421deb06f3597496f1085ce586fa6ada756",
+          "terrine/execution/_snowflake.py": "d32ac82d572e2d29a3402a4509e49fcb84a13916e4d1ed2aa281f24027b4a331",
+          "terrine/execution/backend.py": "5fbe93eb0e55354f287a3ae7b24e8ca2de6a696ddc06d06ccff969a89cd71a08",
+          "terrine/execution/gates.py": "cc711373869d9f36e512ccc1bc7c67bb840c0e8c24930ba4ee75cb8b849059e9",
+          "terrine/execution/inputs.py": "08552e957cbb7ebf3c820d9895b78ece1cae78af71dbe5209511e0df8b7359cb",
+          "terrine/export/__init__.py": "4d2faf63c84063120502c4845a2c64c7afefc65774c58d5df72ef844800fd718",
+          "terrine/export/diff_diff.py": "384b28e5578fdca8e5d27a360d30a7fd98c79808dbb1a1df59ff743b388e53e6",
+          "terrine/export/lifelines.py": "bec09b8c0a37fedfe16e973e09ab1ec1e7d153ca9ec6df661692528203973d0d",
+          "terrine/export/preflight.py": "9fd8a4192fa8f78c7b1bf3fcc627ea8507bc77015e9630fbdc29d1321f484c44",
+          "terrine/export/surrogate.py": "50c4074624c47f20aaf3837c7e87f87d4d677f4790a5fb4fbcbc833735efe04d",
+          "terrine/frame.py": "0fdca7da35a962f92b4c192d4ef7b9f658ac76853755062bca345b9d0bb1d456",
+          "terrine/metrics.py": "a437c2f45d834b6ce94b5bc62acc8ecf1cfcf9a38c14b771c15bbeb6490c8095",
+          "terrine/model.py": "eff4835e0c7e9d2f4bf4321d4e2927805461276f9d2ea6a48dd370aa7f66e9bc",
+          "terrine/orchestration/__init__.py": "e3040a69502d894447dc1b3826cceab7cb6bf01b0a4d7510658f6e7d72b56733",
+          "terrine/orchestration/airflow.py": "773a983ae6c22fdf8e59a6ddc8aa75e0cd90b821f8b7a89523a2767514c99192",
+          "terrine/orchestration/dagster.py": "1eacc97193189dae2043e04faf532c39ecfb2adf380ae91ad8370ddf4fd7ed19",
+          "terrine/reasons.py": "ecbd0357708fdb37585c4470cc038182156dcf3c2b045e7b14410737b808849b",
+          "terrine/recipes.py": "033396c6d7d33867ca85171c171c6890b0e41c39819730fda924f927d7507751",
+          "terrine/runtime/__init__.py": "8623ccdfd33e24562dd96f744baee50c0a7592ca0c2bb8dbbcdc5e63123e6fbf",
+          "terrine/runtime/api.py": "f1698daf358d15be8d76ed2bc4b5654abf78a5f5c943bb3e7a8125c39996c972",
+          "terrine/runtime/arrow.py": "e18f3a9d5f778cf212dcf271c6d2939807ad8bd0815777945bdb753ef199d98c",
+          "terrine/runtime/backends/base.py": "b5cbaf46560e15fc56c4b3fbb4ed495ff0b828160027e3a399e2be8d3563f268",
+          "terrine/runtime/backends/duckdb.py": "b2e492a6384029fb75a547d3badeba13f7e611947ddf5745e7e0fbec9f3f91c5",
+          "terrine/runtime/changes.py": "556fac4864b9e2048805420e307a261eef44187965244bc7b6270ad54c58d716",
+          "terrine/runtime/cli.py": "c1c23d3d2d786a34cb42e764c723520c204b2302a0011d1e8a9965a7d5e6cfba",
+          "terrine/runtime/control.py": "bbb222ba14d4ed5df6c299908a6d6d135a8abe543d3722b247604bde513d282b",
+          "terrine/runtime/cost.py": "1ebb6c2442db0770ea5e7b34d59feef17c20a9b69d79b7148ed82fa586463415",
+          "terrine/runtime/events.py": "c98dacbdc32adf0b88f1e8c461de252e3e571c4ce1760c687d86908e63808646",
+          "terrine/runtime/execute.py": "f9b55a10b2246e7ec209fd84989886ef9bde9d55d58f827c5c17c792bae88381",
+          "terrine/runtime/gc.py": "706e620bb61141f64b380f38064b68ab8fe50cab3443b3b5355c59c27d51d10f",
+          "terrine/runtime/graph.py": "d28bcbd5a672e138893d7376c1331d9573c34c67319c856732d07ac47251bb41",
+          "terrine/runtime/layers.py": "c73d7abb8e318f4ea4208584b3c63ab29df26788ee9b08276fac866f7dbf8cb5",
+          "terrine/runtime/leases.py": "0fde32275b05752895182b0e9cd19c0f1556717831508771e17b276600d52a00",
+          "terrine/runtime/materialize.py": "7c8e80545ccae8c113a402e73dc9f443175c8faafba9dd8ff6d917e98c994874",
+          "terrine/runtime/owner.py": "ae78ee58e8c0272812bf972f658f6731129d40cc1d6a5e6015afcf934f5933dd",
+          "terrine/runtime/planner.py": "44c3eb569023a989fe5a4d25e1288ae496182becded7fc237e96d6766e82833b",
+          "terrine/runtime/planning.py": "7384c18a3a90261895a96a8bfcab686f27cc3a789254b9b7875fd3dd1ee5290f",
+          "terrine/runtime/saved_plan.py": "e4f2b7c5bb2bd2bbf2f2104f362a2846d21fb0cc0cfb83ccd65aa0b879512d3a",
+          "terrine/runtime/schema.py": "664b59d1481a36c401848168b566885022f2dfc5f2df77934cb4f48837062d11",
+          "terrine/runtime/snapshot.py": "f807c93a8020cec42807e485604dc0c5328600c433c26a158e1aade5b65cba02",
+          "terrine/runtime/state.py": "80c2693cc858a79c798a641cca8419f42c6000b8f8a027830416425a146f7fed",
+          "terrine/runtime/status.py": "7aceba27ecf46ff4d76349894ceeaaa3f08689804d293118e54cf2a80c542ee8",
+          "terrine/runtime/synchronization.py": "bcd27bc8639dc7546ffac6f0503717d253ab048dffdc37428cfc9b75c687d0dc",
+          "terrine/semantic/__init__.py": "f82d342e4c7aa279bf030da88cc4476177abfd7fa8b5714589cc98cbb9506fa4",
+          "terrine/semantic/attributes.py": "0c36ca62e373f957e5863607a6f6a2ff668ca7de27732c2334cd2ff2ffb9e372",
+          "terrine/semantic/bind.py": "8090f2676d21a6f0d4b1d0f1ff1310686c61e3b8e7b61939d3910cdeaa872480",
+          "terrine/semantic/io.py": "af9083a63eed73db53fd29c3b63f23653a3338866b958abbf03e66fe3889be05",
+          "terrine/semantic/models.py": "e4d6d04c80ee55e4f96be5f2b4451f8312ee64874d4d61ebcde4b255554c000e",
+          "terrine/semantic/predicates.py": "0b2d5f159d69f4f7f004d4940b2a2294ecd3cdb106f462398141b3372d59f869",
+          "terrine/semantic/rules.py": "01144d71fd7d996cc518117fa95a23010acd192dda1ce535fb2c6ce2c981df71",
+          "terrine/semantic/sql.py": "58c1ef8db7c8adc2305ead4008193b9ba4f29830b4e06a678c8e19811499137a",
+          "terrine/semantic/time.py": "9b160c7e15b72efc8d7e1c4f15165c9e1b1d6167848d9117e33e8f1237a84141",
+          "terrine/simulate/__init__.py": "1f9d9526be12789066f04ba6003299ae07e2cfad4ae543bca80cdb2cd240d27b",
+          "terrine/simulate/generate.py": "cf7308a49f4dc563bab18b16f5e941e4731cf80d3763381a2c5f5ec738b8a8e2",
+          "terrine/simulate/scale.py": "d414b7b219af68df6a3246c79cb944afe609e5412481cc71418392565f4d1cb7",
+          "terrine/simulate/world.py": "6168333aea5036fd37ced78ed75f55c7274e4eafe8b7a264a55b1d2b4398fdb5",
+          "terrine/spec/__init__.py": "2a5713ade884976f36377a9f138230452a98aebfcf455e43b7c007c7f3d8551f",
+          "terrine/spec/_columns.py": "4f4ef4214ecd7b416632a66265f47d61222cbfa6c39b29f3fc7f7c1552dc737f",
+          "terrine/spec/anchors.py": "9945fc1d8b32b8b930c898084233e4483fc2a89d81dd2c80f1630a94235b3ef5",
+          "terrine/spec/dataset.py": "8f2b71fd7c18ebf5bd83fa2cbfec676419b1be3a01918bdd054a4582ec630f60",
+          "terrine/spec/describe.py": "5be693f810db5bcbb92be701bf89bd1b92849c982e8298c9b2987585de560b25",
+          "terrine/spec/design.py": "b9b301dae9a63af9d04aa2a533c0513ea61e18879c392f58b1e35b387f15c2e1",
+          "terrine/spec/expressions.py": "ba76196582dd16bb30f77d0243818b35116c02a6ff908cb4526bc9235c6ef2ca",
+          "terrine/spec/io.py": "767aec9abb96c55f0db6d76d50614022961695c9797ec1eaf39045f4355af4c5",
+          "terrine/spec/panels.py": "2060267bfa5679fe4469dda410ab776a855846ddaf57b0ee0f6168578c7eba1c",
+          "terrine/spec/sequence.py": "629686760605eff3eb4bbf511f570160d7aa8f990c1b9874c9396e4345835014",
+          "terrine/spec/state_panel.py": "24189074fa05c230437aae79ead735a7fcbdeb7d45473f56f8194c5ba3f5a822",
+          "terrine/spec/trajectory.py": "ba289923342873f1f9634111f53e3f3a24516ac4c4e7557c9d50e6a481bb7bd0",
+          "terrine/spec/transforms.py": "a2d8823c4fafcb77da98d066add77222a4107dd63562c22d05560f6e1d50644f",
+          "terrine/spec/validate.py": "c5eb4aa8078a772fc4f8a0ca78e59e748a6ad8ac7d7287c23eec8ca404e61575",
+          "terrine/temporal/__init__.py": "b604f05db900b88794c3dc412106ff264868fba5ff5ce184dc510c39e7186889",
+          "terrine/temporal/aggregate.py": "efeebfb929687b3ffb8888051b12665ca125b58904d47339ee4d804d5dc73f93",
+          "terrine/temporal/attributes.py": "60973384b9ac6cc314c5669093af296f67d097cf599ab2b38121c269e52301e5",
+          "terrine/temporal/daily.py": "1083cadbd0840c93aa13618fd9d19dd4903c66b59b3b2f93ff53b1f8a52734a1",
+          "terrine/temporal/first.py": "a595d7dffaa516a87bc419a3ce844bf6505f69f10b109f00660bd7d462b3f975",
+          "terrine/temporal/nonadditive.py": "6d81a595349b5b6e087c8eddc8ef2f64966cebd2a5f043b8325aa26ea96b3b85",
+          "terrine/temporal/ranges.py": "1827c590993453c1c0c2f270a3477b2822c4018f5217ecd7711ff7ea009e95a3",
+          "terrine/temporal/readiness.py": "ee72c776662585c3d30a7c17c4bb96258485d829fbb902bbe4debff67e974cd9",
+          "terrine/temporal/retention.py": "88cac89a91f98a8211129a24d36412dcb74f724b128391acd50c4e021d7d2b7e",
+          "terrine/temporal/sequence.py": "776053ade7615933e87802da9e1a10170b6df0d66aa0f3bf461a6d5d95050f13",
+          "terrine/temporal/sessionize.py": "0fae4ea70351a1916f2234b4177ceda4329f20f2655ef633577b12e00a04edc1",
+          "terrine/temporal/sketches.py": "22e883280cd352c4fbee75634b4695e253e37260d9b077302590199856d03fe5",
+          "terrine/windows.py": "c9ddde492eca63d532c0228649abc1918191687ee45ec4853386c1472b45835d"
+        }
+      },
+      "input_tables": {
+        "customers": {
+          "rows": 3,
+          "schema": "customer_id: string",
+          "arrow_stream_sha256": "21d4a7178c5f13b0b082c5cbeb197a61c7e107ee7fe69c5c0b04564944430921"
+        },
+        "orders": {
+          "rows": 5,
+          "schema": "customer_id: string\nordered_at: timestamp[us]\namount: double",
+          "arrow_stream_sha256": "01c2e04822225d9ffdf5adc379e80608aeb7690f1a6815bbfb0be1e4a5fa54b7"
+        }
+      },
+      "arrow_schema": "unit: string\nt0: timestamp[us, tz=UTC]\norders_30d: int64\norders_30d__complete: bool\norders_30d__reason: string\nspend_30d: double\nspend_30d__complete: bool\nspend_30d__reason: string\nspend_next_30d: double\nspend_next_30d__complete: bool\nspend_next_30d__reason: string",
+      "compared_columns": [
+        "unit",
+        "t0",
+        "orders_30d",
+        "orders_30d__complete",
+        "orders_30d__reason",
+        "spend_30d",
+        "spend_30d__complete",
+        "spend_30d__reason",
+        "spend_next_30d",
+        "spend_next_30d__complete",
+        "spend_next_30d__reason"
+      ],
+      "public_columns": 21,
+      "result_parity_each_sample": true,
+      "schema_parity_each_sample": true,
+      "corruption_controls": {
+        "schedule": "once_per_case_before_repeat_loop",
+        "all_four_rejected": true,
+        "controls": [
+          "missing",
+          "duplicate",
+          "changed_value",
+          "changed_type"
+        ]
+      },
+      "timings": {
+        "handwritten": {
+          "samples_seconds": [
+            0.002743624849244952,
+            0.0024812081828713417,
+            0.0025629170704632998,
+            0.002004625042900443,
+            0.0025794580578804016
+          ],
+          "median_seconds": 0.0025629170704632998,
+          "minimum_seconds": 0.002004625042900443,
+          "maximum_seconds": 0.002743624849244952
+        },
+        "terrine_precompiled": {
+          "samples_seconds": [
+            0.008865542011335492,
+            0.009082499891519547,
+            0.008788833161816001,
+            0.007894458016380668,
+            0.009091583080589771
+          ],
+          "median_seconds": 0.008865542011335492,
+          "minimum_seconds": 0.007894458016380668,
+          "maximum_seconds": 0.009091583080589771
+        },
+        "terrine_public": {
+          "samples_seconds": [
+            0.32146445801481605,
+            0.3121894591022283,
+            0.30390783306211233,
+            0.2967525830026716,
+            0.28963754093274474
+          ],
+          "median_seconds": 0.30390783306211233,
+          "minimum_seconds": 0.28963754093274474,
+          "maximum_seconds": 0.32146445801481605
+        }
+      },
+      "build_seconds": 0.06478462484665215,
+      "projected_compile_seconds": 0.07466541696339846,
+      "sql": {
+        "handwritten": {
+          "submitted_bytes": 1620,
+          "submitted_lines": 32,
+          "compact_bytes": 1605,
+          "formatted_bytes": 1777
+        },
+        "terrine_projected": {
+          "submitted_bytes": 13649,
+          "submitted_lines": 1,
+          "compact_bytes": 13649,
+          "formatted_bytes": 19793
+        },
+        "terrine_full_expression": {
+          "submitted_bytes": 13970,
+          "submitted_lines": 1,
+          "compact_bytes": 13970,
+          "formatted_bytes": 19522
+        }
+      },
+      "public_study_sql": {
+        "statements": 3,
+        "bytes": 37299,
+        "excludes": "metadata/admission probes, transaction control and catalog introspection"
+      },
+      "query_ratio_to_literal": 3.45916070149428,
+      "public_ratio_to_literal": 118.57887895185573,
+      "three_times_waypoint_met": false,
+      "remaining_time_fraction_to_one_times": 0.7109125344861769,
+      "baseline": {
+        "medians_seconds": {
+          "handwritten": 0.0024035838432610035,
+          "terrine_precompiled": 0.03712062491104007,
+          "terrine_public": 0.4750557499937713
+        },
+        "ranges_seconds": {
+          "handwritten": [
+            0.002179624978452921,
+            0.0026856670156121254
+          ],
+          "terrine_precompiled": [
+            0.03651549993082881,
+            0.04005779093131423
+          ],
+          "terrine_public": [
+            0.4615419169422239,
+            0.5001463750377297
+          ]
+        },
+        "build_seconds": 0.10464145801961422,
+        "projected_compile_seconds": 0.06941533298231661,
+        "sql": {
+          "handwritten": {
+            "submitted_bytes": 1620,
+            "submitted_lines": 32,
+            "compact_bytes": 1605,
+            "formatted_bytes": 1777
+          },
+          "terrine_projected": {
+            "submitted_bytes": 42502,
+            "submitted_lines": 1,
+            "compact_bytes": 42502,
+            "formatted_bytes": 90060
+          },
+          "terrine_full_expression": {
+            "submitted_bytes": 42823,
+            "submitted_lines": 1,
+            "compact_bytes": 42823,
+            "formatted_bytes": 89269
+          }
+        },
+        "public_study_sql": {
+          "statements": 3,
+          "bytes": 97005,
+          "excludes": "metadata/admission probes, transaction control and catalog introspection"
+        }
+      },
+      "baseline_to_final_speedup": {
+        "handwritten": 0.9378312981568718,
+        "terrine_precompiled": 4.18706773523577,
+        "terrine_public": 1.5631573072902005
+      }
+    },
+    "scaled": {
+      "directory": "benchmarks/results/compact-sql-task7-20261109-scaled",
+      "file_sha256": {
+        "environment.json": "fe5055e745f4953b913fdb9e96c9cc390ceb4d9da33b4749d0309717cfbc7cca",
+        "handwritten.sql": "9fdfc1319ab7bcf9a3862ea1b3a433b6dc310529259a0cdeebaa8aa30a1eede8",
+        "public-study-statement-0.sql": "f65b6ce2fed90cd3ec3328a21fc55424534c16e793dfc27f51b665bc1a8c78f6",
+        "public-study-statement-1.sql": "119c43cb3904a6a45a41130fd006157b48bf752a249b24e2f041aefd0b85e679",
+        "public-study-statement-2.sql": "8e8493a043405b7b39b55c4a0a64fc92a01730833801339f8ea64269dcad08f2",
+        "result.json": "39606b229c8854a3561cb208c0835e6a1b361a6f204f636da2ec94dc9f8c6eb9",
+        "terrine-full-expression.sql": "673ae080c2228e19fb9772132b77bedeb074b8e11dc433142a4ef642eabcf13c",
+        "terrine-projected.sql": "3c5031ceaaaa8ecf036e05a0d22d59e046c2ecc8c4b7b5c47b2788c8de3a8c14"
+      },
+      "source_hashes_verified": 155,
+      "environment": {
+        "repository_revision": "24e057377953b11828035a20bfe44e1b3805f058",
+        "production_revision": "24e057377953b11828035a20bfe44e1b3805f058",
+        "python": "3.12.11",
+        "duckdb": "1.5.6",
+        "ibis": "12.0.0",
+        "pyarrow": "23.0.1",
+        "threads": 1,
+        "argv": {
+          "case": "scaled",
+          "units": 10000,
+          "events_per_unit": 30,
+          "repeats": 5,
+          "output": "benchmarks/results/compact-sql-task7-20261109-scaled",
+          "diagnostics": false,
+          "profile": false
+        },
+        "source_sha256": {
+          "benchmarks/compare_sql.py": "6bf68e1d6ed5a296f086a6394dd9ec554ce78b54256666b37fbc08bdbff7c00f",
+          "tests/fixtures/readme.py": "45d90980df334146fe70b7c74d7b642a2b574e614f0a89858ca7529768e3ed90",
+          "benchmarks/workloads.py": "5fb426e313d601f135279d5010c55a5e3bc518bce3c548f4096c7943c704e3c7",
+          "benchmarks/query_strategy_spike.py": "c6599d83142b8b6b51b879212f1439cdbb6761a4eee36a803d86f4feebd96515",
+          "benchmarks/run_overhead.py": "7a64bb9547e5f645a432b858cfb301b964d592f15abd7f084120f7bd4c1302dd",
+          "terrine/__init__.py": "621c94aa653bb7cc96efa74c0808b07f70d35336919634757555a95217974493",
+          "terrine/_refusal_codes.py": "509402a0f624a4f1116530d256fc946692dae910a3777206718563522a56d646",
+          "terrine/_time.py": "4502d45fd4cc13488fc969949337ef830deb95876767c1026a0355d2094bc09b",
+          "terrine/adapters/__init__.py": "166ce6f480e40dc5fe0bc8282816b160637a2f7be3318e2b72baae43a6b0681f",
+          "terrine/adapters/increment.py": "5308c7666ae0697749ea57dbc0dc880c1f9f3060393c938fbc746bf47c0b31d2",
+          "terrine/adapters/opentelemetry.py": "3cac5672f1ed06604603cd64dd6337495abe2e2b8c33be7c6dba6d6729c18b53",
+          "terrine/agent/__init__.py": "4eef129a831db2b72b18efea7e9942d29346c45670b5b6f494ae3ade4ed9cb12",
+          "terrine/agent/definitions.py": "d4e78cec945e4ae42ba39661f5c949792bba3b2fc113b56dc96f07d161652335",
+          "terrine/agent/design_schema.py": "c70f762067045f6f899a4f979f244b6c2efae1605149792623ab7198daeb8653",
+          "terrine/agent/policy.py": "ddeb2331a66a5e7f55017013163241a8001e6801ef2215bf627e4c01460fb9e8",
+          "terrine/agent/schemas.py": "0fed9522af845286e5f88ee2e4a51f7dc0c852d5de7a29ebe3ca62d895fb9d9a",
+          "terrine/agent/tools.py": "7c6f893e19139499891cb3ae5eeed03ad2c78a40209eca822a3dad1e026625ac",
+          "terrine/backends/__init__.py": "15fdb783d20fc387301943ba5d6ee8c32535518098ad03c3e074b42ebbfbed1f",
+          "terrine/backends/capabilities.py": "7f8e4f2b43fab5fbe8f9e9c85d57a35859449c282baf0ae2e8c0e8eac20982c4",
+          "terrine/backends/dialect.py": "7b42da8e321e7e895be4478449f417412bcca2aa4bdc62713c2c428501db78ba",
+          "terrine/backends/engines/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "terrine/backends/engines/bigquery.py": "cf73f6f8eaaa2878034a7648fb947c5ee976b8cd68f242a20a12e9972fe1a5c1",
+          "terrine/backends/engines/duckdb.py": "81d7e3c9c10bfdd048b83e293817da5111958ffc7e01eeae911474e0f433f734",
+          "terrine/backends/engines/postgres.py": "e22ef7a818e10f43326b04b0676c86ad61afbab75316b8e6bd07e0456cd982c1",
+          "terrine/backends/engines/snowflake.py": "2dce3820a5a7d2c1631a4d2e6956b9e3b2d03322c20a2f637087aed6ae9fb5d9",
+          "terrine/backends/extrema.py": "9e9b3e5cab4d1a47fdae408818002918e2fbc25bda7ca27c7cc9bc4f29ec24a7",
+          "terrine/backends/joins.py": "e07e7c893e98416612a3070d0c9c74fbe9797733f0a1ebbf826a1a5f601d1691",
+          "terrine/backends/numeric.py": "b4436fe54e582ef7df16960b77e22711467aea5c81a9a8788caa7c8a78f930bc",
+          "terrine/backends/registry.py": "57cd46fb9caf3f3edeb53e1112cdfa544d4c977f3c102a86d881ef28bbc7cd40",
+          "terrine/backends/sequences.py": "97f8591d8b3bb6de9118697a9806408e38ea56b864bf925dc23a28a4359cc82b",
+          "terrine/backends/timestamps.py": "1b99a5eb757e3d4c8e7605e2bf159ebbd4672b949a1b361ad4087e3a4f36d762",
+          "terrine/compile/__init__.py": "49cd60544571f24bf952adc123263b95d53adaee1a07c63379d36ec14498c89d",
+          "terrine/compile/_asof.py": "63450c8f372cb3e79729fa861fdb6a67e0eb94c9410c63c1bff8417fc0276e51",
+          "terrine/compile/_predicates.py": "d828e95064646d9b4980ed917d09b4e7bcb7e69b82cf1f2a25003104ac1093cd",
+          "terrine/compile/anchors.py": "03841e459347e5c7104c258b98bcbe2b204f5cb97a8c1c440d1a13387142479c",
+          "terrine/compile/columns.py": "d02c806717476724bc203075c7279dcb7faf6b111f66fa031d6df6cbf28a2b10",
+          "terrine/compile/cost.py": "91c184b8907eb864f470c7d805f34a644dfe4d0416762ccbb4bb49f992341603",
+          "terrine/compile/dispatch.py": "cd5d008b626495b01752a7bbd0329dd0254c300512dcdc93546a3500c3c05c5b",
+          "terrine/compile/layers.py": "25d733899145d80dfd68902c62d582e0ebca6dff0e3759f91525768751f6fee1",
+          "terrine/compile/materialize.py": "d087d5b2d4546b3ef7889736f8efaf59def2ab0b3a3db123a5560ba52d8bd678",
+          "terrine/compile/numeric.py": "4ed994153d7ec59271da92226b75805658f44f7e7c0da6d9827df2c07cf32046",
+          "terrine/compile/provenance.py": "1ff1c2a184288015b2249dd7449be7877482ca9dca61655bc570284bf311be68",
+          "terrine/compile/prune.py": "ec963f01e29a83f7a37683ee8961cb1e92ebae89f3833cbfbb8d941131b5d0e6",
+          "terrine/compile/ranges.py": "22d198843db2e1cc3bc5bb10eb3e039314181c770240276ecd5184294bbe3622",
+          "terrine/compile/retention.py": "c2def5eda534d1b2d3be919be75d7ba5d794e2d9e89279a4324a02120615ddd0",
+          "terrine/compile/shapes/__init__.py": "4099f247f459c219e63dfd70261cd87ecbd335ac71bc7b9c472fc4b03f0f950f",
+          "terrine/compile/shapes/_observations.py": "4c9e04b906f3ca6b22508d8420574e028c51ce987b8e15c7242b439c703a8213",
+          "terrine/compile/shapes/calendar_comparison.py": "a45cd2797968611a0f251736529a2ddd780cf5d2970f9cc8cf067652dc36b983",
+          "terrine/compile/shapes/cohorts.py": "c79a09f8cc1fe228b86573e9b079243ab2309f3cae4fd967be9a2dcc4a2a5eef",
+          "terrine/compile/shapes/event_panel.py": "fb763729a724c0b33b5c89caf59675867581a3da8a1f8cf16ff76a424a088f23",
+          "terrine/compile/shapes/event_sequence.py": "fda5edfed3a81c354625665f5d32d9af53279400eaf51ac9ba24d79440d0c3b2",
+          "terrine/compile/shapes/life_table.py": "fe99ed7440136a95d855ca51a4962bae57b31dcf5df366942026677dfb0c4957",
+          "terrine/compile/shapes/ltv.py": "953aa1227db1879ce9aa6eccf389ecd8595e575aba04035cc05284d256a1ce39",
+          "terrine/compile/shapes/matched_t0.py": "1f2d8729d7044d467ce6670dd9ea937c9df12589b0a59c7fbb7c200cd9d83efe",
+          "terrine/compile/shapes/sequential.py": "e5b129e226f06b1e9b868f604eea512d45788dc239e7d866001b7988ef8a41bf",
+          "terrine/compile/shapes/state_panel.py": "2c9cd3176520b797002033cf8a5be95f2abace8daca03d67c370b52eb99f4afb",
+          "terrine/compile/shapes/time_to_event.py": "3e30a2c18840b4c8d37635a5e5e9df93d98261b64f7733cf2249a2d75541a010",
+          "terrine/data.py": "c795cbd1374964cda5a14de8aa91efe1a6375a24e7191dc368080701c065baca",
+          "terrine/dataset/__init__.py": "1df0ec426dd09b03e00ceb6f58823672b19378aa6bf2eafa15931b8b0b36037e",
+          "terrine/dataset/export.py": "f9a8f788df5288999a1a536e8baad71ae281b3ce1efdac6ad82572e9e05b8162",
+          "terrine/dataset/manifest.py": "c900d84b03e4666e2b37c39e9a664433bb62d73b0025af92ee1f7448aabe1ba2",
+          "terrine/dataset/reference.py": "b681993d61d8115be68b6116cf7bf8111d82524273c5c4fa68ea888b6202d629",
+          "terrine/dataset/splits.py": "83e95f10297ef1a9eb9f00d5ba56e8468d2e2217ebc80e61094469f11d46997d",
+          "terrine/dataset/training.py": "4c1f6dc0eca7d33834eb5309a2cdaccde59e3a70bd568120e712e5488a55c1e4",
+          "terrine/dataset/transforms.py": "87d647a8621dbc88eabcde538ef4da3f0a947e330e61b692af84ed2734518d35",
+          "terrine/errors.py": "c5d5d405282351b6ebaec996386018f2b56b4e4b5bc32939f6cc077dd645d2e3",
+          "terrine/execution/__init__.py": "c60edd1e78fa3e8f7274f46b284f9b2a129598e59b053726389e747cd0a33fbb",
+          "terrine/execution/_bigquery.py": "62f35d314e562336b009cb0dbf779bd56a1575476289defbbf1782ee24be3d39",
+          "terrine/execution/_generic.py": "4dd782b8565678513a28bec3aa1c90126175eb652c25020780797c943888b5c0",
+          "terrine/execution/_metadata.py": "57c70dba861e1af5a2e8878bb2e548269454543e0670e1d28710c18b65ac3fd9",
+          "terrine/execution/_native.py": "f72a332346d68dd3b671520eb2a62cccae794e30482be7ef65dad36791f18a14",
+          "terrine/execution/_postgres.py": "92aa959a39d6cd04d70b896811c65441faf49c8a1d0bacf95c3b222c5840c0d4",
+          "terrine/execution/_publish.py": "d2bc9a2de527247f5591d6db5532d421deb06f3597496f1085ce586fa6ada756",
+          "terrine/execution/_snowflake.py": "d32ac82d572e2d29a3402a4509e49fcb84a13916e4d1ed2aa281f24027b4a331",
+          "terrine/execution/backend.py": "5fbe93eb0e55354f287a3ae7b24e8ca2de6a696ddc06d06ccff969a89cd71a08",
+          "terrine/execution/gates.py": "cc711373869d9f36e512ccc1bc7c67bb840c0e8c24930ba4ee75cb8b849059e9",
+          "terrine/execution/inputs.py": "08552e957cbb7ebf3c820d9895b78ece1cae78af71dbe5209511e0df8b7359cb",
+          "terrine/export/__init__.py": "4d2faf63c84063120502c4845a2c64c7afefc65774c58d5df72ef844800fd718",
+          "terrine/export/diff_diff.py": "384b28e5578fdca8e5d27a360d30a7fd98c79808dbb1a1df59ff743b388e53e6",
+          "terrine/export/lifelines.py": "bec09b8c0a37fedfe16e973e09ab1ec1e7d153ca9ec6df661692528203973d0d",
+          "terrine/export/preflight.py": "9fd8a4192fa8f78c7b1bf3fcc627ea8507bc77015e9630fbdc29d1321f484c44",
+          "terrine/export/surrogate.py": "50c4074624c47f20aaf3837c7e87f87d4d677f4790a5fb4fbcbc833735efe04d",
+          "terrine/frame.py": "0fdca7da35a962f92b4c192d4ef7b9f658ac76853755062bca345b9d0bb1d456",
+          "terrine/metrics.py": "a437c2f45d834b6ce94b5bc62acc8ecf1cfcf9a38c14b771c15bbeb6490c8095",
+          "terrine/model.py": "eff4835e0c7e9d2f4bf4321d4e2927805461276f9d2ea6a48dd370aa7f66e9bc",
+          "terrine/orchestration/__init__.py": "e3040a69502d894447dc1b3826cceab7cb6bf01b0a4d7510658f6e7d72b56733",
+          "terrine/orchestration/airflow.py": "773a983ae6c22fdf8e59a6ddc8aa75e0cd90b821f8b7a89523a2767514c99192",
+          "terrine/orchestration/dagster.py": "1eacc97193189dae2043e04faf532c39ecfb2adf380ae91ad8370ddf4fd7ed19",
+          "terrine/reasons.py": "ecbd0357708fdb37585c4470cc038182156dcf3c2b045e7b14410737b808849b",
+          "terrine/recipes.py": "033396c6d7d33867ca85171c171c6890b0e41c39819730fda924f927d7507751",
+          "terrine/runtime/__init__.py": "8623ccdfd33e24562dd96f744baee50c0a7592ca0c2bb8dbbcdc5e63123e6fbf",
+          "terrine/runtime/api.py": "f1698daf358d15be8d76ed2bc4b5654abf78a5f5c943bb3e7a8125c39996c972",
+          "terrine/runtime/arrow.py": "e18f3a9d5f778cf212dcf271c6d2939807ad8bd0815777945bdb753ef199d98c",
+          "terrine/runtime/backends/base.py": "b5cbaf46560e15fc56c4b3fbb4ed495ff0b828160027e3a399e2be8d3563f268",
+          "terrine/runtime/backends/duckdb.py": "b2e492a6384029fb75a547d3badeba13f7e611947ddf5745e7e0fbec9f3f91c5",
+          "terrine/runtime/changes.py": "556fac4864b9e2048805420e307a261eef44187965244bc7b6270ad54c58d716",
+          "terrine/runtime/cli.py": "c1c23d3d2d786a34cb42e764c723520c204b2302a0011d1e8a9965a7d5e6cfba",
+          "terrine/runtime/control.py": "bbb222ba14d4ed5df6c299908a6d6d135a8abe543d3722b247604bde513d282b",
+          "terrine/runtime/cost.py": "1ebb6c2442db0770ea5e7b34d59feef17c20a9b69d79b7148ed82fa586463415",
+          "terrine/runtime/events.py": "c98dacbdc32adf0b88f1e8c461de252e3e571c4ce1760c687d86908e63808646",
+          "terrine/runtime/execute.py": "f9b55a10b2246e7ec209fd84989886ef9bde9d55d58f827c5c17c792bae88381",
+          "terrine/runtime/gc.py": "706e620bb61141f64b380f38064b68ab8fe50cab3443b3b5355c59c27d51d10f",
+          "terrine/runtime/graph.py": "d28bcbd5a672e138893d7376c1331d9573c34c67319c856732d07ac47251bb41",
+          "terrine/runtime/layers.py": "c73d7abb8e318f4ea4208584b3c63ab29df26788ee9b08276fac866f7dbf8cb5",
+          "terrine/runtime/leases.py": "0fde32275b05752895182b0e9cd19c0f1556717831508771e17b276600d52a00",
+          "terrine/runtime/materialize.py": "7c8e80545ccae8c113a402e73dc9f443175c8faafba9dd8ff6d917e98c994874",
+          "terrine/runtime/owner.py": "ae78ee58e8c0272812bf972f658f6731129d40cc1d6a5e6015afcf934f5933dd",
+          "terrine/runtime/planner.py": "44c3eb569023a989fe5a4d25e1288ae496182becded7fc237e96d6766e82833b",
+          "terrine/runtime/planning.py": "7384c18a3a90261895a96a8bfcab686f27cc3a789254b9b7875fd3dd1ee5290f",
+          "terrine/runtime/saved_plan.py": "e4f2b7c5bb2bd2bbf2f2104f362a2846d21fb0cc0cfb83ccd65aa0b879512d3a",
+          "terrine/runtime/schema.py": "664b59d1481a36c401848168b566885022f2dfc5f2df77934cb4f48837062d11",
+          "terrine/runtime/snapshot.py": "f807c93a8020cec42807e485604dc0c5328600c433c26a158e1aade5b65cba02",
+          "terrine/runtime/state.py": "80c2693cc858a79c798a641cca8419f42c6000b8f8a027830416425a146f7fed",
+          "terrine/runtime/status.py": "7aceba27ecf46ff4d76349894ceeaaa3f08689804d293118e54cf2a80c542ee8",
+          "terrine/runtime/synchronization.py": "bcd27bc8639dc7546ffac6f0503717d253ab048dffdc37428cfc9b75c687d0dc",
+          "terrine/semantic/__init__.py": "f82d342e4c7aa279bf030da88cc4476177abfd7fa8b5714589cc98cbb9506fa4",
+          "terrine/semantic/attributes.py": "0c36ca62e373f957e5863607a6f6a2ff668ca7de27732c2334cd2ff2ffb9e372",
+          "terrine/semantic/bind.py": "8090f2676d21a6f0d4b1d0f1ff1310686c61e3b8e7b61939d3910cdeaa872480",
+          "terrine/semantic/io.py": "af9083a63eed73db53fd29c3b63f23653a3338866b958abbf03e66fe3889be05",
+          "terrine/semantic/models.py": "e4d6d04c80ee55e4f96be5f2b4451f8312ee64874d4d61ebcde4b255554c000e",
+          "terrine/semantic/predicates.py": "0b2d5f159d69f4f7f004d4940b2a2294ecd3cdb106f462398141b3372d59f869",
+          "terrine/semantic/rules.py": "01144d71fd7d996cc518117fa95a23010acd192dda1ce535fb2c6ce2c981df71",
+          "terrine/semantic/sql.py": "58c1ef8db7c8adc2305ead4008193b9ba4f29830b4e06a678c8e19811499137a",
+          "terrine/semantic/time.py": "9b160c7e15b72efc8d7e1c4f15165c9e1b1d6167848d9117e33e8f1237a84141",
+          "terrine/simulate/__init__.py": "1f9d9526be12789066f04ba6003299ae07e2cfad4ae543bca80cdb2cd240d27b",
+          "terrine/simulate/generate.py": "cf7308a49f4dc563bab18b16f5e941e4731cf80d3763381a2c5f5ec738b8a8e2",
+          "terrine/simulate/scale.py": "d414b7b219af68df6a3246c79cb944afe609e5412481cc71418392565f4d1cb7",
+          "terrine/simulate/world.py": "6168333aea5036fd37ced78ed75f55c7274e4eafe8b7a264a55b1d2b4398fdb5",
+          "terrine/spec/__init__.py": "2a5713ade884976f36377a9f138230452a98aebfcf455e43b7c007c7f3d8551f",
+          "terrine/spec/_columns.py": "4f4ef4214ecd7b416632a66265f47d61222cbfa6c39b29f3fc7f7c1552dc737f",
+          "terrine/spec/anchors.py": "9945fc1d8b32b8b930c898084233e4483fc2a89d81dd2c80f1630a94235b3ef5",
+          "terrine/spec/dataset.py": "8f2b71fd7c18ebf5bd83fa2cbfec676419b1be3a01918bdd054a4582ec630f60",
+          "terrine/spec/describe.py": "5be693f810db5bcbb92be701bf89bd1b92849c982e8298c9b2987585de560b25",
+          "terrine/spec/design.py": "b9b301dae9a63af9d04aa2a533c0513ea61e18879c392f58b1e35b387f15c2e1",
+          "terrine/spec/expressions.py": "ba76196582dd16bb30f77d0243818b35116c02a6ff908cb4526bc9235c6ef2ca",
+          "terrine/spec/io.py": "767aec9abb96c55f0db6d76d50614022961695c9797ec1eaf39045f4355af4c5",
+          "terrine/spec/panels.py": "2060267bfa5679fe4469dda410ab776a855846ddaf57b0ee0f6168578c7eba1c",
+          "terrine/spec/sequence.py": "629686760605eff3eb4bbf511f570160d7aa8f990c1b9874c9396e4345835014",
+          "terrine/spec/state_panel.py": "24189074fa05c230437aae79ead735a7fcbdeb7d45473f56f8194c5ba3f5a822",
+          "terrine/spec/trajectory.py": "ba289923342873f1f9634111f53e3f3a24516ac4c4e7557c9d50e6a481bb7bd0",
+          "terrine/spec/transforms.py": "a2d8823c4fafcb77da98d066add77222a4107dd63562c22d05560f6e1d50644f",
+          "terrine/spec/validate.py": "c5eb4aa8078a772fc4f8a0ca78e59e748a6ad8ac7d7287c23eec8ca404e61575",
+          "terrine/temporal/__init__.py": "b604f05db900b88794c3dc412106ff264868fba5ff5ce184dc510c39e7186889",
+          "terrine/temporal/aggregate.py": "efeebfb929687b3ffb8888051b12665ca125b58904d47339ee4d804d5dc73f93",
+          "terrine/temporal/attributes.py": "60973384b9ac6cc314c5669093af296f67d097cf599ab2b38121c269e52301e5",
+          "terrine/temporal/daily.py": "1083cadbd0840c93aa13618fd9d19dd4903c66b59b3b2f93ff53b1f8a52734a1",
+          "terrine/temporal/first.py": "a595d7dffaa516a87bc419a3ce844bf6505f69f10b109f00660bd7d462b3f975",
+          "terrine/temporal/nonadditive.py": "6d81a595349b5b6e087c8eddc8ef2f64966cebd2a5f043b8325aa26ea96b3b85",
+          "terrine/temporal/ranges.py": "1827c590993453c1c0c2f270a3477b2822c4018f5217ecd7711ff7ea009e95a3",
+          "terrine/temporal/readiness.py": "ee72c776662585c3d30a7c17c4bb96258485d829fbb902bbe4debff67e974cd9",
+          "terrine/temporal/retention.py": "88cac89a91f98a8211129a24d36412dcb74f724b128391acd50c4e021d7d2b7e",
+          "terrine/temporal/sequence.py": "776053ade7615933e87802da9e1a10170b6df0d66aa0f3bf461a6d5d95050f13",
+          "terrine/temporal/sessionize.py": "0fae4ea70351a1916f2234b4177ceda4329f20f2655ef633577b12e00a04edc1",
+          "terrine/temporal/sketches.py": "22e883280cd352c4fbee75634b4695e253e37260d9b077302590199856d03fe5",
+          "terrine/windows.py": "c9ddde492eca63d532c0228649abc1918191687ee45ec4853386c1472b45835d"
+        }
+      },
+      "input_tables": {
+        "customers": {
+          "rows": 10000,
+          "schema": "customer_id: string",
+          "arrow_stream_sha256": "34d0bf8e1a7b7087e0c7dcd465aed34a0649ad9595006f65eec405112df261fc"
+        },
+        "orders": {
+          "rows": 300000,
+          "schema": "customer_id: string\nordered_at: timestamp[us, tz=UTC]\namount: double",
+          "arrow_stream_sha256": "ab0c45d67eb5a4ebf95f80dec696fa94431f56c6b17224e3a57a8926acf91694"
+        }
+      },
+      "arrow_schema": "unit: string\nt0: timestamp[us, tz=UTC]\norders_30d: int64\norders_30d__complete: bool\norders_30d__reason: string\nspend_30d: double\nspend_30d__complete: bool\nspend_30d__reason: string\nspend_next_30d: double\nspend_next_30d__complete: bool\nspend_next_30d__reason: string",
+      "compared_columns": [
+        "unit",
+        "t0",
+        "orders_30d",
+        "orders_30d__complete",
+        "orders_30d__reason",
+        "spend_30d",
+        "spend_30d__complete",
+        "spend_30d__reason",
+        "spend_next_30d",
+        "spend_next_30d__complete",
+        "spend_next_30d__reason"
+      ],
+      "public_columns": 21,
+      "result_parity_each_sample": true,
+      "schema_parity_each_sample": true,
+      "corruption_controls": {
+        "schedule": "once_per_case_before_repeat_loop",
+        "all_four_rejected": true,
+        "controls": [
+          "missing",
+          "duplicate",
+          "changed_value",
+          "changed_type"
+        ]
+      },
+      "timings": {
+        "handwritten": {
+          "samples_seconds": [
+            0.025840458925813437,
+            0.026216250145807862,
+            0.026634667068719864,
+            0.0259854169562459,
+            0.02693387516774237
+          ],
+          "median_seconds": 0.026216250145807862,
+          "minimum_seconds": 0.025840458925813437,
+          "maximum_seconds": 0.02693387516774237
+        },
+        "terrine_precompiled": {
+          "samples_seconds": [
+            0.11418875004164875,
+            0.11798179196193814,
+            0.12205099989660084,
+            0.11426829197444022,
+            0.1156554170884192
+          ],
+          "median_seconds": 0.1156554170884192,
+          "minimum_seconds": 0.11418875004164875,
+          "maximum_seconds": 0.12205099989660084
+        },
+        "terrine_public": {
+          "samples_seconds": [
+            0.5005017910152674,
+            0.5052802909631282,
+            0.5148490408901125,
+            0.49821070791222155,
+            0.523176999995485
+          ],
+          "median_seconds": 0.5052802909631282,
+          "minimum_seconds": 0.49821070791222155,
+          "maximum_seconds": 0.523176999995485
+        }
+      },
+      "build_seconds": 0.058387875091284513,
+      "projected_compile_seconds": 0.0639462498947978,
+      "sql": {
+        "handwritten": {
+          "submitted_bytes": 1620,
+          "submitted_lines": 32,
+          "compact_bytes": 1605,
+          "formatted_bytes": 1777
+        },
+        "terrine_projected": {
+          "submitted_bytes": 13485,
+          "submitted_lines": 1,
+          "compact_bytes": 13485,
+          "formatted_bytes": 19483
+        },
+        "terrine_full_expression": {
+          "submitted_bytes": 13806,
+          "submitted_lines": 1,
+          "compact_bytes": 13806,
+          "formatted_bytes": 19212
+        }
+      },
+      "public_study_sql": {
+        "statements": 3,
+        "bytes": 36919,
+        "excludes": "metadata/admission probes, transaction control and catalog introspection"
+      },
+      "query_ratio_to_literal": 4.411592674206811,
+      "public_ratio_to_literal": 19.27355316465523,
+      "three_times_waypoint_met": false,
+      "remaining_time_fraction_to_one_times": 0.773324494383472,
+      "baseline": {
+        "medians_seconds": {
+          "handwritten": 0.0264785410836339,
+          "terrine_precompiled": 0.11849612486548722,
+          "terrine_public": 0.6151337909977883
+        },
+        "ranges_seconds": {
+          "handwritten": [
+            0.025507332989946008,
+            0.02932520885951817
+          ],
+          "terrine_precompiled": [
+            0.11744012497365475,
+            0.12717137509025633
+          ],
+          "terrine_public": [
+            0.5878746670205146,
+            0.6580654589924961
+          ]
+        },
+        "build_seconds": 0.0855544579681009,
+        "projected_compile_seconds": 0.07405199995264411,
+        "sql": {
+          "handwritten": {
+            "submitted_bytes": 1620,
+            "submitted_lines": 32,
+            "compact_bytes": 1605,
+            "formatted_bytes": 1777
+          },
+          "terrine_projected": {
+            "submitted_bytes": 19528,
+            "submitted_lines": 1,
+            "compact_bytes": 19528,
+            "formatted_bytes": 32626
+          },
+          "terrine_full_expression": {
+            "submitted_bytes": 19849,
+            "submitted_lines": 1,
+            "compact_bytes": 19849,
+            "formatted_bytes": 31835
+          }
+        },
+        "public_study_sql": {
+          "statements": 3,
+          "bytes": 51057,
+          "excludes": "metadata/admission probes, transaction control and catalog introspection"
+        }
+      },
+      "baseline_to_final_speedup": {
+        "handwritten": 1.0100048991128496,
+        "terrine_precompiled": 1.024561822079603,
+        "terrine_public": 1.2174110132522
+      }
+    },
+    "wide": {
+      "directory": "benchmarks/results/compact-sql-task7-20261109-wide",
+      "file_sha256": {
+        "environment.json": "07c062781ab21503171c47f7f1bfd6ec3896e55aa80c629f7e8cdc1a1298bb11",
+        "handwritten.sql": "a868d91726036f8d80289be58114b0b1dc02d5d00d0dc3a4b1e578ddfb326bde",
+        "public-study-statement-0.sql": "4d1abefc36d52f1cab52e599796b25019b6b9e237022b562602ba3bf4f599471",
+        "public-study-statement-1.sql": "cc023b0087b69b9c7cb42613d366314834b8338a4e59bb8c967b3279c867ed08",
+        "public-study-statement-2.sql": "27b9e5da2fa48031dca2a06ba85349d4e3fd4577215dce71fd39fb41a47dc9a4",
+        "result.json": "b17bef7f7338c6e3e4a66911b839105b7e6875e354997ea5fff5dc8de5547fff",
+        "terrine-full-expression.sql": "bd5718e76493c0359b6475f9f0762ead608529694acaa692f06dd51db5b6a2e7",
+        "terrine-projected.sql": "100abc6ff51046a344e9d3a1305bae89497fd7882003a1c71ef4c7436b6c9c50"
+      },
+      "source_hashes_verified": 155,
+      "environment": {
+        "repository_revision": "24e057377953b11828035a20bfe44e1b3805f058",
+        "production_revision": "24e057377953b11828035a20bfe44e1b3805f058",
+        "python": "3.12.11",
+        "duckdb": "1.5.6",
+        "ibis": "12.0.0",
+        "pyarrow": "23.0.1",
+        "threads": 1,
+        "argv": {
+          "case": "wide",
+          "units": 10000,
+          "events_per_unit": 30,
+          "repeats": 5,
+          "output": "benchmarks/results/compact-sql-task7-20261109-wide",
+          "diagnostics": false,
+          "profile": false
+        },
+        "source_sha256": {
+          "benchmarks/compare_sql.py": "6bf68e1d6ed5a296f086a6394dd9ec554ce78b54256666b37fbc08bdbff7c00f",
+          "tests/fixtures/readme.py": "45d90980df334146fe70b7c74d7b642a2b574e614f0a89858ca7529768e3ed90",
+          "benchmarks/workloads.py": "5fb426e313d601f135279d5010c55a5e3bc518bce3c548f4096c7943c704e3c7",
+          "benchmarks/query_strategy_spike.py": "c6599d83142b8b6b51b879212f1439cdbb6761a4eee36a803d86f4feebd96515",
+          "benchmarks/run_overhead.py": "7a64bb9547e5f645a432b858cfb301b964d592f15abd7f084120f7bd4c1302dd",
+          "terrine/__init__.py": "621c94aa653bb7cc96efa74c0808b07f70d35336919634757555a95217974493",
+          "terrine/_refusal_codes.py": "509402a0f624a4f1116530d256fc946692dae910a3777206718563522a56d646",
+          "terrine/_time.py": "4502d45fd4cc13488fc969949337ef830deb95876767c1026a0355d2094bc09b",
+          "terrine/adapters/__init__.py": "166ce6f480e40dc5fe0bc8282816b160637a2f7be3318e2b72baae43a6b0681f",
+          "terrine/adapters/increment.py": "5308c7666ae0697749ea57dbc0dc880c1f9f3060393c938fbc746bf47c0b31d2",
+          "terrine/adapters/opentelemetry.py": "3cac5672f1ed06604603cd64dd6337495abe2e2b8c33be7c6dba6d6729c18b53",
+          "terrine/agent/__init__.py": "4eef129a831db2b72b18efea7e9942d29346c45670b5b6f494ae3ade4ed9cb12",
+          "terrine/agent/definitions.py": "d4e78cec945e4ae42ba39661f5c949792bba3b2fc113b56dc96f07d161652335",
+          "terrine/agent/design_schema.py": "c70f762067045f6f899a4f979f244b6c2efae1605149792623ab7198daeb8653",
+          "terrine/agent/policy.py": "ddeb2331a66a5e7f55017013163241a8001e6801ef2215bf627e4c01460fb9e8",
+          "terrine/agent/schemas.py": "0fed9522af845286e5f88ee2e4a51f7dc0c852d5de7a29ebe3ca62d895fb9d9a",
+          "terrine/agent/tools.py": "7c6f893e19139499891cb3ae5eeed03ad2c78a40209eca822a3dad1e026625ac",
+          "terrine/backends/__init__.py": "15fdb783d20fc387301943ba5d6ee8c32535518098ad03c3e074b42ebbfbed1f",
+          "terrine/backends/capabilities.py": "7f8e4f2b43fab5fbe8f9e9c85d57a35859449c282baf0ae2e8c0e8eac20982c4",
+          "terrine/backends/dialect.py": "7b42da8e321e7e895be4478449f417412bcca2aa4bdc62713c2c428501db78ba",
+          "terrine/backends/engines/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "terrine/backends/engines/bigquery.py": "cf73f6f8eaaa2878034a7648fb947c5ee976b8cd68f242a20a12e9972fe1a5c1",
+          "terrine/backends/engines/duckdb.py": "81d7e3c9c10bfdd048b83e293817da5111958ffc7e01eeae911474e0f433f734",
+          "terrine/backends/engines/postgres.py": "e22ef7a818e10f43326b04b0676c86ad61afbab75316b8e6bd07e0456cd982c1",
+          "terrine/backends/engines/snowflake.py": "2dce3820a5a7d2c1631a4d2e6956b9e3b2d03322c20a2f637087aed6ae9fb5d9",
+          "terrine/backends/extrema.py": "9e9b3e5cab4d1a47fdae408818002918e2fbc25bda7ca27c7cc9bc4f29ec24a7",
+          "terrine/backends/joins.py": "e07e7c893e98416612a3070d0c9c74fbe9797733f0a1ebbf826a1a5f601d1691",
+          "terrine/backends/numeric.py": "b4436fe54e582ef7df16960b77e22711467aea5c81a9a8788caa7c8a78f930bc",
+          "terrine/backends/registry.py": "57cd46fb9caf3f3edeb53e1112cdfa544d4c977f3c102a86d881ef28bbc7cd40",
+          "terrine/backends/sequences.py": "97f8591d8b3bb6de9118697a9806408e38ea56b864bf925dc23a28a4359cc82b",
+          "terrine/backends/timestamps.py": "1b99a5eb757e3d4c8e7605e2bf159ebbd4672b949a1b361ad4087e3a4f36d762",
+          "terrine/compile/__init__.py": "49cd60544571f24bf952adc123263b95d53adaee1a07c63379d36ec14498c89d",
+          "terrine/compile/_asof.py": "63450c8f372cb3e79729fa861fdb6a67e0eb94c9410c63c1bff8417fc0276e51",
+          "terrine/compile/_predicates.py": "d828e95064646d9b4980ed917d09b4e7bcb7e69b82cf1f2a25003104ac1093cd",
+          "terrine/compile/anchors.py": "03841e459347e5c7104c258b98bcbe2b204f5cb97a8c1c440d1a13387142479c",
+          "terrine/compile/columns.py": "d02c806717476724bc203075c7279dcb7faf6b111f66fa031d6df6cbf28a2b10",
+          "terrine/compile/cost.py": "91c184b8907eb864f470c7d805f34a644dfe4d0416762ccbb4bb49f992341603",
+          "terrine/compile/dispatch.py": "cd5d008b626495b01752a7bbd0329dd0254c300512dcdc93546a3500c3c05c5b",
+          "terrine/compile/layers.py": "25d733899145d80dfd68902c62d582e0ebca6dff0e3759f91525768751f6fee1",
+          "terrine/compile/materialize.py": "d087d5b2d4546b3ef7889736f8efaf59def2ab0b3a3db123a5560ba52d8bd678",
+          "terrine/compile/numeric.py": "4ed994153d7ec59271da92226b75805658f44f7e7c0da6d9827df2c07cf32046",
+          "terrine/compile/provenance.py": "1ff1c2a184288015b2249dd7449be7877482ca9dca61655bc570284bf311be68",
+          "terrine/compile/prune.py": "ec963f01e29a83f7a37683ee8961cb1e92ebae89f3833cbfbb8d941131b5d0e6",
+          "terrine/compile/ranges.py": "22d198843db2e1cc3bc5bb10eb3e039314181c770240276ecd5184294bbe3622",
+          "terrine/compile/retention.py": "c2def5eda534d1b2d3be919be75d7ba5d794e2d9e89279a4324a02120615ddd0",
+          "terrine/compile/shapes/__init__.py": "4099f247f459c219e63dfd70261cd87ecbd335ac71bc7b9c472fc4b03f0f950f",
+          "terrine/compile/shapes/_observations.py": "4c9e04b906f3ca6b22508d8420574e028c51ce987b8e15c7242b439c703a8213",
+          "terrine/compile/shapes/calendar_comparison.py": "a45cd2797968611a0f251736529a2ddd780cf5d2970f9cc8cf067652dc36b983",
+          "terrine/compile/shapes/cohorts.py": "c79a09f8cc1fe228b86573e9b079243ab2309f3cae4fd967be9a2dcc4a2a5eef",
+          "terrine/compile/shapes/event_panel.py": "fb763729a724c0b33b5c89caf59675867581a3da8a1f8cf16ff76a424a088f23",
+          "terrine/compile/shapes/event_sequence.py": "fda5edfed3a81c354625665f5d32d9af53279400eaf51ac9ba24d79440d0c3b2",
+          "terrine/compile/shapes/life_table.py": "fe99ed7440136a95d855ca51a4962bae57b31dcf5df366942026677dfb0c4957",
+          "terrine/compile/shapes/ltv.py": "953aa1227db1879ce9aa6eccf389ecd8595e575aba04035cc05284d256a1ce39",
+          "terrine/compile/shapes/matched_t0.py": "1f2d8729d7044d467ce6670dd9ea937c9df12589b0a59c7fbb7c200cd9d83efe",
+          "terrine/compile/shapes/sequential.py": "e5b129e226f06b1e9b868f604eea512d45788dc239e7d866001b7988ef8a41bf",
+          "terrine/compile/shapes/state_panel.py": "2c9cd3176520b797002033cf8a5be95f2abace8daca03d67c370b52eb99f4afb",
+          "terrine/compile/shapes/time_to_event.py": "3e30a2c18840b4c8d37635a5e5e9df93d98261b64f7733cf2249a2d75541a010",
+          "terrine/data.py": "c795cbd1374964cda5a14de8aa91efe1a6375a24e7191dc368080701c065baca",
+          "terrine/dataset/__init__.py": "1df0ec426dd09b03e00ceb6f58823672b19378aa6bf2eafa15931b8b0b36037e",
+          "terrine/dataset/export.py": "f9a8f788df5288999a1a536e8baad71ae281b3ce1efdac6ad82572e9e05b8162",
+          "terrine/dataset/manifest.py": "c900d84b03e4666e2b37c39e9a664433bb62d73b0025af92ee1f7448aabe1ba2",
+          "terrine/dataset/reference.py": "b681993d61d8115be68b6116cf7bf8111d82524273c5c4fa68ea888b6202d629",
+          "terrine/dataset/splits.py": "83e95f10297ef1a9eb9f00d5ba56e8468d2e2217ebc80e61094469f11d46997d",
+          "terrine/dataset/training.py": "4c1f6dc0eca7d33834eb5309a2cdaccde59e3a70bd568120e712e5488a55c1e4",
+          "terrine/dataset/transforms.py": "87d647a8621dbc88eabcde538ef4da3f0a947e330e61b692af84ed2734518d35",
+          "terrine/errors.py": "c5d5d405282351b6ebaec996386018f2b56b4e4b5bc32939f6cc077dd645d2e3",
+          "terrine/execution/__init__.py": "c60edd1e78fa3e8f7274f46b284f9b2a129598e59b053726389e747cd0a33fbb",
+          "terrine/execution/_bigquery.py": "62f35d314e562336b009cb0dbf779bd56a1575476289defbbf1782ee24be3d39",
+          "terrine/execution/_generic.py": "4dd782b8565678513a28bec3aa1c90126175eb652c25020780797c943888b5c0",
+          "terrine/execution/_metadata.py": "57c70dba861e1af5a2e8878bb2e548269454543e0670e1d28710c18b65ac3fd9",
+          "terrine/execution/_native.py": "f72a332346d68dd3b671520eb2a62cccae794e30482be7ef65dad36791f18a14",
+          "terrine/execution/_postgres.py": "92aa959a39d6cd04d70b896811c65441faf49c8a1d0bacf95c3b222c5840c0d4",
+          "terrine/execution/_publish.py": "d2bc9a2de527247f5591d6db5532d421deb06f3597496f1085ce586fa6ada756",
+          "terrine/execution/_snowflake.py": "d32ac82d572e2d29a3402a4509e49fcb84a13916e4d1ed2aa281f24027b4a331",
+          "terrine/execution/backend.py": "5fbe93eb0e55354f287a3ae7b24e8ca2de6a696ddc06d06ccff969a89cd71a08",
+          "terrine/execution/gates.py": "cc711373869d9f36e512ccc1bc7c67bb840c0e8c24930ba4ee75cb8b849059e9",
+          "terrine/execution/inputs.py": "08552e957cbb7ebf3c820d9895b78ece1cae78af71dbe5209511e0df8b7359cb",
+          "terrine/export/__init__.py": "4d2faf63c84063120502c4845a2c64c7afefc65774c58d5df72ef844800fd718",
+          "terrine/export/diff_diff.py": "384b28e5578fdca8e5d27a360d30a7fd98c79808dbb1a1df59ff743b388e53e6",
+          "terrine/export/lifelines.py": "bec09b8c0a37fedfe16e973e09ab1ec1e7d153ca9ec6df661692528203973d0d",
+          "terrine/export/preflight.py": "9fd8a4192fa8f78c7b1bf3fcc627ea8507bc77015e9630fbdc29d1321f484c44",
+          "terrine/export/surrogate.py": "50c4074624c47f20aaf3837c7e87f87d4d677f4790a5fb4fbcbc833735efe04d",
+          "terrine/frame.py": "0fdca7da35a962f92b4c192d4ef7b9f658ac76853755062bca345b9d0bb1d456",
+          "terrine/metrics.py": "a437c2f45d834b6ce94b5bc62acc8ecf1cfcf9a38c14b771c15bbeb6490c8095",
+          "terrine/model.py": "eff4835e0c7e9d2f4bf4321d4e2927805461276f9d2ea6a48dd370aa7f66e9bc",
+          "terrine/orchestration/__init__.py": "e3040a69502d894447dc1b3826cceab7cb6bf01b0a4d7510658f6e7d72b56733",
+          "terrine/orchestration/airflow.py": "773a983ae6c22fdf8e59a6ddc8aa75e0cd90b821f8b7a89523a2767514c99192",
+          "terrine/orchestration/dagster.py": "1eacc97193189dae2043e04faf532c39ecfb2adf380ae91ad8370ddf4fd7ed19",
+          "terrine/reasons.py": "ecbd0357708fdb37585c4470cc038182156dcf3c2b045e7b14410737b808849b",
+          "terrine/recipes.py": "033396c6d7d33867ca85171c171c6890b0e41c39819730fda924f927d7507751",
+          "terrine/runtime/__init__.py": "8623ccdfd33e24562dd96f744baee50c0a7592ca0c2bb8dbbcdc5e63123e6fbf",
+          "terrine/runtime/api.py": "f1698daf358d15be8d76ed2bc4b5654abf78a5f5c943bb3e7a8125c39996c972",
+          "terrine/runtime/arrow.py": "e18f3a9d5f778cf212dcf271c6d2939807ad8bd0815777945bdb753ef199d98c",
+          "terrine/runtime/backends/base.py": "b5cbaf46560e15fc56c4b3fbb4ed495ff0b828160027e3a399e2be8d3563f268",
+          "terrine/runtime/backends/duckdb.py": "b2e492a6384029fb75a547d3badeba13f7e611947ddf5745e7e0fbec9f3f91c5",
+          "terrine/runtime/changes.py": "556fac4864b9e2048805420e307a261eef44187965244bc7b6270ad54c58d716",
+          "terrine/runtime/cli.py": "c1c23d3d2d786a34cb42e764c723520c204b2302a0011d1e8a9965a7d5e6cfba",
+          "terrine/runtime/control.py": "bbb222ba14d4ed5df6c299908a6d6d135a8abe543d3722b247604bde513d282b",
+          "terrine/runtime/cost.py": "1ebb6c2442db0770ea5e7b34d59feef17c20a9b69d79b7148ed82fa586463415",
+          "terrine/runtime/events.py": "c98dacbdc32adf0b88f1e8c461de252e3e571c4ce1760c687d86908e63808646",
+          "terrine/runtime/execute.py": "f9b55a10b2246e7ec209fd84989886ef9bde9d55d58f827c5c17c792bae88381",
+          "terrine/runtime/gc.py": "706e620bb61141f64b380f38064b68ab8fe50cab3443b3b5355c59c27d51d10f",
+          "terrine/runtime/graph.py": "d28bcbd5a672e138893d7376c1331d9573c34c67319c856732d07ac47251bb41",
+          "terrine/runtime/layers.py": "c73d7abb8e318f4ea4208584b3c63ab29df26788ee9b08276fac866f7dbf8cb5",
+          "terrine/runtime/leases.py": "0fde32275b05752895182b0e9cd19c0f1556717831508771e17b276600d52a00",
+          "terrine/runtime/materialize.py": "7c8e80545ccae8c113a402e73dc9f443175c8faafba9dd8ff6d917e98c994874",
+          "terrine/runtime/owner.py": "ae78ee58e8c0272812bf972f658f6731129d40cc1d6a5e6015afcf934f5933dd",
+          "terrine/runtime/planner.py": "44c3eb569023a989fe5a4d25e1288ae496182becded7fc237e96d6766e82833b",
+          "terrine/runtime/planning.py": "7384c18a3a90261895a96a8bfcab686f27cc3a789254b9b7875fd3dd1ee5290f",
+          "terrine/runtime/saved_plan.py": "e4f2b7c5bb2bd2bbf2f2104f362a2846d21fb0cc0cfb83ccd65aa0b879512d3a",
+          "terrine/runtime/schema.py": "664b59d1481a36c401848168b566885022f2dfc5f2df77934cb4f48837062d11",
+          "terrine/runtime/snapshot.py": "f807c93a8020cec42807e485604dc0c5328600c433c26a158e1aade5b65cba02",
+          "terrine/runtime/state.py": "80c2693cc858a79c798a641cca8419f42c6000b8f8a027830416425a146f7fed",
+          "terrine/runtime/status.py": "7aceba27ecf46ff4d76349894ceeaaa3f08689804d293118e54cf2a80c542ee8",
+          "terrine/runtime/synchronization.py": "bcd27bc8639dc7546ffac6f0503717d253ab048dffdc37428cfc9b75c687d0dc",
+          "terrine/semantic/__init__.py": "f82d342e4c7aa279bf030da88cc4476177abfd7fa8b5714589cc98cbb9506fa4",
+          "terrine/semantic/attributes.py": "0c36ca62e373f957e5863607a6f6a2ff668ca7de27732c2334cd2ff2ffb9e372",
+          "terrine/semantic/bind.py": "8090f2676d21a6f0d4b1d0f1ff1310686c61e3b8e7b61939d3910cdeaa872480",
+          "terrine/semantic/io.py": "af9083a63eed73db53fd29c3b63f23653a3338866b958abbf03e66fe3889be05",
+          "terrine/semantic/models.py": "e4d6d04c80ee55e4f96be5f2b4451f8312ee64874d4d61ebcde4b255554c000e",
+          "terrine/semantic/predicates.py": "0b2d5f159d69f4f7f004d4940b2a2294ecd3cdb106f462398141b3372d59f869",
+          "terrine/semantic/rules.py": "01144d71fd7d996cc518117fa95a23010acd192dda1ce535fb2c6ce2c981df71",
+          "terrine/semantic/sql.py": "58c1ef8db7c8adc2305ead4008193b9ba4f29830b4e06a678c8e19811499137a",
+          "terrine/semantic/time.py": "9b160c7e15b72efc8d7e1c4f15165c9e1b1d6167848d9117e33e8f1237a84141",
+          "terrine/simulate/__init__.py": "1f9d9526be12789066f04ba6003299ae07e2cfad4ae543bca80cdb2cd240d27b",
+          "terrine/simulate/generate.py": "cf7308a49f4dc563bab18b16f5e941e4731cf80d3763381a2c5f5ec738b8a8e2",
+          "terrine/simulate/scale.py": "d414b7b219af68df6a3246c79cb944afe609e5412481cc71418392565f4d1cb7",
+          "terrine/simulate/world.py": "6168333aea5036fd37ced78ed75f55c7274e4eafe8b7a264a55b1d2b4398fdb5",
+          "terrine/spec/__init__.py": "2a5713ade884976f36377a9f138230452a98aebfcf455e43b7c007c7f3d8551f",
+          "terrine/spec/_columns.py": "4f4ef4214ecd7b416632a66265f47d61222cbfa6c39b29f3fc7f7c1552dc737f",
+          "terrine/spec/anchors.py": "9945fc1d8b32b8b930c898084233e4483fc2a89d81dd2c80f1630a94235b3ef5",
+          "terrine/spec/dataset.py": "8f2b71fd7c18ebf5bd83fa2cbfec676419b1be3a01918bdd054a4582ec630f60",
+          "terrine/spec/describe.py": "5be693f810db5bcbb92be701bf89bd1b92849c982e8298c9b2987585de560b25",
+          "terrine/spec/design.py": "b9b301dae9a63af9d04aa2a533c0513ea61e18879c392f58b1e35b387f15c2e1",
+          "terrine/spec/expressions.py": "ba76196582dd16bb30f77d0243818b35116c02a6ff908cb4526bc9235c6ef2ca",
+          "terrine/spec/io.py": "767aec9abb96c55f0db6d76d50614022961695c9797ec1eaf39045f4355af4c5",
+          "terrine/spec/panels.py": "2060267bfa5679fe4469dda410ab776a855846ddaf57b0ee0f6168578c7eba1c",
+          "terrine/spec/sequence.py": "629686760605eff3eb4bbf511f570160d7aa8f990c1b9874c9396e4345835014",
+          "terrine/spec/state_panel.py": "24189074fa05c230437aae79ead735a7fcbdeb7d45473f56f8194c5ba3f5a822",
+          "terrine/spec/trajectory.py": "ba289923342873f1f9634111f53e3f3a24516ac4c4e7557c9d50e6a481bb7bd0",
+          "terrine/spec/transforms.py": "a2d8823c4fafcb77da98d066add77222a4107dd63562c22d05560f6e1d50644f",
+          "terrine/spec/validate.py": "c5eb4aa8078a772fc4f8a0ca78e59e748a6ad8ac7d7287c23eec8ca404e61575",
+          "terrine/temporal/__init__.py": "b604f05db900b88794c3dc412106ff264868fba5ff5ce184dc510c39e7186889",
+          "terrine/temporal/aggregate.py": "efeebfb929687b3ffb8888051b12665ca125b58904d47339ee4d804d5dc73f93",
+          "terrine/temporal/attributes.py": "60973384b9ac6cc314c5669093af296f67d097cf599ab2b38121c269e52301e5",
+          "terrine/temporal/daily.py": "1083cadbd0840c93aa13618fd9d19dd4903c66b59b3b2f93ff53b1f8a52734a1",
+          "terrine/temporal/first.py": "a595d7dffaa516a87bc419a3ce844bf6505f69f10b109f00660bd7d462b3f975",
+          "terrine/temporal/nonadditive.py": "6d81a595349b5b6e087c8eddc8ef2f64966cebd2a5f043b8325aa26ea96b3b85",
+          "terrine/temporal/ranges.py": "1827c590993453c1c0c2f270a3477b2822c4018f5217ecd7711ff7ea009e95a3",
+          "terrine/temporal/readiness.py": "ee72c776662585c3d30a7c17c4bb96258485d829fbb902bbe4debff67e974cd9",
+          "terrine/temporal/retention.py": "88cac89a91f98a8211129a24d36412dcb74f724b128391acd50c4e021d7d2b7e",
+          "terrine/temporal/sequence.py": "776053ade7615933e87802da9e1a10170b6df0d66aa0f3bf461a6d5d95050f13",
+          "terrine/temporal/sessionize.py": "0fae4ea70351a1916f2234b4177ceda4329f20f2655ef633577b12e00a04edc1",
+          "terrine/temporal/sketches.py": "22e883280cd352c4fbee75634b4695e253e37260d9b077302590199856d03fe5",
+          "terrine/windows.py": "c9ddde492eca63d532c0228649abc1918191687ee45ec4853386c1472b45835d"
+        }
+      },
+      "input_tables": {
+        "users": {
+          "rows": 10000,
+          "schema": "unit_id: string\nobserved_from: timestamp[us, tz=UTC]\nobserved_until: timestamp[us, tz=UTC]",
+          "arrow_stream_sha256": "a00adc17c129b0b071d3368137f4f8157cbc0afabe4e9895b15d62043a9a241b"
+        },
+        "events_native": {
+          "rows": 300000,
+          "schema": "unit_id: string\nevent_id: string\noccurrence_id: string\nevent_time: timestamp[us, tz=UTC]\nevent_type: string\nvalue: double\nadopted: string\nrevision: int64",
+          "arrow_stream_sha256": "dc75da58a2733e0c7629cfa234ab365914b6204d611ba58c17863dedb6788989"
+        }
+      },
+      "arrow_schema": "unit: string\nt0: timestamp[us, tz=UTC]\nevents_1d: int64\nevents_1d__complete: bool\nevents_1d__reason: string\nevents_2d: int64\nevents_2d__complete: bool\nevents_2d__reason: string\nevents_3d: int64\nevents_3d__complete: bool\nevents_3d__reason: string\nevents_4d: int64\nevents_4d__complete: bool\nevents_4d__reason: string\nevents_5d: int64\nevents_5d__complete: bool\nevents_5d__reason: string\nevents_6d: int64\nevents_6d__complete: bool\nevents_6d__reason: string\nevents_7d: int64\nevents_7d__complete: bool\nevents_7d__reason: string\nevents_8d: int64\nevents_8d__complete: bool\nevents_8d__reason: string\nevents_9d: int64\nevents_9d__complete: bool\nevents_9d__reason: string\nevents_10d: int64\nevents_10d__complete: bool\nevents_10d__reason: string\ntotal_1d: double\ntotal_1d__complete: bool\ntotal_1d__reason: string\ntotal_2d: double\ntotal_2d__complete: bool\ntotal_2d__reason: string\ntotal_3d: double\ntotal_3d__complete: bool\ntotal_3d__reason: string\ntotal_4d: double\ntotal_4d__complete: bool\ntotal_4d__reason: string\ntotal_5d: double\ntotal_5d__complete: bool\ntotal_5d__reason: string\ntotal_6d: double\ntotal_6d__complete: bool\ntotal_6d__reason: string\ntotal_7d: double\ntotal_7d__complete: bool\ntotal_7d__reason: string\ntotal_8d: double\ntotal_8d__complete: bool\ntotal_8d__reason: string\ntotal_9d: double\ntotal_9d__complete: bool\ntotal_9d__reason: string\ntotal_10d: double\ntotal_10d__complete: bool\ntotal_10d__reason: string\naverage_1d: double\naverage_1d__complete: bool\naverage_1d__reason: string\naverage_2d: double\naverage_2d__complete: bool\naverage_2d__reason: string\naverage_3d: double\naverage_3d__complete: bool\naverage_3d__reason: string\naverage_4d: double\naverage_4d__complete: bool\naverage_4d__reason: string\naverage_5d: double\naverage_5d__complete: bool\naverage_5d__reason: string\naverage_6d: double\naverage_6d__complete: bool\naverage_6d__reason: string\naverage_7d: double\naverage_7d__complete: bool\naverage_7d__reason: string\naverage_8d: double\naverage_8d__complete: bool\naverage_8d__reason: string\naverage_9d: double\naverage_9d__complete: bool\naverage_9d__reason: string\naverage_10d: double\naverage_10d__complete: bool\naverage_10d__reason: string\nper_event_1d: double\nper_event_1d__complete: bool\nper_event_1d__reason: string\nper_event_2d: double\nper_event_2d__complete: bool\nper_event_2d__reason: string\nper_event_3d: double\nper_event_3d__complete: bool\nper_event_3d__reason: string\nper_event_4d: double\nper_event_4d__complete: bool\nper_event_4d__reason: string\nper_event_5d: double\nper_event_5d__complete: bool\nper_event_5d__reason: string\nper_event_6d: double\nper_event_6d__complete: bool\nper_event_6d__reason: string\nper_event_7d: double\nper_event_7d__complete: bool\nper_event_7d__reason: string\nper_event_8d: double\nper_event_8d__complete: bool\nper_event_8d__reason: string\nper_event_9d: double\nper_event_9d__complete: bool\nper_event_9d__reason: string\nper_event_10d: double\nper_event_10d__complete: bool\nper_event_10d__reason: string\nactive_1d: bool\nactive_1d__complete: bool\nactive_1d__reason: string\nactive_2d: bool\nactive_2d__complete: bool\nactive_2d__reason: string\nactive_3d: bool\nactive_3d__complete: bool\nactive_3d__reason: string\nactive_4d: bool\nactive_4d__complete: bool\nactive_4d__reason: string\nactive_5d: bool\nactive_5d__complete: bool\nactive_5d__reason: string\nactive_6d: bool\nactive_6d__complete: bool\nactive_6d__reason: string\nactive_7d: bool\nactive_7d__complete: bool\nactive_7d__reason: string\nactive_8d: bool\nactive_8d__complete: bool\nactive_8d__reason: string\nactive_9d: bool\nactive_9d__complete: bool\nactive_9d__reason: string\nactive_10d: bool\nactive_10d__complete: bool\nactive_10d__reason: string",
+      "compared_columns": [
+        "unit",
+        "t0",
+        "events_1d",
+        "events_1d__complete",
+        "events_1d__reason",
+        "events_2d",
+        "events_2d__complete",
+        "events_2d__reason",
+        "events_3d",
+        "events_3d__complete",
+        "events_3d__reason",
+        "events_4d",
+        "events_4d__complete",
+        "events_4d__reason",
+        "events_5d",
+        "events_5d__complete",
+        "events_5d__reason",
+        "events_6d",
+        "events_6d__complete",
+        "events_6d__reason",
+        "events_7d",
+        "events_7d__complete",
+        "events_7d__reason",
+        "events_8d",
+        "events_8d__complete",
+        "events_8d__reason",
+        "events_9d",
+        "events_9d__complete",
+        "events_9d__reason",
+        "events_10d",
+        "events_10d__complete",
+        "events_10d__reason",
+        "total_1d",
+        "total_1d__complete",
+        "total_1d__reason",
+        "total_2d",
+        "total_2d__complete",
+        "total_2d__reason",
+        "total_3d",
+        "total_3d__complete",
+        "total_3d__reason",
+        "total_4d",
+        "total_4d__complete",
+        "total_4d__reason",
+        "total_5d",
+        "total_5d__complete",
+        "total_5d__reason",
+        "total_6d",
+        "total_6d__complete",
+        "total_6d__reason",
+        "total_7d",
+        "total_7d__complete",
+        "total_7d__reason",
+        "total_8d",
+        "total_8d__complete",
+        "total_8d__reason",
+        "total_9d",
+        "total_9d__complete",
+        "total_9d__reason",
+        "total_10d",
+        "total_10d__complete",
+        "total_10d__reason",
+        "average_1d",
+        "average_1d__complete",
+        "average_1d__reason",
+        "average_2d",
+        "average_2d__complete",
+        "average_2d__reason",
+        "average_3d",
+        "average_3d__complete",
+        "average_3d__reason",
+        "average_4d",
+        "average_4d__complete",
+        "average_4d__reason",
+        "average_5d",
+        "average_5d__complete",
+        "average_5d__reason",
+        "average_6d",
+        "average_6d__complete",
+        "average_6d__reason",
+        "average_7d",
+        "average_7d__complete",
+        "average_7d__reason",
+        "average_8d",
+        "average_8d__complete",
+        "average_8d__reason",
+        "average_9d",
+        "average_9d__complete",
+        "average_9d__reason",
+        "average_10d",
+        "average_10d__complete",
+        "average_10d__reason",
+        "per_event_1d",
+        "per_event_1d__complete",
+        "per_event_1d__reason",
+        "per_event_2d",
+        "per_event_2d__complete",
+        "per_event_2d__reason",
+        "per_event_3d",
+        "per_event_3d__complete",
+        "per_event_3d__reason",
+        "per_event_4d",
+        "per_event_4d__complete",
+        "per_event_4d__reason",
+        "per_event_5d",
+        "per_event_5d__complete",
+        "per_event_5d__reason",
+        "per_event_6d",
+        "per_event_6d__complete",
+        "per_event_6d__reason",
+        "per_event_7d",
+        "per_event_7d__complete",
+        "per_event_7d__reason",
+        "per_event_8d",
+        "per_event_8d__complete",
+        "per_event_8d__reason",
+        "per_event_9d",
+        "per_event_9d__complete",
+        "per_event_9d__reason",
+        "per_event_10d",
+        "per_event_10d__complete",
+        "per_event_10d__reason",
+        "active_1d",
+        "active_1d__complete",
+        "active_1d__reason",
+        "active_2d",
+        "active_2d__complete",
+        "active_2d__reason",
+        "active_3d",
+        "active_3d__complete",
+        "active_3d__reason",
+        "active_4d",
+        "active_4d__complete",
+        "active_4d__reason",
+        "active_5d",
+        "active_5d__complete",
+        "active_5d__reason",
+        "active_6d",
+        "active_6d__complete",
+        "active_6d__reason",
+        "active_7d",
+        "active_7d__complete",
+        "active_7d__reason",
+        "active_8d",
+        "active_8d__complete",
+        "active_8d__reason",
+        "active_9d",
+        "active_9d__complete",
+        "active_9d__reason",
+        "active_10d",
+        "active_10d__complete",
+        "active_10d__reason"
+      ],
+      "public_columns": 256,
+      "result_parity_each_sample": true,
+      "schema_parity_each_sample": true,
+      "corruption_controls": {
+        "schedule": "once_per_case_before_repeat_loop",
+        "all_four_rejected": true,
+        "controls": [
+          "missing",
+          "duplicate",
+          "changed_value",
+          "changed_type"
+        ]
+      },
+      "timings": {
+        "handwritten": {
+          "samples_seconds": [
+            0.07282795803621411,
+            0.07311562495306134,
+            0.07242624997161329,
+            0.0695806669536978,
+            0.0787647080142051
+          ],
+          "median_seconds": 0.07282795803621411,
+          "minimum_seconds": 0.0695806669536978,
+          "maximum_seconds": 0.0787647080142051
+        },
+        "terrine_precompiled": {
+          "samples_seconds": [
+            0.13390466710552573,
+            0.13779008388519287,
+            0.12942779203876853,
+            0.1298571249935776,
+            0.141131249954924
+          ],
+          "median_seconds": 0.13390466710552573,
+          "minimum_seconds": 0.12942779203876853,
+          "maximum_seconds": 0.141131249954924
+        },
+        "terrine_public": {
+          "samples_seconds": [
+            2.173335416940972,
+            2.185785457957536,
+            2.2178304579574615,
+            2.1484093330800533,
+            2.214343332918361
+          ],
+          "median_seconds": 2.185785457957536,
+          "minimum_seconds": 2.1484093330800533,
+          "maximum_seconds": 2.2178304579574615
+        }
+      },
+      "build_seconds": 0.6046615419909358,
+      "projected_compile_seconds": 0.2659612079150975,
+      "sql": {
+        "handwritten": {
+          "submitted_bytes": 10856,
+          "submitted_lines": 190,
+          "compact_bytes": 10871,
+          "formatted_bytes": 11509
+        },
+        "terrine_projected": {
+          "submitted_bytes": 99738,
+          "submitted_lines": 1,
+          "compact_bytes": 99738,
+          "formatted_bytes": 147210
+        },
+        "terrine_full_expression": {
+          "submitted_bytes": 104039,
+          "submitted_lines": 1,
+          "compact_bytes": 104039,
+          "formatted_bytes": 145369
+        }
+      },
+      "public_study_sql": {
+        "statements": 3,
+        "bytes": 301556,
+        "excludes": "metadata/admission probes, transaction control and catalog introspection"
+      },
+      "query_ratio_to_literal": 1.8386437120609764,
+      "public_ratio_to_literal": 30.01299936036435,
+      "three_times_waypoint_met": true,
+      "remaining_time_fraction_to_one_times": 0.4561208387246065,
+      "baseline": {
+        "medians_seconds": {
+          "handwritten": 0.06695708306506276,
+          "terrine_precompiled": 3.5126984580419958,
+          "terrine_public": 17.565747916931286
+        },
+        "ranges_seconds": {
+          "handwritten": [
+            0.06679787510074675,
+            0.07535783294588327
+          ],
+          "terrine_precompiled": [
+            3.3580436250194907,
+            4.327362374868244
+          ],
+          "terrine_public": [
+            17.40582458395511,
+            18.618665124988183
+          ]
+        },
+        "build_seconds": 4.913383084116504,
+        "projected_compile_seconds": 1.539944457821548,
+        "sql": {
+          "handwritten": {
+            "submitted_bytes": 10856,
+            "submitted_lines": 190,
+            "compact_bytes": 10871,
+            "formatted_bytes": 11509
+          },
+          "terrine_projected": {
+            "submitted_bytes": 1063594,
+            "submitted_lines": 1,
+            "compact_bytes": 1063594,
+            "formatted_bytes": 3755646
+          },
+          "terrine_full_expression": {
+            "submitted_bytes": 1067895,
+            "submitted_lines": 1,
+            "compact_bytes": 1067895,
+            "formatted_bytes": 3649365
+          }
+        },
+        "public_study_sql": {
+          "statements": 3,
+          "bytes": 2261680,
+          "excludes": "metadata/admission probes, transaction control and catalog introspection"
+        }
+      },
+      "baseline_to_final_speedup": {
+        "handwritten": 0.9193870715387623,
+        "terrine_precompiled": 26.232830669552072,
+        "terrine_public": 8.036355010498264
+      }
+    }
+  },
+  "state_specific_ab": {
+    "directory": "benchmarks/results/compact-sql-task8-state-specific-20261109-attempt2",
+    "production_revision": "966c7ffbe00c9916ca295fd6c98d9c5c0c131aab",
+    "mode_definition": "original union fallback vs compact query at one source revision; not historical commits",
+    "NOT_a_historical_commit_AB": true,
+    "NOT_final_combined_state_performance": true,
+    "executed_literal_sha256": "a5953c76af9fb6d5f31a312abbe99e3429b11fb1b762c3b721100850d276c59c",
+    "artifact_literal_file_sha256": "4cacf35461fac869b8ebbe476f3f822ae9c44a2ae8df17184cee274fbdb3365f",
+    "artifact_writer_appends_line_feed": true,
+    "result": {
+      "all_four_controls_rejected": true,
+      "case": "state_panel",
+      "comparison": "original union fallback vs compact query, same pinned source",
+      "dynamic_snapshot_identity_fields_recorded_not_compared": [
+        "snapshot_id",
+        "input_binding_id"
+      ],
+      "full_schema_values_columnmeta_support_and_invariant_provenance_parity": true,
+      "handwritten_seconds": [
+        0.049469917,
+        0.049004916,
+        0.052417083,
+        0.047801834,
+        0.050554542
+      ],
+      "handwritten_summary_seconds": {
+        "maximum": 0.052417083,
+        "median": 0.049469917,
+        "minimum": 0.047801834
+      },
+      "public_columns": 20,
+      "repeats": 5,
+      "rows": 20000,
+      "timing_caveat": "Separate non-overlapping invocations; public timer internally includes new builds and execution compilation, so do not add phase medians.",
+      "variants": {
+        "compact_query": {
+          "arrow": {
+            "arrow_bytes": 2822355,
+            "arrow_stream_sha256": "bdcab29984cd9ca0febeb5dfd52820aa434a568f47e565c7b2a7bbe9794786ad",
+            "columns": 20,
+            "rows": 20000,
+            "schema": "unit: string\nanchor_id: string\nt0: timestamp[us, tz=UTC]\nfrom_time: timestamp[us, tz=UTC]\nto_time: timestamp[us, tz=UTC]\nscheduled_to: timestamp[us, tz=UTC]\nperiod_index: int64\ngap: duration[us]\nfrom_state: string\nfrom_state__complete: bool\nfrom_state__reason: string\nto_state: string\nto_state__complete: bool\nto_state__reason: string\nterminal: bool\nfrom_state_observed_from: timestamp[us, tz=UTC]\nfrom_state_observed_until: timestamp[us, tz=UTC]\nto_state_observed_from: timestamp[us, tz=UTC]\nto_state_observed_until: timestamp[us, tz=UTC]\n__terrine_panel_start: timestamp[us, tz=UTC]\n-- schema metadata --\nterrine.materialized_frame.v2: '{\"bookkeeping_columns\":[\"from_state_obser' + 2780",
+            "schema_sha256": "951164e7cb20f3eecfd8510ba1658b51c88cd7b145c4a138fa5c2bbf92fe0c74"
+          },
+          "ceiling": 30000,
+          "column_meta_parity_each_sample": true,
+          "consumer_ceiling_met": true,
+          "consumer_formatted_characters": 22767,
+          "full_expression_sizes": {
+            "compact_bytes": 14463,
+            "formatted_bytes": 22767,
+            "submitted_bytes": 14463,
+            "submitted_lines": 1
+          },
+          "invariant_provenance_parity_each_sample": true,
+          "precompiled_raw_arrow": {
+            "arrow_bytes": 2822355,
+            "arrow_stream_sha256": "895a8173ec4e83d9438bd3885140a2589a1752e389d98896816a721bd466b576",
+            "columns": 20,
+            "rows": 20000,
+            "schema": "unit: string\nanchor_id: string\nt0: timestamp[us, tz=UTC]\nfrom_time: timestamp[us, tz=UTC]\nto_time: timestamp[us, tz=UTC]\nscheduled_to: timestamp[us, tz=UTC]\nperiod_index: int64\ngap: int64\nfrom_state: string\nfrom_state__complete: bool\nfrom_state__reason: string\nto_state: string\nto_state__complete: bool\nto_state__reason: string\nterminal: bool\nfrom_state_observed_from: timestamp[us, tz=UTC]\nfrom_state_observed_until: timestamp[us, tz=UTC]\nto_state_observed_from: timestamp[us, tz=UTC]\nto_state_observed_until: timestamp[us, tz=UTC]\n__terrine_panel_start: timestamp[us, tz=UTC]",
+            "schema_sha256": "a475d9e545e09a4386b67721cce5fe832f110972d479b58e88f42d1106f4d4cf"
+          },
+          "precompiled_schema_boundary": "Raw SQL gap is int64; existing Frame._normalize_output casts it to duration[us] outside query timers before full public schema/value parity.",
+          "private_flag": true,
+          "public_study_sql": {
+            "bytes": 59999,
+            "count": 7,
+            "excludes": "metadata/admission probes, transaction control, catalog introspection"
+          },
+          "result_parity_each_sample": true,
+          "schema_parity_each_sample": true,
+          "seconds": {
+            "expression_build": [
+              0.128265291,
+              0.15842775,
+              0.123852917,
+              0.124925417,
+              0.108895708
+            ],
+            "full_public_build_and_materialize": [
+              1.193530125,
+              1.255170917,
+              1.30349125,
+              1.304031333,
+              1.249455667
+            ],
+            "precompiled_full_query": [
+              0.146205292,
+              0.134036708,
+              0.140248,
+              0.146603917,
+              0.128001333
+            ],
+            "sql_compile": [
+              0.060125792,
+              0.051413042,
+              0.109282167,
+              0.056733667,
+              0.04913625
+            ]
+          },
+          "summary_seconds": {
+            "expression_build": {
+              "maximum": 0.15842775,
+              "median": 0.124925417,
+              "minimum": 0.108895708
+            },
+            "full_public_build_and_materialize": {
+              "maximum": 1.304031333,
+              "median": 1.255170917,
+              "minimum": 1.193530125
+            },
+            "precompiled_full_query": {
+              "maximum": 0.146603917,
+              "median": 0.140248,
+              "minimum": 0.128001333
+            },
+            "sql_compile": {
+              "maximum": 0.109282167,
+              "median": 0.056733667,
+              "minimum": 0.04913625
+            }
+          }
+        },
+        "original_union_fallback": {
+          "arrow": {
+            "arrow_bytes": 2822355,
+            "arrow_stream_sha256": "bdcab29984cd9ca0febeb5dfd52820aa434a568f47e565c7b2a7bbe9794786ad",
+            "columns": 20,
+            "rows": 20000,
+            "schema": "unit: string\nanchor_id: string\nt0: timestamp[us, tz=UTC]\nfrom_time: timestamp[us, tz=UTC]\nto_time: timestamp[us, tz=UTC]\nscheduled_to: timestamp[us, tz=UTC]\nperiod_index: int64\ngap: duration[us]\nfrom_state: string\nfrom_state__complete: bool\nfrom_state__reason: string\nto_state: string\nto_state__complete: bool\nto_state__reason: string\nterminal: bool\nfrom_state_observed_from: timestamp[us, tz=UTC]\nfrom_state_observed_until: timestamp[us, tz=UTC]\nto_state_observed_from: timestamp[us, tz=UTC]\nto_state_observed_until: timestamp[us, tz=UTC]\n__terrine_panel_start: timestamp[us, tz=UTC]\n-- schema metadata --\nterrine.materialized_frame.v2: '{\"bookkeeping_columns\":[\"from_state_obser' + 2780",
+            "schema_sha256": "951164e7cb20f3eecfd8510ba1658b51c88cd7b145c4a138fa5c2bbf92fe0c74"
+          },
+          "ceiling": 30000,
+          "column_meta_parity_each_sample": true,
+          "consumer_ceiling_met": false,
+          "consumer_formatted_characters": 32387,
+          "full_expression_sizes": {
+            "compact_bytes": 19771,
+            "formatted_bytes": 32387,
+            "submitted_bytes": 19771,
+            "submitted_lines": 1
+          },
+          "invariant_provenance_parity_each_sample": true,
+          "precompiled_raw_arrow": {
+            "arrow_bytes": 2822355,
+            "arrow_stream_sha256": "895a8173ec4e83d9438bd3885140a2589a1752e389d98896816a721bd466b576",
+            "columns": 20,
+            "rows": 20000,
+            "schema": "unit: string\nanchor_id: string\nt0: timestamp[us, tz=UTC]\nfrom_time: timestamp[us, tz=UTC]\nto_time: timestamp[us, tz=UTC]\nscheduled_to: timestamp[us, tz=UTC]\nperiod_index: int64\ngap: int64\nfrom_state: string\nfrom_state__complete: bool\nfrom_state__reason: string\nto_state: string\nto_state__complete: bool\nto_state__reason: string\nterminal: bool\nfrom_state_observed_from: timestamp[us, tz=UTC]\nfrom_state_observed_until: timestamp[us, tz=UTC]\nto_state_observed_from: timestamp[us, tz=UTC]\nto_state_observed_until: timestamp[us, tz=UTC]\n__terrine_panel_start: timestamp[us, tz=UTC]",
+            "schema_sha256": "a475d9e545e09a4386b67721cce5fe832f110972d479b58e88f42d1106f4d4cf"
+          },
+          "precompiled_schema_boundary": "Raw SQL gap is int64; existing Frame._normalize_output casts it to duration[us] outside query timers before full public schema/value parity.",
+          "private_flag": false,
+          "public_study_sql": {
+            "bytes": 69125,
+            "count": 7,
+            "excludes": "metadata/admission probes, transaction control, catalog introspection"
+          },
+          "result_parity_each_sample": true,
+          "schema_parity_each_sample": true,
+          "seconds": {
+            "expression_build": [
+              0.119610417,
+              0.095265667,
+              0.096729542,
+              0.103493791,
+              0.086055375
+            ],
+            "full_public_build_and_materialize": [
+              1.141372709,
+              1.085017833,
+              1.213324541,
+              1.161939667,
+              1.181935917
+            ],
+            "precompiled_full_query": [
+              0.142312167,
+              0.139461792,
+              0.144179791,
+              0.144963125,
+              0.136669625
+            ],
+            "sql_compile": [
+              0.0818945,
+              0.123914666,
+              0.08015375,
+              0.106519667,
+              0.134582834
+            ]
+          },
+          "summary_seconds": {
+            "expression_build": {
+              "maximum": 0.119610417,
+              "median": 0.096729542,
+              "minimum": 0.086055375
+            },
+            "full_public_build_and_materialize": {
+              "maximum": 1.213324541,
+              "median": 1.161939667,
+              "minimum": 1.085017833
+            },
+            "precompiled_full_query": {
+              "maximum": 0.144963125,
+              "median": 0.142312167,
+              "minimum": 0.136669625
+            },
+            "sql_compile": {
+              "maximum": 0.134582834,
+              "median": 0.106519667,
+              "minimum": 0.08015375
+            }
+          }
+        }
+      }
+    },
+    "source_files_differing_from_final": [
+      "terrine/backends/timestamps.py",
+      "terrine/temporal/aggregate.py"
+    ],
+    "unchanged_fixture_helper_consumer_dependency_hashes_verified": true
+  },
+  "consumer_budgets": {
+    "readme": {
+      "characters": 19520,
+      "ceiling": 20000,
+      "status": "PASS; exact private consumer, not inferred from public formatter"
+    },
+    "state_panel": {
+      "characters": 18525,
+      "ceiling": 30000,
+      "status": "PASS; final combined graph"
+    },
+    "bigquery": {
+      "characters": 514334,
+      "ceiling": 1000000,
+      "status": "PASS; relation metadata only, no warehouse call"
+    },
+    "ltv": "Existing strict xfail retained; no ceiling change",
+    "life_table": "Existing strict xfail retained; no ceiling change"
+  },
+  "runtime_smokes": {
+    "installed_duckdb": {
+      "duckdb": "1.5.6",
+      "ibis": "12.0.0",
+      "module": "/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/terrine/__init__.py",
+      "duckdb-us": {
+        "boundary": "half-open two-day schedule; naive source, pre-epoch lower/upper/adjacent ticks; NY caller session unchanged",
+        "source_unit": "us",
+        "strategies": {
+          "counted": "local_day/exact",
+          "total": "local_day/exact"
+        },
+        "public": {
+          "rows": 4,
+          "schema": "unit: string\nanchor_id: string\nt0: timestamp[us, tz=UTC]\ncounted: int64\ncounted__complete: bool\ncounted__reason: string\ntotal: decimal128(38, 2)\ntotal__complete: bool\ntotal__reason: string\n_observed_from: timestamp[us, tz=UTC]\n_observed_until: timestamp[us, tz=UTC]\nanchor_provenance: string\n__terrine_value_0_observed_from: timestamp[us, tz=UTC]\n__terrine_value_0_observed_until: timestamp[us, tz=UTC]\n__terrine_value_1_observed_from: timestamp[us, tz=UTC]\n__terrine_value_1_observed_until: timestamp[us, tz=UTC]",
+          "arrow_stream_sha256": "9f4fbd7715599b08e44acaaf87d00924c7285f05873b077c3e5aa3fc3950c806"
+        },
+        "rows": "[{'unit': 'a', 'counted': 2, 'total': Decimal('5.00'), 'counted__complete': True, 'total__complete': True, 'counted__reason': None, 'total__reason': None}, {'unit': 'a', 'counted': 2, 'total': Decimal('9.00'), 'counted__complete': True, 'total__complete': True, 'counted__reason': None, 'total__reason': None}, {'unit': 'empty', 'counted': 0, 'total': Decimal('0.00'), 'counted__complete': True, 'total__complete': True, 'counted__reason': None, 'total__reason': None}, {'unit': 'empty', 'counted': 0, 'total': Decimal('0.00'), 'counted__complete': True, 'total__complete': True, 'counted__reason': None, 'total__reason': None}]"
+      },
+      "duckdb-ns": {
+        "boundary": "half-open two-day schedule; naive source, pre-epoch lower/upper/adjacent ticks; NY caller session unchanged",
+        "source_unit": "ns",
+        "strategies": {
+          "counted": "local_day/exact",
+          "total": "local_day/exact"
+        },
+        "public": {
+          "rows": 4,
+          "schema": "unit: string\nanchor_id: string\nt0: timestamp[us, tz=UTC]\ncounted: int64\ncounted__complete: bool\ncounted__reason: string\ntotal: decimal128(38, 2)\ntotal__complete: bool\ntotal__reason: string\n_observed_from: timestamp[us, tz=UTC]\n_observed_until: timestamp[us, tz=UTC]\nanchor_provenance: string\n__terrine_value_0_observed_from: timestamp[us, tz=UTC]\n__terrine_value_0_observed_until: timestamp[us, tz=UTC]\n__terrine_value_1_observed_from: timestamp[us, tz=UTC]\n__terrine_value_1_observed_until: timestamp[us, tz=UTC]",
+          "arrow_stream_sha256": "9f4fbd7715599b08e44acaaf87d00924c7285f05873b077c3e5aa3fc3950c806"
+        },
+        "rows": "[{'unit': 'a', 'counted': 2, 'total': Decimal('5.00'), 'counted__complete': True, 'total__complete': True, 'counted__reason': None, 'total__reason': None}, {'unit': 'a', 'counted': 2, 'total': Decimal('9.00'), 'counted__complete': True, 'total__complete': True, 'counted__reason': None, 'total__reason': None}, {'unit': 'empty', 'counted': 0, 'total': Decimal('0.00'), 'counted__complete': True, 'total__complete': True, 'counted__reason': None, 'total__reason': None}, {'unit': 'empty', 'counted': 0, 'total': Decimal('0.00'), 'counted__complete': True, 'total__complete': True, 'counted__reason': None, 'total__reason': None}]"
+      },
+      "state": {
+        "consumer_formatted_chars": 18525,
+        "schema_values_support_columnmeta_invariant_provenance_match_both_pre7_modes": true,
+        "dynamic_snapshot_identities_recorded_not_compared": {
+          "snapshot_id": null,
+          "input_binding_id": null
+        },
+        "reference_parity": true,
+        "controls": {
+          "missing": true,
+          "duplicate": true,
+          "changed_value": true,
+          "changed_type": true
+        },
+        "public": {
+          "rows": 20000,
+          "schema": "unit: string\nanchor_id: string\nt0: timestamp[us, tz=UTC]\nfrom_time: timestamp[us, tz=UTC]\nto_time: timestamp[us, tz=UTC]\nscheduled_to: timestamp[us, tz=UTC]\nperiod_index: int64\ngap: duration[us]\nfrom_state: string\nfrom_state__complete: bool\nfrom_state__reason: string\nto_state: string\nto_state__complete: bool\nto_state__reason: string\nterminal: bool\nfrom_state_observed_from: timestamp[us, tz=UTC]\nfrom_state_observed_until: timestamp[us, tz=UTC]\nto_state_observed_from: timestamp[us, tz=UTC]\nto_state_observed_until: timestamp[us, tz=UTC]\n__terrine_panel_start: timestamp[us, tz=UTC]\n-- schema metadata --\nterrine.materialized_frame.v2: '{\"bookkeeping_columns\":[\"from_state_obser' + 2780",
+          "arrow_stream_sha256": "bdcab29984cd9ca0febeb5dfd52820aa434a568f47e565c7b2a7bbe9794786ad"
+        },
+        "public_study_sql": {
+          "statements": 7,
+          "bytes": 55838,
+          "excludes": "metadata/admission probes, transaction control, catalog introspection"
+        }
+      }
+    },
+    "floor_duckdb": {
+      "duckdb": "1.5.0",
+      "ibis": "12.0.0",
+      "module": "/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/terrine/__init__.py",
+      "duckdb-us": {
+        "boundary": "half-open two-day schedule; naive source, pre-epoch lower/upper/adjacent ticks; NY caller session unchanged",
+        "source_unit": "us",
+        "strategies": {
+          "counted": "local_day/exact",
+          "total": "local_day/exact"
+        },
+        "public": {
+          "rows": 4,
+          "schema": "unit: string\nanchor_id: string\nt0: timestamp[us, tz=UTC]\ncounted: int64\ncounted__complete: bool\ncounted__reason: string\ntotal: decimal128(38, 2)\ntotal__complete: bool\ntotal__reason: string\n_observed_from: timestamp[us, tz=UTC]\n_observed_until: timestamp[us, tz=UTC]\nanchor_provenance: string\n__terrine_value_0_observed_from: timestamp[us, tz=UTC]\n__terrine_value_0_observed_until: timestamp[us, tz=UTC]\n__terrine_value_1_observed_from: timestamp[us, tz=UTC]\n__terrine_value_1_observed_until: timestamp[us, tz=UTC]",
+          "arrow_stream_sha256": "9f4fbd7715599b08e44acaaf87d00924c7285f05873b077c3e5aa3fc3950c806"
+        },
+        "rows": "[{'unit': 'a', 'counted': 2, 'total': Decimal('5.00'), 'counted__complete': True, 'total__complete': True, 'counted__reason': None, 'total__reason': None}, {'unit': 'a', 'counted': 2, 'total': Decimal('9.00'), 'counted__complete': True, 'total__complete': True, 'counted__reason': None, 'total__reason': None}, {'unit': 'empty', 'counted': 0, 'total': Decimal('0.00'), 'counted__complete': True, 'total__complete': True, 'counted__reason': None, 'total__reason': None}, {'unit': 'empty', 'counted': 0, 'total': Decimal('0.00'), 'counted__complete': True, 'total__complete': True, 'counted__reason': None, 'total__reason': None}]"
+      },
+      "duckdb-ns": {
+        "boundary": "half-open two-day schedule; naive source, pre-epoch lower/upper/adjacent ticks; NY caller session unchanged",
+        "source_unit": "ns",
+        "strategies": {
+          "counted": "local_day/exact",
+          "total": "local_day/exact"
+        },
+        "public": {
+          "rows": 4,
+          "schema": "unit: string\nanchor_id: string\nt0: timestamp[us, tz=UTC]\ncounted: int64\ncounted__complete: bool\ncounted__reason: string\ntotal: decimal128(38, 2)\ntotal__complete: bool\ntotal__reason: string\n_observed_from: timestamp[us, tz=UTC]\n_observed_until: timestamp[us, tz=UTC]\nanchor_provenance: string\n__terrine_value_0_observed_from: timestamp[us, tz=UTC]\n__terrine_value_0_observed_until: timestamp[us, tz=UTC]\n__terrine_value_1_observed_from: timestamp[us, tz=UTC]\n__terrine_value_1_observed_until: timestamp[us, tz=UTC]",
+          "arrow_stream_sha256": "9f4fbd7715599b08e44acaaf87d00924c7285f05873b077c3e5aa3fc3950c806"
+        },
+        "rows": "[{'unit': 'a', 'counted': 2, 'total': Decimal('5.00'), 'counted__complete': True, 'total__complete': True, 'counted__reason': None, 'total__reason': None}, {'unit': 'a', 'counted': 2, 'total': Decimal('9.00'), 'counted__complete': True, 'total__complete': True, 'counted__reason': None, 'total__reason': None}, {'unit': 'empty', 'counted': 0, 'total': Decimal('0.00'), 'counted__complete': True, 'total__complete': True, 'counted__reason': None, 'total__reason': None}, {'unit': 'empty', 'counted': 0, 'total': Decimal('0.00'), 'counted__complete': True, 'total__complete': True, 'counted__reason': None, 'total__reason': None}]"
+      },
+      "state": {
+        "consumer_formatted_chars": 18525,
+        "schema_values_support_columnmeta_invariant_provenance_match_both_pre7_modes": true,
+        "dynamic_snapshot_identities_recorded_not_compared": {
+          "snapshot_id": null,
+          "input_binding_id": null
+        },
+        "reference_parity": true,
+        "controls": {
+          "missing": true,
+          "duplicate": true,
+          "changed_value": true,
+          "changed_type": true
+        },
+        "public": {
+          "rows": 20000,
+          "schema": "unit: string\nanchor_id: string\nt0: timestamp[us, tz=UTC]\nfrom_time: timestamp[us, tz=UTC]\nto_time: timestamp[us, tz=UTC]\nscheduled_to: timestamp[us, tz=UTC]\nperiod_index: int64\ngap: duration[us]\nfrom_state: string\nfrom_state__complete: bool\nfrom_state__reason: string\nto_state: string\nto_state__complete: bool\nto_state__reason: string\nterminal: bool\nfrom_state_observed_from: timestamp[us, tz=UTC]\nfrom_state_observed_until: timestamp[us, tz=UTC]\nto_state_observed_from: timestamp[us, tz=UTC]\nto_state_observed_until: timestamp[us, tz=UTC]\n__terrine_panel_start: timestamp[us, tz=UTC]\n-- schema metadata --\nterrine.materialized_frame.v2: '{\"bookkeeping_columns\":[\"from_state_obser' + 2780",
+          "arrow_stream_sha256": "bdcab29984cd9ca0febeb5dfd52820aa434a568f47e565c7b2a7bbe9794786ad"
+        },
+        "public_study_sql": {
+          "statements": 7,
+          "bytes": 55838,
+          "excludes": "metadata/admission probes, transaction control, catalog introspection"
+        }
+      }
+    },
+    "postgres_daily": {
+      "duckdb": "1.5.6",
+      "ibis": "12.0.0",
+      "module": "/Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/terrine/__init__.py",
+      "postgres-us": {
+        "boundary": "half-open two-day schedule; naive source, pre-epoch lower/upper/adjacent ticks; NY caller session unchanged",
+        "source_unit": "us",
+        "strategies": {
+          "counted": "local_day/exact",
+          "total": "local_day/exact"
+        },
+        "public": {
+          "rows": 4,
+          "schema": "unit: string\nanchor_id: string\nt0: timestamp[us, tz=UTC]\ncounted: int64\ncounted__complete: bool\ncounted__reason: string\ntotal: decimal128(38, 2)\ntotal__complete: bool\ntotal__reason: string\n_observed_from: timestamp[us, tz=UTC]\n_observed_until: timestamp[us, tz=UTC]\nanchor_provenance: string\n__terrine_value_0_observed_from: timestamp[us, tz=UTC]\n__terrine_value_0_observed_until: timestamp[us, tz=UTC]\n__terrine_value_1_observed_from: timestamp[us, tz=UTC]\n__terrine_value_1_observed_until: timestamp[us, tz=UTC]",
+          "arrow_stream_sha256": "9f4fbd7715599b08e44acaaf87d00924c7285f05873b077c3e5aa3fc3950c806"
+        },
+        "rows": "[{'unit': 'a', 'counted': 2, 'total': Decimal('5.00'), 'counted__complete': True, 'total__complete': True, 'counted__reason': None, 'total__reason': None}, {'unit': 'a', 'counted': 2, 'total': Decimal('9.00'), 'counted__complete': True, 'total__complete': True, 'counted__reason': None, 'total__reason': None}, {'unit': 'empty', 'counted': 0, 'total': Decimal('0.00'), 'counted__complete': True, 'total__complete': True, 'counted__reason': None, 'total__reason': None}, {'unit': 'empty', 'counted': 0, 'total': Decimal('0.00'), 'counted__complete': True, 'total__complete': True, 'counted__reason': None, 'total__reason': None}]"
+      }
+    },
+    "same_exporter": "Exact result.to_pyarrow serialized schema, complete values and metadata compared to both pre7 mode Arrow files. No schema metadata stripped; original raw int64 gap/public duration normalization unchanged."
+  },
+  "verification": {
+    "integrated": "907 passed, 1 skipped, 71 deselected, 3449 warnings in238.86s; all static gates pass; one approved expanded run",
+    "consumer": "8 passed, 16 deselected, 2 existing xfailed, 28 warnings in10.77s",
+    "generic_duckdb": "16 passed,45 deselected,69 warnings in4.74s",
+    "postgres_native": "18 passed,1 skipped,46 deselected,8 warnings in14.74s",
+    "postgres_generic": "37 passed,68 deselected in21.97s",
+    "floor": "DuckDB1.5.0 actual version/path asserted;11passed/54warnings in1.82s; same-process actual dailyus/ns andfullstatepublic smokes passed",
+    "native_skip": "The native coefficient domain admits this sum.",
+    "teardown_exit": 0,
+    "cloud": "Live BigQuery/Snowflake unauthorized and unrun; matrices preserved",
+    "docs": "All static gates passed;6 tests passed in1.05s; strict documentation build exit0/no output after final product-doc edits."
+  },
+  "artifact_directories": {
+    "benchmarks/results/compact-sql-task7-20261109-readme": {
+      "environment.json": "705a83054457d3355e41f9fa1ec39670ff77f837b7d5027aa66c56e0b63f1044",
+      "handwritten.sql": "9fdfc1319ab7bcf9a3862ea1b3a433b6dc310529259a0cdeebaa8aa30a1eede8",
+      "public-study-statement-0.sql": "f65b6ce2fed90cd3ec3328a21fc55424534c16e793dfc27f51b665bc1a8c78f6",
+      "public-study-statement-1.sql": "119c43cb3904a6a45a41130fd006157b48bf752a249b24e2f041aefd0b85e679",
+      "public-study-statement-2.sql": "90e2327e4d328b9d6826a41cb84928b9fa6b7ca56fc23203e783c6c91c86c5e5",
+      "result.json": "22809fb19e889add7897c368507e63d106ea8b6760df90ea99577e68b69d1778",
+      "terrine-full-expression.sql": "aa5b5b787eaeba69dd3d5d603a4ce5e94ae872a7752d039a10277c95c23d1641",
+      "terrine-projected.sql": "ea03b82dee0f46a3cbdfd13786cc627e040de2d6334ad07859784434a8e1ec8c"
+    },
+    "benchmarks/results/compact-sql-task7-20261109-scaled": {
+      "environment.json": "fe5055e745f4953b913fdb9e96c9cc390ceb4d9da33b4749d0309717cfbc7cca",
+      "handwritten.sql": "9fdfc1319ab7bcf9a3862ea1b3a433b6dc310529259a0cdeebaa8aa30a1eede8",
+      "public-study-statement-0.sql": "f65b6ce2fed90cd3ec3328a21fc55424534c16e793dfc27f51b665bc1a8c78f6",
+      "public-study-statement-1.sql": "119c43cb3904a6a45a41130fd006157b48bf752a249b24e2f041aefd0b85e679",
+      "public-study-statement-2.sql": "8e8493a043405b7b39b55c4a0a64fc92a01730833801339f8ea64269dcad08f2",
+      "result.json": "39606b229c8854a3561cb208c0835e6a1b361a6f204f636da2ec94dc9f8c6eb9",
+      "terrine-full-expression.sql": "673ae080c2228e19fb9772132b77bedeb074b8e11dc433142a4ef642eabcf13c",
+      "terrine-projected.sql": "3c5031ceaaaa8ecf036e05a0d22d59e046c2ecc8c4b7b5c47b2788c8de3a8c14"
+    },
+    "benchmarks/results/compact-sql-task7-20261109-wide": {
+      "environment.json": "07c062781ab21503171c47f7f1bfd6ec3896e55aa80c629f7e8cdc1a1298bb11",
+      "handwritten.sql": "a868d91726036f8d80289be58114b0b1dc02d5d00d0dc3a4b1e578ddfb326bde",
+      "public-study-statement-0.sql": "4d1abefc36d52f1cab52e599796b25019b6b9e237022b562602ba3bf4f599471",
+      "public-study-statement-1.sql": "cc023b0087b69b9c7cb42613d366314834b8338a4e59bb8c967b3279c867ed08",
+      "public-study-statement-2.sql": "27b9e5da2fa48031dca2a06ba85349d4e3fd4577215dce71fd39fb41a47dc9a4",
+      "result.json": "b17bef7f7338c6e3e4a66911b839105b7e6875e354997ea5fff5dc8de5547fff",
+      "terrine-full-expression.sql": "bd5718e76493c0359b6475f9f0762ead608529694acaa692f06dd51db5b6a2e7",
+      "terrine-projected.sql": "100abc6ff51046a344e9d3a1305bae89497fd7882003a1c71ef4c7436b6c9c50"
+    },
+    "benchmarks/results/compact-sql-task8-20261109-readme": {
+      "environment.json": "c4259c4c97298851db97fac36089ccafef6d03f1f14e5d8ec8d88826d7ddc0db",
+      "handwritten.sql": "9fdfc1319ab7bcf9a3862ea1b3a433b6dc310529259a0cdeebaa8aa30a1eede8",
+      "public-study-statement-0.sql": "f65b6ce2fed90cd3ec3328a21fc55424534c16e793dfc27f51b665bc1a8c78f6",
+      "public-study-statement-1.sql": "119c43cb3904a6a45a41130fd006157b48bf752a249b24e2f041aefd0b85e679",
+      "public-study-statement-2.sql": "33dfd27efbbd0f5201d426170274e936be7dfd25ae0ac60f5e752a477d28c08b",
+      "result.json": "1ef42734e27d2957fcec335b9818ff5df2712fb8c30bb499dc59b3de711c9601",
+      "terrine-full-expression.sql": "8c99f6a0a0ed3356ca932698b5f434e2ae82fd6483f4271e1e117aa375a8b907",
+      "terrine-projected.sql": "109dab4ababdfd5f227fb224806f9c5b2c64acbd372592788f1c19ccf2732264"
+    },
+    "benchmarks/results/compact-sql-task8-20261109-scaled": {
+      "environment.json": "0de2fda971fb649c173af725d008326f4e7ead829fdfa3d92cd9bd05add9ef21",
+      "handwritten.sql": "9fdfc1319ab7bcf9a3862ea1b3a433b6dc310529259a0cdeebaa8aa30a1eede8",
+      "public-study-statement-0.sql": "f65b6ce2fed90cd3ec3328a21fc55424534c16e793dfc27f51b665bc1a8c78f6",
+      "public-study-statement-1.sql": "119c43cb3904a6a45a41130fd006157b48bf752a249b24e2f041aefd0b85e679",
+      "public-study-statement-2.sql": "c738ac8801df00efe730083f2005e5da3109cd17ee5634c17ccb06efc32dcde8",
+      "result.json": "adc8f09712e932308a52b3ce1b1c3b5eebaeebc7868ef96761496a8f8e58a7f9",
+      "terrine-full-expression.sql": "781212b7930d87bb7fb57d0e0fa9c670a9ea7520355b69745a02700fe534fd4a",
+      "terrine-projected.sql": "020e848a857b06eceb63cbd0ab8ea5746fa2f3c31c2594a35261214ee5f4c78f"
+    },
+    "benchmarks/results/compact-sql-task8-20261109-wide": {
+      "environment.json": "7866c4bbee49c84d5d8fa653887d2edecb74bb334cfe182636dbce7903255257",
+      "handwritten.sql": "a868d91726036f8d80289be58114b0b1dc02d5d00d0dc3a4b1e578ddfb326bde",
+      "public-study-statement-0.sql": "4d1abefc36d52f1cab52e599796b25019b6b9e237022b562602ba3bf4f599471",
+      "public-study-statement-1.sql": "cc023b0087b69b9c7cb42613d366314834b8338a4e59bb8c967b3279c867ed08",
+      "public-study-statement-2.sql": "460948602b4174cd25f2090c445cdc492b4e6c120f20a628652c9ab5fa10f4cc",
+      "result.json": "9a11424f374b4ec89b9f205aa15514c85839841a08a49a178b322079a4c45b09",
+      "terrine-full-expression.sql": "2bccf10701cc36e0e721021975e66b241f8ead8ffe3998e1a4906498e110eca4",
+      "terrine-projected.sql": "5aa36aec815fce2a0413f349b1b044b7567d0dabf6372ec08a2766c4ef1ca91c"
+    },
+    "benchmarks/results/compact-sql-task8-state-specific-20261109": {
+      "control-changed_type.arrow": "0af05e65c1272f3853d16b0683b83ad4f8da8370025a8ead19d7cce9621f8be9",
+      "control-changed_value.arrow": "cf16e60643961972cc9bf0ee851ffe747324efb83a8990108c9985c72fbbaa7b",
+      "control-duplicate.arrow": "f3dc3edd5fa725ef2d8b7a76b91fde570b4287af17eb99acedcccaa0eda0ba23",
+      "control-missing.arrow": "03e4383b939c1106f6117b2d90c3e329ead4d41a627904a7e4739fdb7cef56c4",
+      "controls.json": "bc0acd79db19ac8f92daa4efd01921eb068ac056b16b9affb6eb6fac5237dca9",
+      "diagnostic.py.txt": "fed6bddf73237afa7992fa9491c122fac28008b276d816720abb9f83abb17699",
+      "environment.json": "04684c783578955c09d095a711880c1d22a6d0436bfd3bc4d96883de3ab45f91",
+      "failure.txt": "f7b88e5abdb82bee586fbeca2f5b65650f1a8f769921d63cc643b471b72b7463",
+      "handwritten.arrow": "f4f3168d05623d6489745e764ee1a4719cb9e41580b6189a36745f628ebcf4db",
+      "handwritten.sql": "4cacf35461fac869b8ebbe476f3f822ae9c44a2ae8df17184cee274fbdb3365f",
+      "model-catalog.yaml": "a4c4d7bee8b690ecf9161e2f3fe47229a1d674cdb79173e14b2bbdc5b98d7983",
+      "original_union_fallback/consumer-formatted.sql": "3a4c438814a96b43c4b4b212886276c0b3bd77c5b972b703b9397a77f6309c8f",
+      "original_union_fallback/full-expression.sql": "47a84a3bf1c1b64d30fa8fb17fdd1621043c10b886c82d3f9e5139e29bb4d0ca",
+      "run.log": "37f78845937a3d0cafe16147ca03e20e471eed7211ac10c4be960e0ec2443065"
+    },
+    "benchmarks/results/compact-sql-task8-state-specific-20261109-attempt2": {
+      "compact_query/consumer-formatted.sql": "38ed138911bbf3e89a183fd23dec2df1d534caf07339e2e47a27205ac164555d",
+      "compact_query/dynamic-snapshot-identities.json": "8fcd6ed94d12ba0f6b41ec22983a252d999a4c8ec709066dd7bfd0af9c122bfb",
+      "compact_query/full-expression.sql": "72a7d3c0fbf71e8e22ff634d5f5db62fe0149c9b91573c80926ff83cd65caa51",
+      "compact_query/invariant-metadata.json": "47f285d90ae3a4b64bd7394fd53b8be172c30409bc76621dc87061c256e39fd7",
+      "compact_query/metadata.json": "9ccaaf997df23c344df97558c8c6f98be79c1f9a341655e795d7950ed437fe65",
+      "compact_query/precompiled-full.arrow": "787a01992623dc38ecba4c2d373be084af7134b588ab898474f49c2a1317cbe4",
+      "compact_query/precompiled-raw-full.arrow": "895a8173ec4e83d9438bd3885140a2589a1752e389d98896816a721bd466b576",
+      "compact_query/public-full.arrow": "bdcab29984cd9ca0febeb5dfd52820aa434a568f47e565c7b2a7bbe9794786ad",
+      "compact_query/public-study-statement-0.sql": "4d1abefc36d52f1cab52e599796b25019b6b9e237022b562602ba3bf4f599471",
+      "compact_query/public-study-statement-1.sql": "cc023b0087b69b9c7cb42613d366314834b8338a4e59bb8c967b3279c867ed08",
+      "compact_query/public-study-statement-2.sql": "4d1abefc36d52f1cab52e599796b25019b6b9e237022b562602ba3bf4f599471",
+      "compact_query/public-study-statement-3.sql": "cc023b0087b69b9c7cb42613d366314834b8338a4e59bb8c967b3279c867ed08",
+      "compact_query/public-study-statement-4.sql": "4d1abefc36d52f1cab52e599796b25019b6b9e237022b562602ba3bf4f599471",
+      "compact_query/public-study-statement-5.sql": "cc023b0087b69b9c7cb42613d366314834b8338a4e59bb8c967b3279c867ed08",
+      "compact_query/public-study-statement-6.sql": "3406eaa7fe998976380a9491eb9fb0532aeed55ff1214bba8626b37117350c1b",
+      "compact_query/sample-0-full-expression.sql": "72a7d3c0fbf71e8e22ff634d5f5db62fe0149c9b91573c80926ff83cd65caa51",
+      "compact_query/sample-0-identity.json": "debcde036c6960932b19bfa80a924000b5104306cc55380ed8f9fc230a4b7d52",
+      "compact_query/sample-0-metadata.json": "9ccaaf997df23c344df97558c8c6f98be79c1f9a341655e795d7950ed437fe65",
+      "compact_query/sample-1-full-expression.sql": "72a7d3c0fbf71e8e22ff634d5f5db62fe0149c9b91573c80926ff83cd65caa51",
+      "compact_query/sample-1-identity.json": "debcde036c6960932b19bfa80a924000b5104306cc55380ed8f9fc230a4b7d52",
+      "compact_query/sample-1-metadata.json": "9ccaaf997df23c344df97558c8c6f98be79c1f9a341655e795d7950ed437fe65",
+      "compact_query/sample-2-full-expression.sql": "72a7d3c0fbf71e8e22ff634d5f5db62fe0149c9b91573c80926ff83cd65caa51",
+      "compact_query/sample-2-identity.json": "debcde036c6960932b19bfa80a924000b5104306cc55380ed8f9fc230a4b7d52",
+      "compact_query/sample-2-metadata.json": "9ccaaf997df23c344df97558c8c6f98be79c1f9a341655e795d7950ed437fe65",
+      "compact_query/sample-3-full-expression.sql": "72a7d3c0fbf71e8e22ff634d5f5db62fe0149c9b91573c80926ff83cd65caa51",
+      "compact_query/sample-3-identity.json": "debcde036c6960932b19bfa80a924000b5104306cc55380ed8f9fc230a4b7d52",
+      "compact_query/sample-3-metadata.json": "9ccaaf997df23c344df97558c8c6f98be79c1f9a341655e795d7950ed437fe65",
+      "compact_query/sample-4-full-expression.sql": "72a7d3c0fbf71e8e22ff634d5f5db62fe0149c9b91573c80926ff83cd65caa51",
+      "compact_query/sample-4-identity.json": "debcde036c6960932b19bfa80a924000b5104306cc55380ed8f9fc230a4b7d52",
+      "compact_query/sample-4-metadata.json": "9ccaaf997df23c344df97558c8c6f98be79c1f9a341655e795d7950ed437fe65",
+      "control-changed_type.arrow": "0af05e65c1272f3853d16b0683b83ad4f8da8370025a8ead19d7cce9621f8be9",
+      "control-changed_value.arrow": "cf16e60643961972cc9bf0ee851ffe747324efb83a8990108c9985c72fbbaa7b",
+      "control-duplicate.arrow": "f3dc3edd5fa725ef2d8b7a76b91fde570b4287af17eb99acedcccaa0eda0ba23",
+      "control-missing.arrow": "03e4383b939c1106f6117b2d90c3e329ead4d41a627904a7e4739fdb7cef56c4",
+      "controls.json": "bc0acd79db19ac8f92daa4efd01921eb068ac056b16b9affb6eb6fac5237dca9",
+      "diagnostic.py.txt": "dfde2d41fa7d3da435710664a0781cf9352ee7b31ab2fddbc80c3842f7f61dcc",
+      "environment.json": "1dcbaea8891feecee1331be7896bac14d36207b734dd1251d84a208ce0c9b60f",
+      "handwritten.arrow": "f4f3168d05623d6489745e764ee1a4719cb9e41580b6189a36745f628ebcf4db",
+      "handwritten.sql": "4cacf35461fac869b8ebbe476f3f822ae9c44a2ae8df17184cee274fbdb3365f",
+      "model-catalog.yaml": "a4c4d7bee8b690ecf9161e2f3fe47229a1d674cdb79173e14b2bbdc5b98d7983",
+      "original_union_fallback/consumer-formatted.sql": "3a4c438814a96b43c4b4b212886276c0b3bd77c5b972b703b9397a77f6309c8f",
+      "original_union_fallback/dynamic-snapshot-identities.json": "8fcd6ed94d12ba0f6b41ec22983a252d999a4c8ec709066dd7bfd0af9c122bfb",
+      "original_union_fallback/full-expression.sql": "47a84a3bf1c1b64d30fa8fb17fdd1621043c10b886c82d3f9e5139e29bb4d0ca",
+      "original_union_fallback/invariant-metadata.json": "47f285d90ae3a4b64bd7394fd53b8be172c30409bc76621dc87061c256e39fd7",
+      "original_union_fallback/metadata.json": "9ccaaf997df23c344df97558c8c6f98be79c1f9a341655e795d7950ed437fe65",
+      "original_union_fallback/precompiled-full.arrow": "787a01992623dc38ecba4c2d373be084af7134b588ab898474f49c2a1317cbe4",
+      "original_union_fallback/precompiled-raw-full.arrow": "895a8173ec4e83d9438bd3885140a2589a1752e389d98896816a721bd466b576",
+      "original_union_fallback/public-full.arrow": "bdcab29984cd9ca0febeb5dfd52820aa434a568f47e565c7b2a7bbe9794786ad",
+      "original_union_fallback/public-study-statement-0.sql": "4d1abefc36d52f1cab52e599796b25019b6b9e237022b562602ba3bf4f599471",
+      "original_union_fallback/public-study-statement-1.sql": "cc023b0087b69b9c7cb42613d366314834b8338a4e59bb8c967b3279c867ed08",
+      "original_union_fallback/public-study-statement-2.sql": "4d1abefc36d52f1cab52e599796b25019b6b9e237022b562602ba3bf4f599471",
+      "original_union_fallback/public-study-statement-3.sql": "cc023b0087b69b9c7cb42613d366314834b8338a4e59bb8c967b3279c867ed08",
+      "original_union_fallback/public-study-statement-4.sql": "4d1abefc36d52f1cab52e599796b25019b6b9e237022b562602ba3bf4f599471",
+      "original_union_fallback/public-study-statement-5.sql": "cc023b0087b69b9c7cb42613d366314834b8338a4e59bb8c967b3279c867ed08",
+      "original_union_fallback/public-study-statement-6.sql": "69e07c79b6974e776b729271fafed4b81122721b33e09edd367ecc3c0613e1a8",
+      "original_union_fallback/sample-0-full-expression.sql": "47a84a3bf1c1b64d30fa8fb17fdd1621043c10b886c82d3f9e5139e29bb4d0ca",
+      "original_union_fallback/sample-0-identity.json": "bcbacd3231af66856685b690d362f7248207bf89cfab4ffcea9dec3f8ba3de49",
+      "original_union_fallback/sample-0-metadata.json": "9ccaaf997df23c344df97558c8c6f98be79c1f9a341655e795d7950ed437fe65",
+      "original_union_fallback/sample-1-full-expression.sql": "47a84a3bf1c1b64d30fa8fb17fdd1621043c10b886c82d3f9e5139e29bb4d0ca",
+      "original_union_fallback/sample-1-identity.json": "bcbacd3231af66856685b690d362f7248207bf89cfab4ffcea9dec3f8ba3de49",
+      "original_union_fallback/sample-1-metadata.json": "9ccaaf997df23c344df97558c8c6f98be79c1f9a341655e795d7950ed437fe65",
+      "original_union_fallback/sample-2-full-expression.sql": "47a84a3bf1c1b64d30fa8fb17fdd1621043c10b886c82d3f9e5139e29bb4d0ca",
+      "original_union_fallback/sample-2-identity.json": "bcbacd3231af66856685b690d362f7248207bf89cfab4ffcea9dec3f8ba3de49",
+      "original_union_fallback/sample-2-metadata.json": "9ccaaf997df23c344df97558c8c6f98be79c1f9a341655e795d7950ed437fe65",
+      "original_union_fallback/sample-3-full-expression.sql": "47a84a3bf1c1b64d30fa8fb17fdd1621043c10b886c82d3f9e5139e29bb4d0ca",
+      "original_union_fallback/sample-3-identity.json": "bcbacd3231af66856685b690d362f7248207bf89cfab4ffcea9dec3f8ba3de49",
+      "original_union_fallback/sample-3-metadata.json": "9ccaaf997df23c344df97558c8c6f98be79c1f9a341655e795d7950ed437fe65",
+      "original_union_fallback/sample-4-full-expression.sql": "47a84a3bf1c1b64d30fa8fb17fdd1621043c10b886c82d3f9e5139e29bb4d0ca",
+      "original_union_fallback/sample-4-identity.json": "bcbacd3231af66856685b690d362f7248207bf89cfab4ffcea9dec3f8ba3de49",
+      "original_union_fallback/sample-4-metadata.json": "9ccaaf997df23c344df97558c8c6f98be79c1f9a341655e795d7950ed437fe65",
+      "result.json": "ca6906cf7c1ffc4f2849df99cced0c927b8aa2255836b1d1104ba774ceb8dcbd",
+      "run.log": "b4996513e05e1e3176f3b6835b86cd342796e4643e306dc7ea76c1aacf05dcf4"
+    },
+    "benchmarks/results/compact-sql-continuation-verification-20261109": {
+      "consumer-budgets.txt": "9c9ccc2dc0ca5c464a0ec97d35baeebb4d530164ed5b69d9132d629811f674c5",
+      "consumer-lengths.json": "a104ef5a9f2759da628b8853ba47aa14528ea7a5c1b779730ad344e4057320ef",
+      "documentation-check.txt": "b33a704dabc02215ee41469b76498c361283477aff51fe48178c14f992d89b39",
+      "duckdb-1.5.0-ns-public.arrow": "9f4fbd7715599b08e44acaaf87d00924c7285f05873b077c3e5aa3fc3950c806",
+      "duckdb-1.5.0-public-smokes.json": "6e9cdeb192f429cf769f73dbeb1eb5d18d8e6f7d44fcdcbed3163ccb4dc31d0c",
+      "duckdb-1.5.0-us-public.arrow": "9f4fbd7715599b08e44acaaf87d00924c7285f05873b077c3e5aa3fc3950c806",
+      "duckdb-1.5.6-ns-public.arrow": "9f4fbd7715599b08e44acaaf87d00924c7285f05873b077c3e5aa3fc3950c806",
+      "duckdb-1.5.6-public-smokes.json": "38e5fb259f35bce500b2910c77df89b880f56bd58266a1c85f7c80d8c240f3b3",
+      "duckdb-1.5.6-us-public.arrow": "9f4fbd7715599b08e44acaaf87d00924c7285f05873b077c3e5aa3fc3950c806",
+      "duckdb-floor.json": "50d1a26de62fd066abdb949fb5d27b6cdc07c01c1d7d2022e3a92591c95d5066",
+      "generic-conformance.txt": "13dba4d7c756b80fb220bb143fcd647168fe91488daca72c3788846df309fab1",
+      "installed-version.json": "233a4403674865e98b126742d8fee3ab06594c3ead1916b242bd80113a3d885a",
+      "integrated-check.txt": "05c0a73f7fc1b8d201ead6516bc938a1bc37a86b934a309f00e14527ac6124fb",
+      "postgres-checks.json": "e04401114d3e6093ed1b53f0eca1945841075384c5f24df1d007e69da44d2545",
+      "postgres-public-daily.json": "c0633ab1ac13e58c3d2a18280e916fd6e748424d83d44391b9b1b3537c6a5675",
+      "postgres-us-public.arrow": "9f4fbd7715599b08e44acaaf87d00924c7285f05873b077c3e5aa3fc3950c806",
+      "public-smokes-cursor-corrected.py.txt": "3fb615727c291f56e03a17b128d860638b079cfd4589524d2dab5cab1f51b098",
+      "public-smokes-initial.py.txt": "633d20941d289cf4d15406e71f0179e8ac98fc497b251d751e2d9ea9e27a109d",
+      "public-smokes-schema-boundary.py.txt": "a9400de6f64cb9127acbb1e1aaa06ef453e2ef4033f019a6f7708aeb30963712",
+      "public-smokes.py.txt": "c1497d9ddec9e7d85ac543ae38d89d19d1697baaa0c7c17567e34111f9cae73b",
+      "smoke-attempts.json": "9c697f68a369d61e4c2ad20124ae668a7e8a7d4fe89ff5e94d3d0e7012e778b8",
+      "state-full-expression.sql": "287f86305c43f28e3bea887b94287fbb77dd600702ee91d9395a9f03b4a4538b",
+      "state-invariant-metadata.json": "7260be3692371272f3aed8d32e2284ce0a9f886dd6629c3f1796551ea16a04b4",
+      "state-public-full.arrow": "bdcab29984cd9ca0febeb5dfd52820aa434a568f47e565c7b2a7bbe9794786ad",
+      "state-public-study-0.sql": "4d1abefc36d52f1cab52e599796b25019b6b9e237022b562602ba3bf4f599471",
+      "state-public-study-1.sql": "cc023b0087b69b9c7cb42613d366314834b8338a4e59bb8c967b3279c867ed08",
+      "state-public-study-2.sql": "4d1abefc36d52f1cab52e599796b25019b6b9e237022b562602ba3bf4f599471",
+      "state-public-study-3.sql": "cc023b0087b69b9c7cb42613d366314834b8338a4e59bb8c967b3279c867ed08",
+      "state-public-study-4.sql": "4d1abefc36d52f1cab52e599796b25019b6b9e237022b562602ba3bf4f599471",
+      "state-public-study-5.sql": "cc023b0087b69b9c7cb42613d366314834b8338a4e59bb8c967b3279c867ed08",
+      "state-public-study-6.sql": "f81c601548efafe077c915fbae42f120a4573662a6efd164f36e9dfbe9dbfa46",
+      "state-schema-probe.txt": "8447073498da18234879b1d9a5b37b8b1fca2cbd04ad3e776132a4bb86481302",
+      "summary.json": "e33bda666328f991fc903f658eb23a06e82d0667f017ffad7a6725d89f387bcc"
+    }
+  },
+  "cloud_matrices": {
+    "integration/warehouse_execution/test_bigquery_parity.py": {
+      "sha256": "f423c76dcb00e9b07b2d0260ab464f66bad9411c683d6e1018c825da5a8d83cf",
+      "unchanged_from_task6_base": true,
+      "live_run": false,
+      "reason": "Live cloud execution not authorized."
+    },
+    "integration/warehouse_execution/test_snowflake_parity.py": {
+      "sha256": "ed6f4731912710e016e38b13c7df4253b03dafa0a17024e586047f02cdf4d8c8",
+      "unchanged_from_task6_base": true,
+      "live_run": false,
+      "reason": "Live cloud execution not authorized."
+    }
+  },
+  "documentation_sha256": {
+    "CHANGELOG.md": "865e345b3f044ab4eaff0e43457578a3b7963bd6de3e6471210fd15e3ce6a1ba",
+    "benchmarks/README.md": "9ed0a46549c930ad992bc7169c6dcd0b9166801c0fdd1e84238c3c52367f7c01",
+    "docs/guides/backend-compatibility.md": "307b4c2bf8977387576df0b7ee59d7a71f3f9d8683e28d54b3d76ea5eccb341e",
+    "docs/guides/cost-and-residency.md": "efcb57947831eca1c066678d0d3c7e1b39b6e214c0adf74056cf72532173cba9",
+    "docs/guides/temporal-engine.md": "8dce9feca8af0f3c013b81ac462df469cce1499e8cadd0e5a7630cfbf93197a5",
+    "docs/research/2026-11-09-compact-generated-sql.md": "6be7b7832c57fe729f10e851a05eda4b0ab75161e5c53ca53e04eed11c8e2a67"
+  }
+}

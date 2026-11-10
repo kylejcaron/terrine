@@ -153,7 +153,7 @@ def _batch(anchors, specifications, *, readiness=None, boundary="UTC", resolutio
 
 @pytest.mark.parametrize("resolution", ["event", "day"])
 def test_batch_keeps_nonnull_denominators_half_open_bounds_and_anchor_instances(con, resolution):
-    # Catches count reuse as a nullable mean's denominator and inclusive end bounds.
+    # Catches nullable denominators, inclusive ends and cross-source coverage reuse.
     t0 = datetime(2025, 1, 1, 18, 30, tzinfo=UTC)
     pair = _local(
         con,
@@ -162,8 +162,15 @@ def test_batch_keeps_nonnull_denominators_half_open_bounds_and_anchor_instances(
         times=[t0 - timedelta(microseconds=1), t0, t0, t0, t0 + timedelta(days=1)],
     )
     measure, source = pair
+    incomplete = _local(con, [7], dtype="int64", times=[t0], name="partial")
+    anchors = _anchors(
+        con,
+        time=t0.isoformat(),
+        units=("a", "a", "empty"),
+        extra=", 'origin:' || anchor_id AS anchor_provenance",
+    )
     result = _batch(
-        _anchors(con, time=t0.isoformat(), units=("a", "a", "empty")),
+        anchors,
         [
             ("counted", [(replace(measure, aggregation="count"), source)], _DEFAULT_WINDOW, "mean"),
             (
@@ -173,12 +180,25 @@ def test_batch_keeps_nonnull_denominators_half_open_bounds_and_anchor_instances(
                 "mean",
             ),
             ("total", [pair], _DEFAULT_WINDOW, "mean"),
+            ("activity", [pair], _DEFAULT_WINDOW, "conversion"),
+            ("partial", [incomplete], _DEFAULT_WINDOW, "mean"),
             ("wide", [pair], Window(0, "2d"), "mean"),
         ],
+        readiness=Readiness(
+            {
+                "postings": BoundCoverage(
+                    datetime(2025, 1, 1, tzinfo=UTC), datetime(2025, 1, 5, tzinfo=UTC)
+                ),
+                "partial": BoundCoverage(t0, t0 + timedelta(hours=12)),
+            }
+        ),
         boundary="UTC+05:30",
         resolution=resolution,
     )
     rows = sorted(_rows(con, result), key=lambda row: row["anchor_id"])
+    assert [(r["unit"], r["anchor_id"]) for r in rows] == [("a", "0"), ("a", "1"), ("empty", "2")]
+    assert result.table.columns[: len(anchors.columns)] == anchors.columns
+    assert [row["anchor_provenance"] for row in rows] == ["origin:0", "origin:1", "origin:2"]
     assert [(r["counted"], r["average"], r["total"]) for r in rows] == [
         (3, 2.5, Decimal(5)),
         (3, 2.5, Decimal(5)),
@@ -191,6 +211,29 @@ def test_batch_keeps_nonnull_denominators_half_open_bounds_and_anchor_instances(
     ]
     assert all(r[result.columns["total"].reason_column] is None for r in rows)
     assert [row["wide"] for row in rows] == [Decimal(105), Decimal(105), Decimal(0)]
+    assert [r["activity"] for r in rows] == [True, True, False]
+    assert [r["partial"] for r in rows] == [None, None, None]
+    assert all(r[result.columns["partial"].reason_column] == "incomplete_coverage" for r in rows)
+    assert list(result.columns) == ["counted", "average", "total", "activity", "partial", "wide"]
+    for output, dtype in (
+        ("counted", "int64"),
+        ("average", "float64"),
+        ("total", "decimal(38, 0)"),
+        ("activity", "boolean"),
+        ("partial", "decimal(38, 0)"),
+        ("wide", "decimal(38, 0)"),
+    ):
+        meta = result.columns[output]
+        assert str(result.table[output].type()) == dtype
+        assert meta.window == (Window(0, "2d") if output == "wide" else _DEFAULT_WINDOW)
+        assert meta.role == "outcome"
+        assert meta.arithmetic == "exact"
+        assert meta.numeric_policy == (None if output in {"average", "activity"} else "exact")
+        assert str(result.table[meta.observed_from_column].type()) == "timestamp('UTC')"
+        assert str(result.table[meta.observed_until_column].type()) == "timestamp('UTC')"
+        assert str(result.table[meta.complete_column].type()) == "boolean"
+        assert str(result.table[meta.reason_column].type()) == "string"
+        assert all(row[meta.complete_column] is (output != "partial") for row in rows)
 
 
 @pytest.mark.parametrize("exact", [False, True])
@@ -231,23 +274,51 @@ def test_batch_masks_unavailable_outputs_and_count_only_inputs_before_arithmetic
 @pytest.mark.parametrize("exact", [False, True])
 @pytest.mark.parametrize("resolution", ["event", "day"])
 def test_batch_selected_invalid_and_unknown_filter_candidates_still_refuse(con, exact, resolution):
-    # Catches dropping unknown predicates or hiding invalid available candidates.
+    # Shared candidates keep each alias's refusal and skip the earlier unavailable output.
     pair = _local(con, [float("nan")], exact=exact)
+    anchors = _anchors(
+        con,
+        units=("a", "a"),
+        extra=", TIMESTAMPTZ '2025-01-04 00:00:00+00' AS _observed_until",
+    )
     result = _batch(
-        _anchors(con), [("bad", [pair], _DEFAULT_WINDOW, "mean")], resolution=resolution
+        anchors,
+        [
+            ("unavailable", [pair], Window(0, "3d"), "mean"),
+            ("first_bad", [pair], _DEFAULT_WINDOW, "mean"),
+            ("second_bad", [pair], _DEFAULT_WINDOW, "mean"),
+        ],
+        resolution=resolution,
     )
     with pytest.raises(TerrineError) as error:
         _rows(con, result)
     assert error.value.code == "terrine.temporal.float64_precision"
-    assert error.value.context["reason"] == "nonfinite_input"
-    assert set(error.value.context) == {"reason", "failed_count", "source", "measure", "output"}
+    assert dict(error.value.context) == {
+        "reason": "nonfinite_input",
+        "failed_count": 2,
+        "source": "postings",
+        "measure": "revenue",
+        "output": "first_bad",
+    }
     pair = _local(con, [1], dtype="int64", active=[None])
     result = _batch(
-        _anchors(con), [("unknown", [pair], _DEFAULT_WINDOW, "mean")], resolution=resolution
+        anchors,
+        [
+            ("unavailable", [pair], Window(0, "3d"), "mean"),
+            ("first_unknown", [pair], _DEFAULT_WINDOW, "mean"),
+            ("second_unknown", [pair], _DEFAULT_WINDOW, "mean"),
+        ],
+        resolution=resolution,
     )
     with pytest.raises(TerrineError) as error:
         _rows(con, result)
     assert error.value.code == "terrine.filter.unknown"
+    assert dict(error.value.context) == {
+        "failed_count": 2,
+        "source": "postings",
+        "measure": "revenue",
+        "output": "first_unknown",
+    }
 
 
 @pytest.mark.parametrize("resolution", ["event", "day"])
@@ -298,6 +369,128 @@ def test_daily_scope_excludes_unused_days_and_units(con):
     rows = sorted(_rows(con, result), key=lambda row: row["anchor_id"])
     assert [row["value"] for row in rows] == [2.0, 3.0]
     assert all(row[result.columns["value"].reason_column] is None for row in rows)
+
+
+@pytest.mark.parametrize(
+    "unit,declared_origin",
+    [
+        pytest.param("us", False, id="us"),
+        pytest.param("ns", False, id="ns"),
+        pytest.param("us", True, id="us-declared-origin"),
+    ],
+)
+def test_daily_mask_preserves_fractional_pre_epoch_instants(con, unit, declared_origin):
+    from terrine.temporal.aggregate import AggregateRequest, aggregate_windows
+
+    if declared_origin:
+        con.raw_sql("SET TimeZone = 'America/New_York'")
+    # Dropping a signed remainder excludes the last selected instant before the epoch.
+    day_ns = 86400 * 10**9
+    tick_ns = 1000 if unit == "us" else 1
+    clocks_ns = [-day_ns - tick_ns, -day_ns + tick_ns, -tick_ns, 0, -day_ns + tick_ns]
+    raw = con.create_table(
+        "postings",
+        pa.table(
+            {
+                "user_id": ["a", "a", "a", "a", "unused"],
+                "occurred_at": pa.array(
+                    [clock // tick_ns for clock in clocks_ns], type=pa.timestamp(unit)
+                ),
+                "amount": [float("nan"), 2.0, 3.0, float("nan"), float("nan")],
+            }
+        ),
+    )
+    source = BoundSource(
+        "postings",
+        TableRef(kind="table", name="postings"),
+        "occurred_at",
+        {"user": "user_id"},
+        {"revenue": "amount"},
+        {},
+        (),
+        "duckdb",
+        "UTC",
+    )
+    events = normalize_events(raw, source, "user_id")
+    measure = resolve_measure(
+        events, BoundMeasure("revenue", "postings", "sum", (), None, None), source=source
+    )
+    anchors = _anchors(
+        con,
+        time="1969-12-31 00:00:00+00",
+        units=("a", "a"),
+        extra=", 'origin:' || anchor_id AS anchor_provenance",
+    )
+    requests = [
+        AggregateRequest(
+            BoundMetric(
+                output,
+                "user",
+                {"postings": "user_id"},
+                "mean",
+                (replace(measure, aggregation=aggregation),),
+                ("postings",),
+                (),
+            ),
+            _DEFAULT_WINDOW,
+            output,
+            "outcome",
+        )
+        for output, aggregation in (
+            ("counted", "count"),
+            ("total", "sum"),
+            ("average", "avg_event"),
+        )
+    ]
+    origin = datetime(1969, 12, 31, tzinfo=UTC)
+    result = aggregate_windows(
+        anchors,
+        requests,
+        {"postings": (events, source)},
+        Readiness(
+            {
+                "postings": BoundCoverage(
+                    datetime(1969, 12, 30, tzinfo=UTC), datetime(1970, 1, 2, tzinfo=UTC)
+                )
+            }
+        ),
+        resolution="day",
+        boundary="UTC",
+        _origin_bounds=(origin, origin) if declared_origin else None,
+    )
+    selected = [
+        value
+        for clock, value in zip(clocks_ns[:4], [100, 2, 3, 100], strict=True)
+        if -day_ns <= clock < 0
+    ]
+    assert selected == [2, 3]
+    rows = sorted(_rows(con, result), key=lambda row: row["anchor_id"])
+    assert [(row["anchor_id"], row["anchor_provenance"]) for row in rows] == [
+        ("0", "origin:0"),
+        ("1", "origin:1"),
+    ]
+    assert [(row["counted"], row["total"], row["average"]) for row in rows] == [
+        (len(selected), sum(selected), sum(selected) / len(selected))
+    ] * 2
+    for meta in result.columns.values():
+        assert all(row[meta.complete_column] is True for row in rows)
+        assert all(row[meta.reason_column] is None for row in rows)
+
+
+def test_daily_mask_keeps_unbounded_utc_endpoints_in_the_integer_domain(con):
+    from terrine.temporal.aggregate import _Builder, _masked_day_events, _WindowContext
+
+    # This finite endpoint cannot be converted to a naive calendar timestamp.
+    points = con.sql(
+        "SELECT 'a' AS unit, TIMESTAMPTZ '2025-01-01' AS start, "
+        "TIMESTAMPTZ '294247-01-10 04:00:54.775806+00' AS finish, TRUE AS available"
+    )
+    events = con.sql("SELECT 'a' AS _unit, TIMESTAMP '2025-01-02 12:00:00' AS _timestamp")
+    context = _WindowContext("start", "finish", "available", "reason", "start", "finish", None)
+    masked, timestamp = _masked_day_events(_Builder(points, ""), events, [context])
+    assert con.to_pyarrow(
+        masked.select(masked[timestamp].notnull().name("inside"))
+    ).to_pylist() == [{"inside": True}]
 
 
 def _rows(con, result):
@@ -507,16 +700,17 @@ def test_unit_observation_end_preserves_value_or_exact_unavailable_reason(con):
 
 
 @pytest.mark.parametrize(
-    "time,window",
+    "time,window,failed_count",
     [
-        ("2025-01-02 00:00:00+00", Window(0, "1h")),
-        ("2025-01-02 12:00:00+00", Window(0, "1d")),
-        ("2025-01-02 00:00:00.000001+00", Window(0, "1d")),
-        ("2025-01-02 00:00:00+00", Window("1s", "86401s")),
+        ("2025-01-02 00:00:00+00", Window(0, "1h"), None),
+        ("2025-01-02 12:00:00+00", Window(0, "1d"), 1),
+        ("2025-01-02 00:00:00.000001+00", Window(0, "1d"), 1),
+        ("2025-01-02 00:00:00+00", Window("1s", "86401s"), 1),
     ],
 )
-def test_calendar_domain_precedes_empty_and_unavailable(con, time, window):
+def test_calendar_domain_precedes_empty_and_unavailable(con, time, window, failed_count):
     pair = _local(con, [None], aggregation="avg_calendar_day", units=["other"])
+    measure, source = pair
     readiness = Readiness(
         {
             "postings": BoundCoverage(
@@ -525,8 +719,36 @@ def test_calendar_domain_precedes_empty_and_unavailable(con, time, window):
         }
     )
     with pytest.raises(TerrineError) as error:
-        _rows(con, _result(_anchors(con, time=time), [pair], window=window, readiness=readiness))
+        _rows(
+            con,
+            _batch(
+                _anchors(con, time=time),
+                [
+                    (
+                        "unavailable",
+                        [(replace(measure, aggregation="sum"), source)],
+                        window,
+                        "mean",
+                    ),
+                    ("first_calendar", [pair], window, "mean"),
+                    ("second_calendar", [pair], window, "mean"),
+                ],
+                readiness=readiness,
+            ),
+        )
     assert error.value.code == "terrine.metric.unaligned_calendar_average"
+    expected = {
+        "metric": "first_calendar",
+        "output": "first_calendar",
+        "window_start": window.start.seconds,
+        "window_end": window.end.seconds,
+        "boundary": "UTC",
+        "phase": "pre_output",
+        "measure": "revenue",
+    }
+    if failed_count is not None:
+        expected["failed_count"] = failed_count
+    assert dict(error.value.context) == expected
 
 
 def test_exact_window_excludes_wide_history_and_retains_decimal_scale(con):

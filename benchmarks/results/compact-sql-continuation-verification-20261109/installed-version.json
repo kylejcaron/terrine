@@ -1,0 +1,6 @@
+{
+  "command": "uv run --no-sync python -c 'import duckdb,terrine; print(duckdb.__version__,duckdb.__file__,terrine.__file__); assert duckdb.__version__==\"1.5.6\"'",
+  "exit": 0,
+  "stdout": "1.5.6 /Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/.venv/lib/python3.12/site-packages/duckdb/__init__.py /Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/terrine/__init__.py\n",
+  "stderr": ""
+}

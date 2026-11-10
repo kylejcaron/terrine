@@ -1,0 +1,100 @@
+{
+  "case": "readme",
+  "input_tables": {
+    "customers": {
+      "rows": 3,
+      "schema": "customer_id: string",
+      "arrow_stream_sha256": "21d4a7178c5f13b0b082c5cbeb197a61c7e107ee7fe69c5c0b04564944430921"
+    },
+    "orders": {
+      "rows": 5,
+      "schema": "customer_id: string\nordered_at: timestamp[us]\namount: double",
+      "arrow_stream_sha256": "01c2e04822225d9ffdf5adc379e80608aeb7690f1a6815bbfb0be1e4a5fa54b7"
+    }
+  },
+  "load_seconds": 0.21550937509164214,
+  "build_seconds": 0.10464145801961422,
+  "projected_compile_seconds": 0.06941533298231661,
+  "rows": 6,
+  "compared_columns": [
+    "unit",
+    "t0",
+    "orders_30d",
+    "orders_30d__complete",
+    "orders_30d__reason",
+    "spend_30d",
+    "spend_30d__complete",
+    "spend_30d__reason",
+    "spend_next_30d",
+    "spend_next_30d__complete",
+    "spend_next_30d__reason"
+  ],
+  "public_columns": 21,
+  "result_parity_each_sample": true,
+  "schema_parity_each_sample": true,
+  "oracle_sensitivity": [
+    "missing",
+    "duplicate",
+    "changed_value",
+    "changed_type"
+  ],
+  "arrow_schema": "unit: string\nt0: timestamp[us, tz=UTC]\norders_30d: int64\norders_30d__complete: bool\norders_30d__reason: string\nspend_30d: double\nspend_30d__complete: bool\nspend_30d__reason: string\nspend_next_30d: double\nspend_next_30d__complete: bool\nspend_next_30d__reason: string",
+  "arrow_bytes": {
+    "handwritten_projected": 385,
+    "terrine_projected": 385,
+    "public": 923
+  },
+  "seconds": {
+    "handwritten": [
+      0.0024743748363107443,
+      0.002391583053395152,
+      0.0026856670156121254,
+      0.0024035838432610035,
+      0.002179624978452921
+    ],
+    "terrine_precompiled": [
+      0.03708520787768066,
+      0.03712062491104007,
+      0.03966041700914502,
+      0.04005779093131423,
+      0.03651549993082881
+    ],
+    "terrine_public": [
+      0.4615419169422239,
+      0.5001463750377297,
+      0.4750557499937713,
+      0.4826037078164518,
+      0.46694266609847546
+    ]
+  },
+  "medians_seconds": {
+    "handwritten": 0.0024035838432610035,
+    "terrine_precompiled": 0.03712062491104007,
+    "terrine_public": 0.4750557499937713
+  },
+  "sql": {
+    "handwritten": {
+      "submitted_bytes": 1620,
+      "submitted_lines": 32,
+      "compact_bytes": 1605,
+      "formatted_bytes": 1777
+    },
+    "terrine_projected": {
+      "submitted_bytes": 42502,
+      "submitted_lines": 1,
+      "compact_bytes": 42502,
+      "formatted_bytes": 90060
+    },
+    "terrine_full_expression": {
+      "submitted_bytes": 42823,
+      "submitted_lines": 1,
+      "compact_bytes": 42823,
+      "formatted_bytes": 89269
+    }
+  },
+  "public_study_sql": {
+    "statements": 3,
+    "bytes": 97005,
+    "excludes": "metadata/admission probes, transaction control and catalog introspection"
+  }
+}

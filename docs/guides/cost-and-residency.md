@@ -92,8 +92,9 @@ formatted statement; the statement sent for execution is more compact.
 | README design SQL | 20,000 characters |
 | 5 metrics by 10 windows, BigQuery dialect | 1,000,000 characters (BigQuery accepts 1,024k) |
 
-A size above its ceiling is open work: the check records it as an expected
-failure that becomes a failure once the recipe meets its ceiling.
+A size above its ceiling fails the check. Existing strict expected failures name
+the unresolved `ltv` and `life_table` budgets; their marks are removed only after
+an actual budget pass. Other failures are not automatically reclassified.
 
 Query time is a tracked target, not a guarantee or a test gate: a recipe should
 evaluate within 3 times (DuckDB) or 10 times (PostgreSQL 16) the time of its
@@ -106,7 +107,8 @@ since a PostgreSQL table cannot store an anonymous record. Python-side
 compilation and validation are measured separately by the
 [overhead benchmark](../../benchmarks/README.md#fixed-compiler-overhead).
 
-Measured on 2026-11-07 (Apple M3 Pro; DuckDB 1.5.6; PostgreSQL 16.15):
+Historical measurements from 2026-11-07 (Apple M3 Pro; DuckDB 1.5.6; PostgreSQL
+16.15), before the current lowering changes; these are not current timings:
 
 | Recipe | Features | SQL characters | DuckDB time ratio (target 3) | PostgreSQL time ratio (target 10) |
 | --- | ---: | ---: | ---: | ---: |
@@ -119,6 +121,40 @@ Measured on 2026-11-07 (Apple M3 Pro; DuckDB 1.5.6; PostgreSQL 16.15):
 | `state_panel` | 1 | 27,336 | 4.5 | 41.4 |
 | `event_sequence` | 3 | 21,685 | 4.2 | 4.7 |
 
-The README design measures 19,663 characters. The 5-metric by 10-window design
-measures 1,050,208 formatted characters in the BigQuery dialect, about 22,600
-per metric window.
+That historical run measured README SQL at 19,663 characters and the BigQuery
+5-metric by 10-window design at 1,050,208 formatted characters.
+
+### Current bounded comparison (2026-11-09)
+
+The [compact generated SQL report](../research/2026-11-09-compact-generated-sql.md)
+preserves the same literal inputs, schemas and quality columns for a separate
+five-repeat SQL-to-Arrow comparator, not the historical fastest-of-seven CTAS
+method above. At production `24e0573`, one-thread DuckDB query/literal median
+ratios are 3.459× (README), 4.412× (scaled monthly) and 1.839× (five metrics by
+ten windows). Only wide meets the 3× waypoint; its public call is 30.013× the literal
+query and includes additional validation, compilation and output metadata.
+These are observed fixtures, not all-recipe or warehouse guarantees.
+
+The current consumer budget selection observes:
+
+| Consumer | Formatted characters | Ceiling | Result |
+| --- | ---: | ---: | --- |
+| README | 19,520 | 20,000 | Passed, unchanged actual consumer |
+| `state_panel` | 18,525 | 30,000 | Passed, combined daily/state implementation |
+| `ltv` | — | 30,000 | Existing strict expected failure retained |
+| `life_table` | — | 30,000 | Existing strict expected failure retained |
+| BigQuery 5 metrics × 10 windows | 514,334 | 1,000,000 | Passed, metadata-only compilation |
+
+The selection reports eight passing checks and the two existing strict xfails.
+Earlier failed README/state-panel budgets and their unchanged ceilings are
+preserved in the research report; no new xfail or threshold waiver was used.
+The private README consumer's 19,520 characters must not be inferred from the
+comparator's differently formatted 19,522-byte full expression.
+
+A separate same-source state A/B experiment before the daily changes reduced
+formatted SQL from 32,387 to 22,767 characters, but increased construction and
+public-call medians; overlapping query ranges establish no runtime gain.
+Those timings are not measurements of the final 18,525-character combined graph.
+PostgreSQL 16.15 native, forced-portable and actual public daily-boundary probes
+passed locally. No new PostgreSQL performance result or live BigQuery/Snowflake
+execution is claimed; metadata compilation establishes no cloud runtime parity.

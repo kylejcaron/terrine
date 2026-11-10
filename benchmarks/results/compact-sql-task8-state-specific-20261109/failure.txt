@@ -1,0 +1,9 @@
+Traceback (most recent call last):
+  File "/tmp/terrine-task8-state-specific-20261109.py", line 332, in <module>
+    main()
+  File "/tmp/terrine-task8-state-specific-20261109.py", line 242, in main
+    require_full(direct, baseline, baseline_rows)
+  File "/tmp/terrine-task8-state-specific-20261109.py", line 126, in require_full
+    assert table.schema.serialize().to_pybytes() == baseline.schema.serialize().to_pybytes()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError

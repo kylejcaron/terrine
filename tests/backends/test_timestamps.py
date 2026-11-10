@@ -145,8 +145,8 @@ def test_duckdb_lookup_keys_are_native_for_microsecond_pairs_and_structs_for_nan
         assert point.type() == state.type() == dt.Timestamp(scale=6)
 
 
-def test_duckdb_microsecond_comparisons_order_infinities_nulls_and_naive_utc_clocks():
-    """Aware against naive instants under a non-UTC session, against their rank order."""
+def test_duckdb_microsecond_comparisons_order_shifted_infinities_and_naive_utc_clocks():
+    """Mixed clocks and virtual endpoints follow independent integer/rank order."""
     con, _ = _new_york_session()
     texts = [
         "-infinity",
@@ -161,6 +161,18 @@ def test_duckdb_microsecond_comparisons_order_infinities_nulls_and_naive_utc_clo
         f"({index}, {'NULL' if text is None else repr(text)})" for index, text in enumerate(texts)
     )
     ops = ("lt", "le", "gt", "ge", "eq")
+    offsets = (0, -1, 1, -(2**63), 2**63 - 1)
+    epoch = datetime(1970, 1, 1)
+    coordinates = [
+        None
+        if text is None
+        else (-1, 0)
+        if text == "-infinity"
+        else (1, 0)
+        if text == "infinity"
+        else (0, (datetime.fromisoformat(text) - epoch) // timedelta(microseconds=1) * 1000)
+        for text in texts
+    ]
     try:
         con.raw_sql(
             "CREATE TABLE v AS SELECT i, timezone('UTC', CAST(text AS TIMESTAMP)) AS aware, "
@@ -172,19 +184,34 @@ def test_duckdb_microsecond_comparisons_order_infinities_nulls_and_naive_utc_clo
             pairs.select(
                 "left_i",
                 "right_i",
-                **{op: compare_timestamps(pairs.left_aware, pairs.right_naive, op) for op in ops},
+                **{
+                    f"{op}_{index}": compare_timestamps(
+                        pairs.left_aware, pairs.right_naive, op, right_offset_seconds=offset
+                    )
+                    for index, offset in enumerate(offsets)
+                    for op in ops
+                },
             )
         ).to_pylist()
     finally:
         con.disconnect()
-    missing = len(texts) - 1
     assert len(rows) == len(texts) ** 2
     for row in rows:
-        a, b = row["left_i"], row["right_i"]
-        expected = {"lt": a < b, "le": a <= b, "gt": a > b, "ge": a >= b, "eq": a == b}
-        if missing in (a, b):
-            expected = dict.fromkeys(ops)
-        assert {op: row[op] for op in ops} == expected, (a, b)
+        left, right = coordinates[row["left_i"]], coordinates[row["right_i"]]
+        for index, offset in enumerate(offsets):
+            if left is None or right is None:
+                expected = dict.fromkeys(ops)
+            else:
+                rank, nanos = right
+                shifted = (rank, nanos + offset * 10**9 if rank == 0 else nanos)
+                expected = {
+                    "lt": left < shifted,
+                    "le": left <= shifted,
+                    "gt": left > shifted,
+                    "ge": left >= shifted,
+                    "eq": left == shifted,
+                }
+            assert {op: row[f"{op}_{index}"] for op in ops} == expected, (left, right, offset)
 
 
 def test_duckdb_mixed_utc_comparisons_preserve_finite_timestamp_endpoints():
@@ -269,6 +296,96 @@ def test_duckdb_mixed_utc_comparisons_preserve_finite_timestamp_endpoints():
                 }
             )
             assert {op: row[prefix + op] for op in operations} == expected, (prefix, left, right)
+
+
+def test_duckdb_native_elapsed_shifts_preserve_dst_boundaries_and_declines(connection):
+    """Elapsed seconds stay exact; uncertain types and virtual endpoints decline."""
+    connection.raw_sql("SET TimeZone = 'America/New_York'")
+    lower = datetime(1, 1, 1, tzinfo=UTC)
+    upper = datetime(9999, 12, 31, 23, 59, 59, 999999, tzinfo=UTC)
+    spring = datetime(2025, 3, 9, 6, 30, tzinfo=UTC)
+    span = (upper - lower) // timedelta(seconds=1)
+    cases = [
+        (lower, span, True),
+        (upper, -span, True),
+        (spring, 86400, True),
+        (spring + timedelta(days=1), -86400, True),
+        (lower, -1, False),
+        (upper, 1, False),
+        (spring, -(2**63), False),
+        (spring, 2**63 - 1, False),
+    ]
+    probes = []
+    epoch = datetime(1970, 1, 1, tzinfo=UTC)
+    expected = []
+    operations = ("lt", "le", "gt", "ge", "eq")
+    with dialect_scope("duckdb"):
+        dialect = current_dialect()
+        for index, (origin, offset, admitted) in enumerate(cases):
+            # The selected source instant is independent of the declared shift.
+            event = (
+                lower + timedelta(microseconds=999999)
+                if index == 1
+                else upper.replace(microsecond=0)
+                if index == 0
+                else spring + timedelta(days=1)
+            )
+            left = cast(ir.TimestampValue, ibis.literal(event))
+            right = cast(ir.TimestampValue, ibis.literal(origin))
+            keys = dialect.native_shifted_comparison_keys(
+                left, right, offset_seconds=offset, right_bounds=(origin, origin)
+            )
+            assert (keys is not None) == admitted
+            probes.append(
+                ibis.literal(index)
+                .name("i")
+                .as_table()
+                .select(
+                    "i",
+                    **{
+                        op: getattr(keys[0], f"__{op}__")(keys[1])
+                        if keys is not None
+                        else compare_timestamps(left, right, op, right_offset_seconds=offset)
+                        for op in operations
+                    },
+                )
+            )
+            a = (event - epoch) // timedelta(microseconds=1)
+            b = (origin - epoch) // timedelta(microseconds=1) + offset * 10**6
+            expected.append(dict(lt=a < b, le=a <= b, gt=a > b, ge=a >= b, eq=a == b))
+        source = ibis.table(
+            {
+                "utc": dt.Timestamp(timezone="UTC", scale=6),
+                "naive": dt.Timestamp(scale=6),
+                "ns": dt.Timestamp(scale=9),
+                "local": dt.Timestamp(timezone="America/New_York", scale=6),
+                "ms": dt.Timestamp(timezone="UTC", scale=3),
+            }
+        )
+        for field in ("naive", "ns", "local", "ms"):
+            assert (
+                dialect.native_shifted_comparison_keys(
+                    source[field], source.utc, offset_seconds=1, right_bounds=(spring, spring)
+                )
+                is None
+            )
+            assert (
+                dialect.native_shifted_comparison_keys(
+                    source.utc, source[field], offset_seconds=1, right_bounds=(spring, spring)
+                )
+                is None
+            )
+        with dialect_scope("generic"):
+            assert (
+                current_dialect().native_shifted_comparison_keys(
+                    source.utc, source.utc, offset_seconds=1, right_bounds=(spring, spring)
+                )
+                is None
+            )
+    rows = connection.to_pyarrow(ibis.union(*probes)).to_pylist()
+    assert len(rows) == len(cases)
+    for row in rows:
+        assert {op: row[op] for op in operations} == expected[row["i"]]
 
 
 @pytest.mark.parametrize(

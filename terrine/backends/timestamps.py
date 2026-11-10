@@ -10,6 +10,7 @@ from an exact epoch delta.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal, cast
 
@@ -192,6 +193,32 @@ def timestamp_parts(
     return dialect.timestamp_parts(value)
 
 
+def _compare_timestamp_parts(
+    left: tuple[ir.IntegerValue, ir.IntegerValue, ir.IntegerValue],
+    right: tuple[ir.IntegerValue, ir.IntegerValue, ir.IntegerValue],
+    op: Literal["lt", "le", "gt", "ge", "eq"],
+) -> ir.BooleanValue:
+    """Compare unshifted integer coordinates without exact-state admission."""
+    left_rank, left_seconds, left_nanos = left
+    right_rank, right_seconds, right_nanos = right
+    equal_rank = left_rank == right_rank
+    equal_seconds = left_seconds == right_seconds
+    equal = equal_rank & equal_seconds & (left_nanos == right_nanos)
+    greater = (left_rank > right_rank) | (
+        equal_rank & ((left_seconds > right_seconds) | (equal_seconds & (left_nanos > right_nanos)))
+    )
+    less = (left_rank < right_rank) | (
+        equal_rank & ((left_seconds < right_seconds) | (equal_seconds & (left_nanos < right_nanos)))
+    )
+    return {
+        "eq": equal,
+        "gt": greater,
+        "ge": greater | equal,
+        "lt": less,
+        "le": less | equal,
+    }[op]
+
+
 def timestamp_order_key(value: ir.TimestampValue) -> ir.Value:
     """Return a value whose ordering and equality are exactly the instants'."""
     return current_dialect(value).timestamp_order_key(value)
@@ -200,6 +227,51 @@ def timestamp_order_key(value: ir.TimestampValue) -> ir.Value:
 def lookup_keys(point: ir.TimestampValue, state: ir.TimestampValue) -> tuple[ir.Value, ir.Value]:
     """Keys whose order compares a point cutoff with a state instant exactly."""
     return current_dialect(point, state).lookup_keys(point, state)
+
+
+@dataclass(frozen=True, slots=True)
+class _TimestampComparisonKey:
+    rank: ir.IntegerValue
+    nanoseconds: ir.DecimalValue
+
+
+def _timestamp_comparison_key(
+    value: ir.TimestampValue, *, backend: str | None = None
+) -> _TimestampComparisonKey:
+    """An exact coordinate with separate infinity and NULL ordering."""
+    rank, seconds, nanos = timestamp_parts(value, backend=backend)
+    coordinate = cast(ir.DecimalValue, seconds.cast(dt.Decimal(38, 0))) * 10**9 + nanos
+    return _TimestampComparisonKey(rank, cast(ir.DecimalValue, coordinate))
+
+
+def _compare_timestamp_keys(
+    left: _TimestampComparisonKey,
+    right: _TimestampComparisonKey,
+    op: Literal["lt", "le", "gt", "ge", "eq"],
+    *,
+    right_offset_seconds: int = 0,
+) -> ir.BooleanValue:
+    """Compare exact virtual endpoints without constructing a shifted timestamp."""
+    right_coordinate = right.nanoseconds
+    if right_offset_seconds:
+        offset = cast(
+            ir.DecimalValue, ibis.literal(right_offset_seconds * 10**9, type=dt.Decimal(38, 0))
+        )
+        shifted = right_coordinate + offset
+        right_coordinate = (right.rank == ibis.literal(0)).ifelse(shifted, right_coordinate)
+    equal_rank = left.rank == right.rank
+    equal = equal_rank & (left.nanoseconds == right_coordinate)
+    greater = (left.rank > right.rank) | (equal_rank & (left.nanoseconds > right_coordinate))
+    less = (left.rank < right.rank) | (equal_rank & (left.nanoseconds < right_coordinate))
+    if op == "eq":
+        return equal
+    if op == "gt":
+        return greater
+    if op == "ge":
+        return greater | equal
+    if op == "lt":
+        return less
+    return less | equal
 
 
 def compare_timestamps(
@@ -224,35 +296,15 @@ def compare_timestamps(
             "lt": native_left < native_right,
             "le": native_left <= native_right,
         }[op]
-    backend = dialect.name
-    left_rank, left_seconds, left_nanos = timestamp_parts(left, backend=backend)
-    right_rank, right_seconds, right_nanos = timestamp_parts(right, backend=backend)
-    if right_offset_seconds:
-        # Integer nanosecond coordinates preserve shifts without timestamp narrowing.
-        wide = dt.Decimal(38, 0)
-        left_seconds = cast(ir.DecimalValue, left_seconds.cast(wide)) * 10**9 + left_nanos
-        shifted = (
-            cast(ir.DecimalValue, right_seconds.cast(wide)) * 10**9
-            + right_nanos
-            + cast(ir.DecimalValue, ibis.literal(right_offset_seconds * 10**9, type=wide))
+    if not right_offset_seconds:
+        return _compare_timestamp_parts(
+            timestamp_parts(left, backend=dialect.name),
+            timestamp_parts(right, backend=dialect.name),
+            op,
         )
-        right_seconds = (right_rank == ibis.literal(0)).ifelse(shifted, right_seconds.cast(wide))
-        left_nanos = right_nanos = ibis.literal(0)
-    equal_rank = left_rank == right_rank
-    equal_seconds = left_seconds == right_seconds
-    equal = equal_rank & equal_seconds & (left_nanos == right_nanos)
-    greater = (left_rank > right_rank) | (
-        equal_rank & ((left_seconds > right_seconds) | (equal_seconds & (left_nanos > right_nanos)))
+    return _compare_timestamp_keys(
+        _timestamp_comparison_key(left, backend=dialect.name),
+        _timestamp_comparison_key(right, backend=dialect.name),
+        op,
+        right_offset_seconds=right_offset_seconds,
     )
-    less = (left_rank < right_rank) | (
-        equal_rank & ((left_seconds < right_seconds) | (equal_seconds & (left_nanos < right_nanos)))
-    )
-    if op == "eq":
-        return equal
-    if op == "gt":
-        return greater
-    if op == "ge":
-        return greater | equal
-    if op == "lt":
-        return less
-    return less | equal

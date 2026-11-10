@@ -1,0 +1,84 @@
+Worktree: /Users/kylejcaron/orca/workspaces/terrine/compact-sql-comparator
+Revision: 0a05ded (coordinator-authorized unchanged-production comparator worktree)
+Command: uv run pytest integration/test_cost_budget.py -m scale -k 'readme or (characters and state_panel)'
+
+   Building terrine @ file:///Users/kylejcaron/orca/workspaces/terrine/compact-sql-comparator
+      Built terrine @ file:///Users/kylejcaron/orca/workspaces/terrine/compact-sql-comparator
+Uninstalled 1 package in 2ms
+Installed 1 package in 1ms
+============================= test session starts ==============================
+platform darwin -- Python 3.12.11, pytest-8.4.2, pluggy-1.7.0
+rootdir: /Users/kylejcaron/orca/workspaces/terrine/compact-sql-comparator
+configfile: pyproject.toml
+plugins: tach-0.35.3, hypothesis-6.170.1, xdist-3.8.0, split-0.11.0, platformdirs-4.13.4, anyio-4.15.1
+collected 26 items / 24 deselected / 2 selected
+
+integration/test_cost_budget.py FF                                       [100%]
+
+=================================== FAILURES ===================================
+__________ test_recipe_sql_within_characters_per_feature[state_panel] __________
+
+duckdb_measured = mappingproxy({'time_series': Measured(chars=31248, features=3, equal=True, error=None), 'trial_panel': Measured(chars=...49, features=1, equal=True, error=None), 'event_sequence': Measured(chars=330363, features=3, equal=True, error=None)})
+recipe = 'state_panel'
+
+    @pytest.mark.scale
+    @pytest.mark.parametrize("recipe", _cases(_OVER_CHARS, "against 30,000 per feature"))
+    def test_recipe_sql_within_characters_per_feature(duckdb_measured, recipe):
+        measured = duckdb_measured[recipe]
+>       assert measured.chars <= _CHARS_PER_FEATURE * measured.features
+E       assert 196349 <= (30000 * 1)
+E        +  where 196349 = Measured(chars=196349, features=1, equal=True, error=None).chars
+E        +  and   1 = Measured(chars=196349, features=1, equal=True, error=None).features
+
+integration/test_cost_budget.py:142: AssertionError
+_____________________ test_readme_design_sql_within_budget _____________________
+
+    @pytest.mark.scale
+    def test_readme_design_sql_within_budget():
+>       assert len(ibis.to_sql(readme_design().build(readme_model()).expr)) <= _README_CHARS
+E       assert 89267 <= 20000
+E        +  where 89267 = len(SQLString('WITH "t12" AS (\n  SELECT\n    "t11"."unit",\n    "t11"."anchor_id",\n    "t11"."__terrine_w0_s",\n    "t11...44"."__terrine_value_0_key_unit"\n  AND "t9"."anchor_id" IS NOT DISTINCT FROM "t44"."__terrine_value_0_key_anchor_id"'))
+E        +    where SQLString('WITH "t12" AS (\n  SELECT\n    "t11"."unit",\n    "t11"."anchor_id",\n    "t11"."__terrine_w0_s",\n    "t11...44"."__terrine_value_0_key_unit"\n  AND "t9"."anchor_id" IS NOT DISTINCT FROM "t44"."__terrine_value_0_key_anchor_id"') = <function to_sql at 0x10d8a9080>(r0 := DatabaseTable: customer\n  customer_id string\n\nr1 := DatabaseTable: orders\n  customer_id string\n  ordered_at  tim...d_from:  r36.__terrine_value_2_observed_from\n    __terrine_value_2_observed_until: r36.__terrine_value_2_observed_until)
+E        +      where <function to_sql at 0x10d8a9080> = ibis.to_sql
+E        +      and   r0 := DatabaseTable: customer\n  customer_id string\n\nr1 := DatabaseTable: orders\n  customer_id string\n  ordered_at  tim...d_from:  r36.__terrine_value_2_observed_from\n    __terrine_value_2_observed_until: r36.__terrine_value_2_observed_until = Frame(unit='unit', features=('orders_30d', 'spend_30d'), outcomes=('spend_next_30d',), columns=3).expr
+E        +        where Frame(unit='unit', features=('orders_30d', 'spend_30d'), outcomes=('spend_next_30d',), columns=3) = build(Model(units=('customer',), events=('orders',), history=(), metrics=('orders', 'spend'), dialect='duckdb'))
+E        +          where build = Design(unit=None, anchor=Schedule(every=Months(1), start=datetime.date(2025, 2, 1), end=datetime.date(2025, 3, 1)), fe... treatment=None, gap=Duration('0s'), shape='cross_section', anchor_range=None, sample=None, administrative_cutoff=None).build
+E        +            where Design(unit=None, anchor=Schedule(every=Months(1), start=datetime.date(2025, 2, 1), end=datetime.date(2025, 3, 1)), fe... treatment=None, gap=Duration('0s'), shape='cross_section', anchor_range=None, sample=None, administrative_cutoff=None) = readme_design()
+E        +          and   Model(units=('customer',), events=('orders',), history=(), metrics=('orders', 'spend'), dialect='duckdb') = readme_model()
+
+integration/test_cost_budget.py:162: AssertionError
+=============================== warnings summary ===============================
+integration/test_cost_budget.py: 14 warnings
+  /Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/.venv/lib/python3.12/site-packages/ibis/backends/duckdb/__init__.py:332: DeprecationWarning: fetch_arrow_table() is deprecated, use to_arrow_table() instead.
+    meta = result.fetch_arrow_table()
+
+integration/test_cost_budget.py::test_recipe_sql_within_characters_per_feature[state_panel]
+integration/test_cost_budget.py::test_recipe_sql_within_characters_per_feature[state_panel]
+integration/test_cost_budget.py::test_recipe_sql_within_characters_per_feature[state_panel]
+integration/test_cost_budget.py::test_recipe_sql_within_characters_per_feature[state_panel]
+integration/test_cost_budget.py::test_recipe_sql_within_characters_per_feature[state_panel]
+integration/test_cost_budget.py::test_recipe_sql_within_characters_per_feature[state_panel]
+integration/test_cost_budget.py::test_recipe_sql_within_characters_per_feature[state_panel]
+integration/test_cost_budget.py::test_recipe_sql_within_characters_per_feature[state_panel]
+  /Users/kylejcaron/orca/workspaces/terrine/compact-generated-sql/.venv/lib/python3.12/site-packages/ibis/backends/duckdb/__init__.py:1718: DeprecationWarning: fetch_arrow_table() is deprecated, use to_arrow_table() instead.
+    rows = cur.fetch_arrow_table()
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================== slowest durations ===============================
+17.81s setup    integration/test_cost_budget.py::test_recipe_sql_within_characters_per_feature[state_panel]
+
+(5 durations < 5s hidden.)
+=========================== short test summary info ============================
+FAILED integration/test_cost_budget.py::test_recipe_sql_within_characters_per_feature[state_panel] - assert 196349 <= (30000 * 1)
+ +  where 196349 = Measured(chars=196349, features=1, equal=True, error=None).chars
+ +  and   1 = Measured(chars=196349, features=1, equal=True, error=None).features
+FAILED integration/test_cost_budget.py::test_readme_design_sql_within_budget - assert 89267 <= 20000
+ +  where 89267 = len(SQLString('WITH "t12" AS (\n  SELECT\n    "t11"."unit",\n    "t11"."anchor_id",\n    "t11"."__terrine_w0_s",\n    "t11...44"."__terrine_value_0_key_unit"\n  AND "t9"."anchor_id" IS NOT DISTINCT FROM "t44"."__terrine_value_0_key_anchor_id"'))
+ +    where SQLString('WITH "t12" AS (\n  SELECT\n    "t11"."unit",\n    "t11"."anchor_id",\n    "t11"."__terrine_w0_s",\n    "t11...44"."__terrine_value_0_key_unit"\n  AND "t9"."anchor_id" IS NOT DISTINCT FROM "t44"."__terrine_value_0_key_anchor_id"') = <function to_sql at 0x10d8a9080>(r0 := DatabaseTable: customer\n  customer_id string\n\nr1 := DatabaseTable: orders\n  customer_id string\n  ordered_at  tim...d_from:  r36.__terrine_value_2_observed_from\n    __terrine_value_2_observed_until: r36.__terrine_value_2_observed_until)
+ +      where <function to_sql at 0x10d8a9080> = ibis.to_sql
+ +      and   r0 := DatabaseTable: customer\n  customer_id string\n\nr1 := DatabaseTable: orders\n  customer_id string\n  ordered_at  tim...d_from:  r36.__terrine_value_2_observed_from\n    __terrine_value_2_observed_until: r36.__terrine_value_2_observed_until = Frame(unit='unit', features=('orders_30d', 'spend_30d'), outcomes=('spend_next_30d',), columns=3).expr
+ +        where Frame(unit='unit', features=('orders_30d', 'spend_30d'), outcomes=('spend_next_30d',), columns=3) = build(Model(units=('customer',), events=('orders',), history=(), metrics=('orders', 'spend'), dialect='duckdb'))
+ +          where build = Design(unit=None, anchor=Schedule(every=Months(1), start=datetime.date(2025, 2, 1), end=datetime.date(2025, 3, 1)), fe... treatment=None, gap=Duration('0s'), shape='cross_section', anchor_range=None, sample=None, administrative_cutoff=None).build
+ +            where Design(unit=None, anchor=Schedule(every=Months(1), start=datetime.date(2025, 2, 1), end=datetime.date(2025, 3, 1)), fe... treatment=None, gap=Duration('0s'), shape='cross_section', anchor_range=None, sample=None, administrative_cutoff=None) = readme_design()
+ +          and   Model(units=('customer',), events=('orders',), history=(), metrics=('orders', 'spend'), dialect='duckdb') = readme_model()
+================ 2 failed, 24 deselected, 22 warnings in 18.36s ================

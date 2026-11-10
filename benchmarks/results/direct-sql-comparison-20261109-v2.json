@@ -1,0 +1,53 @@
+{
+  "production_revision": "64d7caf4f7925a8bd744b9ceafd4731d1eb67015",
+  "mode": "native float64 measures; exact counts; Boolean activity",
+  "cases": {
+    "readme": {
+      "directory": "benchmarks/results/direct-sql-readme-20261109-v2",
+      "file_sha256": {
+        "environment.json": "d2abe171e600f5182bba1abf382002e9dd5ca359d6b1304dd2a52770976293f7",
+        "handwritten.sql": "9fdfc1319ab7bcf9a3862ea1b3a433b6dc310529259a0cdeebaa8aa30a1eede8",
+        "public-study-statement-0.sql": "f65b6ce2fed90cd3ec3328a21fc55424534c16e793dfc27f51b665bc1a8c78f6",
+        "public-study-statement-1.sql": "119c43cb3904a6a45a41130fd006157b48bf752a249b24e2f041aefd0b85e679",
+        "public-study-statement-2.sql": "da6a4f1b1d296e20d1772947dc16a6d573789010655366398af4239a28390bb3",
+        "result.json": "be048af89fed0c5c46fc8758ca9257f7269a9e380084c25ae20e0e873fa973dd",
+        "terrine-full-expression.sql": "b15cd8dace72ec96996f98785e3e7d3776c2323b5b5ca862ebbd2310a06326f7",
+        "terrine-projected.sql": "b6feb51088a22a132f70e5ff3b49f8151d2fd76e506925105dd829c05a7b8d37"
+      },
+      "query_time_ratio": 15.44386521615055,
+      "submitted_sql_byte_ratio": 26.235802469135802
+    },
+    "scaled": {
+      "directory": "benchmarks/results/direct-sql-scaled-20261109-v2",
+      "file_sha256": {
+        "environment.json": "ee7dbf3ee04e2b8dcc239a71cf9d82c1ba698ea3dbc950ce699f2926f02171d9",
+        "handwritten.sql": "9fdfc1319ab7bcf9a3862ea1b3a433b6dc310529259a0cdeebaa8aa30a1eede8",
+        "public-study-statement-0.sql": "f65b6ce2fed90cd3ec3328a21fc55424534c16e793dfc27f51b665bc1a8c78f6",
+        "public-study-statement-1.sql": "119c43cb3904a6a45a41130fd006157b48bf752a249b24e2f041aefd0b85e679",
+        "public-study-statement-2.sql": "456a7964333129940b260efa5afb9df92baa8b82831835da0d637f3088e97218",
+        "result.json": "d1ca8fbacc017441b9569a701389669b3719d162b03cbb6ab6f6f4ce6cc812ea",
+        "terrine-full-expression.sql": "89e77fe088a4d71cd3d996f96515cd01e93680163200b21cd7a5450225c2d009",
+        "terrine-projected.sql": "283d46589cb1d613130825b1e92ddcf897545517c109e9403ed273578ee9b3c8"
+      },
+      "query_time_ratio": 4.47517574670035,
+      "submitted_sql_byte_ratio": 12.054320987654322
+    },
+    "wide": {
+      "directory": "benchmarks/results/direct-sql-wide-20261109-v2",
+      "file_sha256": {
+        "environment.json": "63b32568854f892bf35060dcba5514f8f16ecae39412091502fb41716d96b82c",
+        "handwritten.sql": "a868d91726036f8d80289be58114b0b1dc02d5d00d0dc3a4b1e578ddfb326bde",
+        "public-study-statement-0.sql": "4d1abefc36d52f1cab52e599796b25019b6b9e237022b562602ba3bf4f599471",
+        "public-study-statement-1.sql": "cc023b0087b69b9c7cb42613d366314834b8338a4e59bb8c967b3279c867ed08",
+        "public-study-statement-2.sql": "ccb77d327ffdce5c0d4dd664be4d856258f99aed6d5063d4e34269417005dc0f",
+        "result.json": "31cab6301a756daedc68530decba67ed03f6d6f922efb471c9a1e4c8a4732a3f",
+        "terrine-full-expression.sql": "edb6bed6e187d58b518ada1e599c7c4500d7e905949b5c925557b7e3b7429aef",
+        "terrine-projected.sql": "d3e88bf13defaf88dd5e63547bda18be719dfcf3d57d36379fa105726b7de935"
+      },
+      "query_time_ratio": 52.46193975667484,
+      "submitted_sql_byte_ratio": 97.97291820191599
+    }
+  },
+  "scope": "Matched ordered origins, Arrow schemas, typed values, completeness and reasons; full public metadata/guards reported separately. DuckDB only.",
+  "supersedes": "direct-sql-comparison-20261109.json"
+}

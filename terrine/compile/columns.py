@@ -31,7 +31,7 @@ from terrine.compile.anchors import (
     _utc_column,
     compile_anchors,
 )
-from terrine.compile.numeric import CompileContext, lower_aggregates
+from terrine.compile.numeric import CompileContext, _declared_origin_bounds, lower_aggregates
 from terrine.compile.ranges import plan_ranges
 from terrine.compile.retention import compile_retention
 from terrine.data import (
@@ -493,7 +493,13 @@ def compile_columns(
         return selector_sources[source_name]
 
     lowering = CompileContext(
-        model, unit_name, fixed, lambda name: events_for(name, register_checks=False)
+        model,
+        unit_name,
+        fixed,
+        _declared_origin_bounds(design, model)
+        if _anchor_table is None and persisted_anchors is None
+        else None,
+        lambda name: events_for(name, register_checks=False),
     )
 
     selector_origins: dict[EventTime, tuple[ibis.Table, str]] = {}
