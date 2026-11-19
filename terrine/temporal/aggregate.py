@@ -1533,7 +1533,7 @@ def aggregate_windows(
                 flag = branch.put("unknown_filter", count > exact_literal(0, count))
                 unknown_flags.append((flag, UNKNOWN_FILTER, numeric_context))
             source = sources[measure.source_name][1]
-            if source.row_key is not None and measure.aggregation == "sum":
+            if source.row_key is not None and measure.aggregation == "sum" and not key.counting:
                 missing = branch.col(fields["event_count"]) > branch.col(fields["nonnull_count"])
                 unknown_flags.append(
                     (branch.put("null_amount", missing), _NULL_AMOUNT, numeric_context)

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, NotRequired, TypedDict
 
 from terrine.errors import RefusalSpec
 from terrine.semantic.io import validate_catalog
@@ -14,13 +14,7 @@ from terrine.semantic.models import (
     Event,
     Filter,
     FilterOp,
-    Formula,
-    FormulaBinary,
-    FormulaLiteral,
-    FormulaNegation,
-    FormulaReference,
     Measure,
-    Metric,
     PopulationRequirement,
     Property,
     PropertyType,
@@ -75,47 +69,56 @@ def _unsupported(metric: str, requirement: str):
     return _UNSUPPORTED.error(metric=metric, requirement=requirement, target="terrine")
 
 
-def _formula(node: shared.Formula, catalog: shared.Catalog) -> Formula:
+type _FormulaDeclaration = dict[str, str | int | float | _FormulaDeclaration]
+
+
+class _MetricDeclaration(TypedDict):
+    kind: Literal["mean", "conversion", "formula"]
+    unit: str
+    population: str | None
+    measure: NotRequired[str]
+    formula: NotRequired[_FormulaDeclaration]
+
+
+def _formula(node: shared.Formula, catalog: shared.Catalog) -> _FormulaDeclaration:
     from metric_definitions import Binary, Literal, Negation, Reference
 
     match node:
         case Literal(value=value):
-            return FormulaLiteral(kind="literal", value=value)
+            return {"kind": "literal", "value": value}
         case Reference(name=name):
-            return FormulaReference(
-                kind="measure" if name in catalog.measures else "metric", name=name
-            )
+            return {"kind": "measure" if name in catalog.measures else "metric", "name": name}
         case Negation(operand=operand):
-            return FormulaNegation(kind="negation", operand=_formula(operand, catalog))
+            return {"kind": "negation", "operand": _formula(operand, catalog)}
         case Binary(operator=operator, left=left, right=right):
-            return FormulaBinary(
-                kind="binary",
-                operator=operator,
-                left=_formula(left, catalog),
-                right=_formula(right, catalog),
-            )
+            return {
+                "kind": "binary",
+                "operator": operator,
+                "left": _formula(left, catalog),
+                "right": _formula(right, catalog),
+            }
     raise AssertionError("unrecognized shared formula node")
 
 
-def _metrics(catalog: shared.Catalog, units: frozenset[str]) -> dict[str, Metric]:
+def _metrics(catalog: shared.Catalog, units: frozenset[str]) -> dict[str, _MetricDeclaration]:
     from metric_definitions import ConversionMetric, FormulaMetric, MeanMetric, references
 
-    lowered: dict[str, Metric] = {}
+    lowered: dict[str, _MetricDeclaration] = {}
 
-    def bind(name: str) -> Metric:
+    def bind(name: str) -> _MetricDeclaration:
         if name in lowered:
             return lowered[name]
         metric = catalog.metrics[name]
         match metric:
             case MeanMetric(per_unit_mean=rule):
-                result = Metric(
+                result = _MetricDeclaration(
                     kind="mean",
                     unit=catalog.populations[rule.population].entity,
                     measure=rule.measure,
                     population=rule.population,
                 )
             case ConversionMetric(conversion=rule):
-                result = Metric(
+                result = _MetricDeclaration(
                     kind="conversion",
                     unit=catalog.populations[rule.population].entity,
                     measure=rule.event_count,
@@ -129,16 +132,16 @@ def _metrics(catalog: shared.Catalog, units: frozenset[str]) -> dict[str, Metric
                         candidates = set(catalog.sources[catalog.measures[ref].source].entities)
                     else:
                         dependency = bind(ref)
-                        candidates = {dependency.unit}
-                        if dependency.population is not None:
-                            populations.add(dependency.population)
+                        candidates = {dependency["unit"]}
+                        if dependency["population"] is not None:
+                            populations.add(dependency["population"])
                     choices = candidates if choices is None else choices & candidates
                 choices = set(units) if choices is None else choices
                 if len(choices) > 1 and len(matched := choices & units) == 1:
                     choices = matched
                 if len(choices) != 1 or len(populations) > 1:
                     raise _unsupported(name, "operands must share one entity and population")
-                result = Metric(
+                result = _MetricDeclaration(
                     kind="formula",
                     unit=next(iter(choices)),
                     formula=_formula(formula, catalog),

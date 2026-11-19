@@ -120,3 +120,38 @@ def test_duplicate_dimension_key_refuses_before_publishing(shop):
     assert caught.value.code == "terrine.temporal.static_key_multiplicity"
     assert caught.value.context["relation"] == "channels"
     assert caught.value.context["key"] == "channel"
+
+
+def test_native_v4_conversion_does_not_require_amounts_for_presence(shop):
+    shop.raw_sql("ALTER TABLE orders ALTER COLUMN gross_amount DROP NOT NULL")
+    shop.raw_sql("UPDATE orders SET gross_amount = NULL")
+    model = tr.Model.from_shared_metrics(
+        _SHOP / "metrics.yaml",
+        con=shop,
+        units=_UNITS,
+        readiness=_coverage(),
+        metrics=["purchase_conversion", "revenue_per_customer"],
+    )
+    catalog = model.catalog.model_dump(mode="python")
+    conversion = catalog["metrics"]["purchase_conversion"]
+    conversion["measure"] = "revenue"
+    catalog["metrics"]["presence_formula"] = {
+        "kind": "formula",
+        "unit": conversion["unit"],
+        "population": conversion["population"],
+        "formula": {"kind": "metric", "name": "purchase_conversion"},
+    }
+    native = tr.Model.from_catalog(catalog, con=shop, units=_UNITS, readiness=_coverage())
+    rows = (
+        _frame(native, converted="purchase_conversion", presence="presence_formula")
+        .to_pyarrow()
+        .to_pylist()
+    )
+    assert {row["unit"]: (row["converted"], row["presence"]) for row in rows} == {
+        "A": (True, 1),
+        "B": (True, 1),
+        "C": (False, 0),
+    }
+    with pytest.raises(tr.TerrineError) as caught:
+        _frame(native, revenue="revenue_per_customer").to_pyarrow()
+    assert caught.value.code == "terrine.temporal.null_measure_value"
