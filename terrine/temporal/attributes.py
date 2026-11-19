@@ -13,7 +13,7 @@ import pyarrow as pa
 from terrine.backends.timestamps import compare_timestamps, timestamp_order_key
 from terrine.errors import RefusalSpec
 from terrine.semantic.bind import _MISSING, _SCHEMA
-from terrine.semantic.models import BoundDimension
+from terrine.semantic.models import BoundDimension, TableRef
 
 __all__ = ["attribute_asof", "enrich_events", "history_checks", "validate_history"]
 
@@ -245,7 +245,9 @@ def enrich_events(
     aliases = _enriched_property_columns(dimensions, events.columns)
     result = events
     for dimension in dimensions:
-        event_key = source.units.get(dimension.unit)
+        if dimension.foreign_key is not None and not dimension.properties:
+            continue
+        event_key = dimension.foreign_key or source.units.get(dimension.unit)
         if event_key is None or event_key not in result.columns:
             raise _MISSING_KEY.error(dimension=dimension.name)
         history = dimension_relations[dimension.name]
@@ -394,6 +396,10 @@ def validate_history(
     """Validate history with bounded aggregate queries on the caller's pinned executor."""
     for query, refusal in history_checks(history, dimension):
         if _scalar(execute(query)) > 0:
+            if dimension.foreign_key is not None and isinstance(dimension.relation, TableRef):
+                raise refusal.error(
+                    dimension=dimension.name, relation=dimension.relation.name, key=dimension.key
+                )
             raise refusal.error()
 
 

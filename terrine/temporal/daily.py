@@ -136,6 +136,7 @@ def _raw_columns(source: BoundSource) -> list[str]:
                     for prop in source.properties.values()
                     if prop.dimension_name is None
                 ),
+                *(dim.foreign_key for dim in source.dimensions if dim.foreign_key is not None),
             ]
         )
     )

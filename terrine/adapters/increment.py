@@ -11,6 +11,7 @@ import yaml
 from yaml.constructor import ConstructorError
 from yaml.resolver import BaseResolver
 
+from terrine.adapters.shared import _lower_additive
 from terrine.errors import RefusalSpec
 from terrine.semantic.models import (
     Catalog,
@@ -161,6 +162,8 @@ def _measure(
     scopes: tuple[tuple[str, str], ...],
     names: dict[tuple[str, str, str], str],
 ) -> Measure:
+    if aggregation in ("sum", "count") and not filters and window_days is None:
+        return _lower_additive(fact, aggregation)
     return Measure(
         event=fact,
         aggregation=aggregation,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import itertools
+import operator
 import re
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -44,7 +45,13 @@ from terrine.backends.timestamps import (
 from terrine.data import ColumnMeta, RowCheck
 from terrine.errors import RefusalSpec
 from terrine.semantic.bind import _SCHEMA
-from terrine.semantic.models import BoundMeasure, BoundMetric, BoundSource
+from terrine.semantic.models import (
+    BoundMeasure,
+    BoundMetric,
+    BoundSource,
+    FormulaLiteral,
+    FormulaOperand,
+)
 from terrine.semantic.rules import (
     UNALIGNED_CALENDAR_AVERAGE,
     UNKNOWN_FILTER,
@@ -66,6 +73,18 @@ from terrine.windows import Window
 
 __all__ = ["AggregateRequest", "TemporalResult", "aggregate_windows"]
 
+_NULL_AMOUNT = RefusalSpec(
+    "terrine.temporal.null_measure_value",
+    "Shared sum {measure!r} on source {source!r} includes a null amount. "
+    "Correct the amount or explicitly filter out rows that do not contribute.",
+)
+
+_FORMULA_OPERATORS = {
+    "+": operator.add,
+    "-": operator.sub,
+    "*": operator.mul,
+    "/": operator.truediv,
+}
 _DAY_ALIGNMENT = RefusalSpec(
     "terrine.temporal.unaligned_day_resolution",
     "Per-day windows need both time bounds at local midnight. "
@@ -338,6 +357,78 @@ def _quotient(
     )
 
 
+def _formula_quantity(
+    builder: _Builder,
+    metric: BoundMetric,
+    quantities: Sequence[_Quantity],
+    available: str,
+    context: Mapping[str, Any],
+) -> _Quantity:
+    """Apply a resolved expression only to reduced, window-aligned quantities."""
+    stack: list[_Quantity] = []
+    converted = {}
+    null = ibis.null().cast("float64")
+    no_reason = builder.put("formula_reason", ibis.null().cast("string"))
+
+    def as_float(quantity: _Quantity):
+        name = quantity.value
+        if name not in converted:
+            value = builder.col(name)
+            if value.type().is_boolean():
+                value = value.cast("float64")
+            elif not quantity.native:
+                value, nonfinite, overflow = exact_to_float(value, quantity.scale)
+                builder.flag(nonfinite | overflow, "bound_overflow", context)
+            converted[name] = builder.put("formula_operand", value)
+        return builder.col(converted[name])
+
+    for step in metric.formula:
+        if isinstance(step, FormulaOperand):
+            item = quantities[step.index]
+            if builder.col(item.value).type().is_boolean():
+                item = replace(
+                    item,
+                    value=builder.put("presence", builder.col(item.value).cast("float64")),
+                    binary64=True,
+                    native=True,
+                )
+            stack.append(item)
+            continue
+        if isinstance(step, FormulaLiteral):
+            value = builder.put("literal", ibis.literal(float(step.value)))
+            stack.append(_Quantity(value, no_reason, no_reason, binary64=True, native=True))
+            continue
+        left = stack[step.left]
+        reason, note = left.reason, left.note
+        left_value = as_float(left)
+        if step.right is None:
+            valid = builder.col(available) & builder.col(reason).isnull()
+            value = -valid.ifelse(left_value, null)
+        else:
+            right = stack[step.right]
+            right_value = as_float(right)
+            reasons = [builder.col(left.reason), builder.col(right.reason)]
+            if step.operator == "/":
+                reasons.append(
+                    (right_value == 0.0).ifelse(reason_codes.ZERO_DENOMINATOR, ibis.null())
+                )
+                right_value = right_value.nullif(0.0)
+            reason = builder.put("formula_reason", ibis.coalesce(*reasons))
+            valid = builder.col(available) & builder.col(reason).isnull()
+            value = _FORMULA_OPERATORS[step.operator](
+                valid.ifelse(left_value, null), valid.ifelse(right_value, null)
+            )
+            note = _merged_note(builder, left, right)
+        computed = builder.put("formula_value", value)
+        builder.flag(
+            ~float_is_finite(builder.col(computed)).fill_null(ibis.literal(True)),
+            "bound_overflow",
+            context,
+        )
+        stack.append(_Quantity(computed, reason, no_reason, binary64=True, native=True, note=note))
+    return stack[-1]
+
+
 def _finalize_window(
     builder: _Builder,
     anchors: ibis.Table,
@@ -353,6 +444,11 @@ def _finalize_window(
     row_checks: list[RowCheck],
     unknown_flags,
 ) -> TemporalResult:
+    numeric_context = {
+        "source": ",".join(m.source_name for m in metric.measures),
+        "measure": ",".join(m.event for m in metric.measures),
+        "output": output,
+    }
     if metric.kind == "ratio":
         numerator, denominator = quantities
         reason = builder.put(
@@ -371,17 +467,9 @@ def _finalize_window(
                 ),
             ),
         )
-        quantity = _quotient(
-            builder,
-            numerator,
-            denominator,
-            reason,
-            {
-                "source": ",".join(m.source_name for m in metric.measures),
-                "measure": ",".join(m.event for m in metric.measures),
-                "output": output,
-            },
-        )
+        quantity = _quotient(builder, numerator, denominator, reason, numeric_context)
+    elif metric.formula:
+        quantity = _formula_quantity(builder, metric, quantities, available, numeric_context)
     else:
         quantity = quantities[0]
     # The value is published only where nothing makes it unavailable; a note
@@ -398,11 +486,11 @@ def _finalize_window(
         )
     if unknown_flags:
         row_checks.extend(builder.check(unknown_flags, active=builder.col(available)))
-    numeric_context = {
-        "source": ",".join(m.source_name for m in metric.measures),
-        "measure": ",".join(m.event for m in metric.measures),
-        "output": output,
-    }
+    if metric.formula and builder.numeric:
+        # Formula failure flags are guarded by availability. Leaf flags still
+        # matter when a withheld operand would otherwise look like a zero.
+        row_checks.extend(builder.check(builder.numeric, active=builder.col(available)))
+        builder.numeric.clear()
     exact_output = metric.kind != "conversion" and not quantity.binary64
     if exact_output:
         assert isinstance(quantity.scale, int)
@@ -472,7 +560,11 @@ def _finalize_window(
         complete_column=available,
         reason_column=final_reason,
         numeric_policy=None if metric.kind == "conversion" or quantity.binary64 else "exact",
-        arithmetic="native" if any(native_arithmetic(m) for m in metric.measures) else "exact",
+        arithmetic="native"
+        if (
+            metric.formula and quantity.native or any(native_arithmetic(m) for m in metric.measures)
+        )
+        else "exact",
     )
     return TemporalResult(result, {output: meta}, row_checks=tuple(row_checks))
 
@@ -489,8 +581,8 @@ class AggregateRequest:
 class _WindowContextKey:
     start_seconds: int
     end_seconds: int
-    source_start: datetime
-    source_end: datetime
+    source_start: datetime | None
+    source_end: datetime | None
     boundary: str
     resolution: Literal["event", "day"]
     calendar_alignment: bool
@@ -537,14 +629,14 @@ def _window_context(
     key = _WindowContextKey(
         window.start.seconds,
         window.end.seconds,
-        max(coverage.start for coverage in coverages),
-        min(coverage.end_exclusive for coverage in coverages),
+        max((coverage.start for coverage in coverages), default=None),
+        min((coverage.end_exclusive for coverage in coverages), default=None),
         boundary,
         resolution,
         bool(calendars),
     )
     if key not in shared:
-        if shared_support is None:
+        if shared_support is None or not coverages:
             shared[key] = _window_fields(builder, key)
         else:
             support_key = (
@@ -590,13 +682,17 @@ def _window_fields(
         )
         unaligned = builder.put("check", builder.col(invalid).fill_null(True))
     source_start, source_end = key.source_start, key.source_end
-    source_complete = builder.put(
-        "source_complete",
-        (builder.col(start) >= ibis.literal(source_start))
-        & (builder.col(end) <= ibis.literal(source_end)),
-    )
-    observed_from = ibis.literal(source_start)
-    observed_until = ibis.literal(source_end)
+    if source_start is None or source_end is None:
+        source_complete = builder.put("source_complete", ibis.literal(True))
+        observed_from, observed_until = builder.col(start), builder.col(end)
+    else:
+        source_complete = builder.put(
+            "source_complete",
+            (builder.col(start) >= ibis.literal(source_start))
+            & (builder.col(end) <= ibis.literal(source_end)),
+        )
+        observed_from = ibis.literal(source_start)
+        observed_until = ibis.literal(source_end)
     bounds = []
     if "_observed_from" in anchors.columns:
         bound = builder.table._observed_from
@@ -1337,11 +1433,14 @@ def aggregate_windows(
             raise ValueError("outputs must be unique and not replace anchor fields")
         outputs.add(output.casefold())
         builder.used.add(output.casefold())
-        if metric.kind not in {"mean", "conversion", "ratio"}:
+        if metric.kind not in {"mean", "conversion", "ratio", "formula"}:
             raise UNSUPPORTED_TEMPORAL_KIND.error(kind=metric.kind)
         if metric.transforms:
             raise UNSUPPORTED_TRANSFORM.error(transform=type(metric.transforms[0]).__name__)
-        if len(metric.measures) != (2 if metric.kind == "ratio" else 1):
+        if metric.kind == "formula":
+            if not metric.formula or len(metric.presence) != len(metric.measures):
+                raise ValueError("formula has an invalid operand plan")
+        elif len(metric.measures) != (2 if metric.kind == "ratio" else 1):
             raise ValueError("metric kind has an invalid number of measures")
         branch = builder.fork(anchors)
         context, checks = _window_context(
@@ -1360,14 +1459,18 @@ def aggregate_windows(
         context_checks.append(checks)
         contexts.append(context)
         keys = []
-        for measure in metric.measures:
+        for index, measure in enumerate(metric.measures):
             if measure.value_type is None:
                 raise ValueError("aggregate_windows requires resolved measure descriptors")
             if measure.source_name not in sources:
                 raise ValueError("a resolved metric measure has no supplied event source")
             events, source = sources[measure.source_name]
             resolve_measure(events, measure, source=source)
-            counting = metric.kind == "conversion" or measure.aggregation == "count"
+            counting = (
+                metric.kind == "conversion"
+                or measure.aggregation == "count"
+                or (metric.kind == "formula" and metric.presence[index])
+            )
             if counting or not native_arithmetic(measure):
                 _require_backend(events)
             canonical = replace(
@@ -1418,7 +1521,7 @@ def aggregate_windows(
         required_names = _finalization_fields(anchors, context, keys, reduced_fields)
         branch = builder.fork(retained.select(*required_names))
         quantities, unknown_flags = [], []
-        for measure, key in zip(request.metric.measures, keys, strict=True):
+        for index, (measure, key) in enumerate(zip(request.metric.measures, keys, strict=True)):
             fields = reduced_fields[key]
             numeric_context = {
                 "source": measure.source_name,
@@ -1429,13 +1532,22 @@ def aggregate_windows(
                 count = branch.col(fields["unknown_filter_count"])
                 flag = branch.put("unknown_filter", count > exact_literal(0, count))
                 unknown_flags.append((flag, UNKNOWN_FILTER, numeric_context))
+            source = sources[measure.source_name][1]
+            if source.row_key is not None and measure.aggregation == "sum":
+                missing = branch.col(fields["event_count"]) > branch.col(fields["nonnull_count"])
+                unknown_flags.append(
+                    (branch.put("null_amount", missing), _NULL_AMOUNT, numeric_context)
+                )
             quantities.append(
                 _local_component(
                     branch,
                     measure,
                     fields,
                     days=(request.window.end.seconds - request.window.start.seconds) // 86400,
-                    conversion=request.metric.kind == "conversion",
+                    conversion=(
+                        request.metric.kind == "conversion"
+                        or bool(request.metric.formula and request.metric.presence[index])
+                    ),
                     context=numeric_context,
                 )
             )

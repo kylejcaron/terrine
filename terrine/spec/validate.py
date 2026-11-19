@@ -690,7 +690,9 @@ def _expression(
                 limit=0,
             )
         )
-    if metric.kind not in {"mean", "conversion", "ratio"}:
+    if metric.kind == "formula" and not isinstance(expr, MetricAgg):
+        raise UNSUPPORTED_TEMPORAL_KIND.error(kind=metric.kind)
+    if metric.kind not in {"mean", "conversion", "ratio", "formula"}:
         raise UNSUPPORTED_TEMPORAL_KIND.error(kind=metric.kind)
     if metric.transforms:
         raise UNSUPPORTED_TRANSFORM.error(

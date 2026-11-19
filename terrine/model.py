@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, replace
 from datetime import date, datetime
 from difflib import get_close_matches
@@ -22,7 +22,14 @@ from terrine.execution._metadata import metadata_operation
 from terrine.execution._native import _ascii_key
 from terrine.metrics import _filters
 from terrine.semantic.attributes import RosterAttributes
-from terrine.semantic.bind import _KEY_SCHEMA, _SCHEMA, _relation, bind_metric, normalize_source
+from terrine.semantic.bind import (
+    _KEY_SCHEMA,
+    _SCHEMA,
+    _relation,
+    bind_metric,
+    normalize_source,
+    validate_populations,
+)
 from terrine.semantic.io import (
     catalog_payload,
     dump_catalog,
@@ -35,6 +42,8 @@ from terrine.semantic.time import boundary_timezone
 from terrine.temporal.readiness import Readiness
 
 if TYPE_CHECKING:
+    from metric_definitions import Catalog as SharedCatalog
+
     from terrine.execution.inputs import ExecutionContext, VerifiedInputBinding
 __all__ = ["Catalog", "EventMetric", "Model", "Ratio", "Readiness"]
 
@@ -141,7 +150,8 @@ def _check_key_types(
         for unit_name, column in source.units.items():
             check(unit_name, source_name, source.relation, column)
         for dimension in source.dimensions:
-            check(dimension.unit, dimension.name, dimension.relation, dimension.key)
+            if dimension.unit is not None:
+                check(dimension.unit, dimension.name, dimension.relation, dimension.key)
 
 
 def _label_dtype(dtype: Any, *, source: str, column: str) -> str:
@@ -776,6 +786,11 @@ class Model:
             raise _INVALID.error(reason="wrong_type", field="event_ids")
         from terrine.execution.inputs import bind_resolver
 
+        validate_populations(catalog, unit_map)
+        for name, source in catalog.sources.items():
+            if source.row_key is not None:
+                event_map.setdefault(name, source.row_key)
+
         resolver = bind_resolver(
             catalog, con, units=unit_map, input_binding=input_binding, engine=engine
         )
@@ -925,6 +940,56 @@ class Model:
             input_binding=self.input_binding,
             source_names=selected_sources,
             engine=self._engine,
+        )
+
+    @classmethod
+    @metadata_operation()
+    def from_shared_metrics(
+        cls,
+        path_or_catalog: str | Path | SharedCatalog,
+        *,
+        con: Any,
+        units: Mapping[str, UnitSource],
+        readiness: Readiness | Mapping[str, Coverage | BoundCoverage],
+        metrics: Sequence[str] | None = None,
+        input_binding: VerifiedInputBinding | None = None,
+        allow_unverified: bool = False,
+    ) -> Model:
+        """Bind shared v1 definitions for use in an ordinary Terrine Design.
+
+        Args:
+            path_or_catalog: Shared YAML file path or parsed shared Catalog.
+            con: Ibis connection resolving the named physical relations.
+            units: Unit rosters, including the declared table and key for any population.
+            readiness: Complete time intervals by event source name.
+            metrics: Selected metric names; None selects every metric.
+            input_binding: Verified retained input binding, or None for direct reads.
+            allow_unverified: Allow read-only queries on unverified Ibis backends.
+
+        Returns:
+            A bound Model without reading event rows.
+        """
+        if not isinstance(allow_unverified, bool):
+            raise _INVALID.error(reason="wrong_type", field="allow_unverified")
+        if not isinstance(units, Mapping) or any(not isinstance(name, str) for name in units):
+            raise _INVALID.error(reason="wrong_type", field="units")
+        from terrine.adapters.shared import to_catalog
+        from terrine.execution.backend import backend_provider
+
+        engine = resolve_engine(con, allow_unverified=allow_unverified)
+        catalog = to_catalog(
+            path_or_catalog,
+            dialect=backend_provider(con, engine=engine).dialect(con),
+            units=frozenset(units),
+            metrics=metrics,
+        )
+        return cls._from_catalog(
+            catalog,
+            con=con,
+            readiness=readiness,
+            units=units,
+            input_binding=input_binding,
+            engine=engine,
         )
 
     @classmethod

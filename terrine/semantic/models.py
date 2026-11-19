@@ -15,6 +15,7 @@ from pydantic import (
     FieldSerializationInfo,
     SerializerFunctionWrapHandler,
     StrictBool,
+    StrictFloat,
     StrictInt,
     StrictStr,
     field_serializer,
@@ -136,6 +137,7 @@ class Source(_Record):
     properties: tuple[StrictStr, ...]
     dimensions: tuple[StrictStr, ...]
     where: tuple[Filter, ...] = ()
+    row_key: StrictStr | None = None
 
 
 class Event(_Record):
@@ -143,10 +145,15 @@ class Event(_Record):
     column: StrictStr | None
 
 
+PropertyType: TypeAlias = Literal[  # noqa: UP040 - pydantic 2.8 lacks PEP 695 alias support.
+    "string", "int", "float", "bool", "date", "number", "timestamp"
+]
+
+
 class Property(_Record):
     source: StrictStr
     column: StrictStr
-    dtype: Literal["string", "int", "float", "bool", "date"]
+    dtype: PropertyType
     as_of: Literal["event_time", "pre_exposure", "static"]
     dimension: StrictStr | None = None
 
@@ -169,10 +176,21 @@ class Validity(_Record):
 
 class Dimension(_Record):
     relation: RelationSpec
-    unit: StrictStr
+    unit: StrictStr | None
     key: StrictStr
     validity: Validity | None = None
     properties: tuple[StrictStr, ...]
+    foreign_key: StrictStr | None = None
+
+    @model_validator(mode="after")
+    def validate_join_key(self) -> Self:
+        if (self.unit is None) == (self.foreign_key is None) or (
+            self.foreign_key is not None and self.validity is not None
+        ):
+            raise PydanticCustomError(
+                "invalid_dimension_join", "declare one unit or static foreign key"
+            )
+        return self
 
 
 # Comparison operators shared by Catalog filters, where= keys and Design comparisons.
@@ -240,24 +258,79 @@ class Measure(_Record):
         return self
 
 
+class FormulaLiteral(_Record):
+    kind: Literal["literal"]
+    value: StrictInt | StrictFloat
+
+    @field_validator("value")
+    @classmethod
+    def validate_value(cls, value: int | float) -> int | float:
+        if (
+            not -float.fromhex("0x1.fffffffffffffp1023")
+            <= value
+            <= (float.fromhex("0x1.fffffffffffffp1023"))
+        ):
+            raise PydanticCustomError("invalid_formula_literal", "literal must fit binary64")
+        return value
+
+
+class FormulaReference(_Record):
+    kind: Literal["measure", "metric"]
+    name: StrictStr
+
+
+class FormulaNegation(_Record):
+    kind: Literal["negation"]
+    operand: Formula
+
+
+FormulaOperator: TypeAlias = Literal["+", "-", "*", "/"]  # noqa: UP040
+
+
+class FormulaBinary(_Record):
+    kind: Literal["binary"]
+    operator: FormulaOperator
+    left: Formula
+    right: Formula
+
+
+Formula: TypeAlias = Annotated[  # noqa: UP040 - pydantic 2.8 lacks PEP 695 alias support.
+    FormulaLiteral | FormulaReference | FormulaNegation | FormulaBinary,
+    Field(discriminator="kind"),
+]
+
+
+class PopulationRequirement(_Record):
+    relation: TableRef
+    key: StrictStr
+    unit: StrictStr
+
+
 class Metric(_Record):
-    kind: Literal["mean", "conversion", "ratio"] | StrictStr
+    kind: Literal["mean", "conversion", "ratio", "formula"] | StrictStr
     unit: StrictStr
     measure: StrictStr | None = None
     numerator: StrictStr | None = None
     denominator: StrictStr | None = None
     winsorization: object | None = None
+    formula: Formula | None = None
+    population: StrictStr | None = None
 
     @model_validator(mode="after")
     def validate_measure_shape(self):
-        if self.kind == "ratio":
-            if self.measure is not None or self.numerator is None or self.denominator is None:
-                raise PydanticCustomError(
-                    "invalid_metric_shape", "metric fields do not match the declared kind"
-                )
-        elif self.measure is None or self.numerator is not None or self.denominator is not None:
+        if self.kind == "formula" and self.formula is not None:
+            valid = self.measure is self.numerator is self.denominator is None
+        elif self.kind == "ratio":
+            valid = (
+                self.measure is None and self.numerator is not None and self.denominator is not None
+            )
+        else:
+            # Defer native unsupported kinds to the existing binding refusal.
+            valid = self.measure is not None and self.numerator is self.denominator is None
+        if not valid or (self.kind != "formula" and self.formula is not None):
             raise PydanticCustomError(
-                "invalid_metric_shape", "metric fields do not match the declared kind"
+                "invalid_formula_shape" if self.formula is not None else "invalid_metric_shape",
+                "metric fields do not match the declared kind",
             )
         return self
 
@@ -269,7 +342,7 @@ class Metric(_Record):
 
 
 class Catalog(_Record):
-    schema_version: Literal[3]
+    schema_version: Literal[3, 4]
     day_boundary: StrictStr
     dialect: StrictStr
     sources: Mapping[StrictStr, Source]
@@ -278,6 +351,22 @@ class Catalog(_Record):
     dimensions: Mapping[StrictStr, Dimension]
     measures: Mapping[StrictStr, Measure]
     metrics: Mapping[StrictStr, Metric]
+    populations: Mapping[StrictStr, PopulationRequirement] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_version(self) -> Self:
+        if self.schema_version == 3 and (
+            self.populations
+            or any(source.row_key is not None for source in self.sources.values())
+            or any(dim.foreign_key is not None for dim in self.dimensions.values())
+            or any(prop.dtype in {"number", "timestamp"} for prop in self.properties.values())
+            or any(
+                metric.formula is not None or metric.population is not None
+                for metric in self.metrics.values()
+            )
+        ):
+            raise PydanticCustomError("shared_requires_version_4", "declare schema_version: 4")
+        return self
 
     @field_validator("day_boundary")
     @classmethod
@@ -324,7 +413,7 @@ class BoundFilter:
 class PropertyBinding:
     name: str
     column: str
-    dtype: Literal["string", "int", "float", "bool", "date"]
+    dtype: PropertyType
     as_of: Literal["event_time", "pre_exposure", "static"]
     dimension_name: str | None
 
@@ -340,10 +429,11 @@ class BoundValidity:
 class BoundDimension:
     name: str
     relation: RelationSpec
-    unit: str
+    unit: str | None
     key: str
     validity: BoundValidity | None
     properties: Mapping[str, PropertyBinding]
+    foreign_key: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -371,6 +461,22 @@ class BoundSource:
     dialect: str
     day_boundary: str
     where: tuple[Filter, ...] = ()
+    row_key: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class FormulaOperand:
+    index: int
+
+
+@dataclass(frozen=True, slots=True)
+class FormulaOperation:
+    operator: FormulaOperator
+    left: int
+    right: int | None = None
+
+
+type FormulaStep = FormulaOperand | FormulaLiteral | FormulaOperation
 
 
 @dataclass(frozen=True, slots=True)
@@ -378,7 +484,9 @@ class BoundMetric:
     name: str
     unit: str
     unit_columns: Mapping[str, str]
-    kind: Literal["mean", "conversion", "ratio"]
+    kind: Literal["mean", "conversion", "ratio", "formula"]
     measures: tuple[BoundMeasure, ...]
     source_names: tuple[str, ...]
     transforms: tuple[object, ...]
+    formula: tuple[FormulaStep, ...] = ()
+    presence: tuple[bool, ...] = ()

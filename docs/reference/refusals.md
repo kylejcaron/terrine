@@ -435,6 +435,7 @@ Correct native semantics or use an admitted staged table.
 | `terrine.semantic.missing_reference` | Stable | <code>The model does not declare {reference!r}. Add the missing declaration or use a name already declared in the model.</code> | `reference` | [terrine/semantic/bind.py](../../terrine/semantic/bind.py) |
 | `terrine.semantic.missing_reference` | Stable | <code>{owner!r} uses {kind} {name!r}, which is not declared; available names are {available!r}. Did you mean {suggestions!r}?</code> | `available`, `kind`, `name`, `owner`, `suggestions` | [terrine/model.py](../../terrine/model.py) |
 | `terrine.semantic.missing_reference` | Stable | <code>{owner!r} uses {kind} {name!r}, which is not declared; available names are {available!r}. Use one of these names or add the missing {kind} to the model.</code> | `available`, `kind`, `name`, `owner` | [terrine/model.py](../../terrine/model.py) |
+| `terrine.semantic.population_binding` | Stable | <code>Metric {metric!r} requires population {population!r} from {relation!r}.{key}. Bind that table and key as the {unit!r} roster without entry or exit filters.</code> | `key`, `metric`, `population`, `relation`, `unit` | [terrine/semantic/bind.py](../../terrine/semantic/bind.py) |
 | `terrine.semantic.schema_mismatch` | Stable | <code>Filter value {value!r} for label {label!r} has the wrong type for {label_type}; use a value matching the declared label type.</code> | `label`, `label_type`, `value` | [terrine/semantic/bind.py](../../terrine/semantic/bind.py) |
 | `terrine.semantic.schema_mismatch` | Stable | <code>The {field!r} column {column!r} for unit {unit!r} has type {source_type}, but the unit roster key has type {unit_type}. Use matching key types in the source and roster.</code> | `column`, `field`, `source_type`, `unit`, `unit_type` | [terrine/semantic/bind.py](../../terrine/semantic/bind.py) |
 | `terrine.semantic.schema_mismatch` | Stable | <code>The {field!r} column {column!r} is missing or has the wrong type. Choose an existing column with the required type, or correct the table before adding it to the model.</code> | `column`, `field` | [terrine/semantic/bind.py](../../terrine/semantic/bind.py) |
@@ -454,6 +455,18 @@ Declare stable event IDs and bounded sequence sizes.
 | `terrine.sequence.max_events_exceeded` | Stable | <code>Sequence contains more than the configured max_events value {limit}.</code> | `limit` | [terrine/temporal/sequence.py](../../terrine/temporal/sequence.py) |
 | `terrine.sequence.reanchor_leak` | Stable | <code>The {role} {name!r} event-relative window can end at {end_offset!r}, after its allowed time {limit_offset!r} relative to t0. Keep the selected event and the whole window at or before that time.</code> | `end_offset`, `limit_offset`, `name`, `role` | [terrine/spec/validate.py](../../terrine/spec/validate.py) |
 | `terrine.sequence.unsupported_shape` | Stable | <code>The design cannot calculate this event-time request. Use a declared event and label, and a supported occurrence and time window.</code> | None | [terrine/spec/sequence.py](../../terrine/spec/sequence.py) |
+
+## shared_metrics
+
+Install the shared metrics extra, select supported definitions and bind declared units.
+
+[Recovery guide](../guides/semantic-layer-interop.md)
+
+| Code | Tier | Message template | Interpolation fields | Declaration |
+| --- | --- | --- | --- | --- |
+| `terrine.shared_metrics.invalid_definition` | Stable | <code>Cannot read shared metric definitions at {path!r}:{line}:{column} ({reason}). Provide a valid shared v1 catalog.</code> | `column`, `line`, `path`, `reason` | [terrine/adapters/shared.py](../../terrine/adapters/shared.py) |
+| `terrine.shared_metrics.missing_extra` | Stable | <code>Install the {extra!r} Terrine extra to read shared metric definitions.</code> | `extra` | [terrine/adapters/shared.py](../../terrine/adapters/shared.py) |
+| `terrine.shared_metrics.unsupported_definition` | Stable | <code>Terrine cannot bind shared metric {metric!r}: {requirement}. Select definitions at one unit grain with timestamped event tables.</code> | `metric`, `requirement` | [terrine/adapters/shared.py](../../terrine/adapters/shared.py) |
 
 ## simulate
 
@@ -545,6 +558,7 @@ Check exact endpoints, coverage and arithmetic validity.
 | `terrine.temporal.float64_precision` | Stable | <code>Float64 result unavailable ({reason}). Use finite inputs with magnitude below 10**29 whose quantized result fits binary64, or declared integer/decimal values.</code> | `reason` | [terrine/backends/numeric.py](../../terrine/backends/numeric.py) |
 | `terrine.temporal.malformed_history` | Stable | <code>History has missing unit keys or start times, or an end time at or before its start. Fill the missing keys and times, and make each end later than its start.</code> | None | [terrine/temporal/attributes.py](../../terrine/temporal/attributes.py) |
 | `terrine.temporal.missing_join_key` | Stable | <code>History {dimension!r} has no matching unit key on its event table. Use the same unit key for the history and its events.</code> | `dimension` | [terrine/temporal/attributes.py](../../terrine/temporal/attributes.py) |
+| `terrine.temporal.null_measure_value` | Stable | <code>Shared sum {measure!r} on source {source!r} includes a null amount. Correct the amount or explicitly filter out rows that do not contribute.</code> | `measure`, `source` | [terrine/temporal/aggregate.py](../../terrine/temporal/aggregate.py) |
 | `terrine.temporal.overlapping_history` | Stable | <code>History has overlapping time ranges for the same unit. Make the ranges non-overlapping so each unit has at most one value at any time.</code> | None | [terrine/temporal/attributes.py](../../terrine/temporal/attributes.py) |
 | `terrine.temporal.range_bound_unavailable` | Stable | <code>A bounded range strategy is unavailable for {expression}: {reason}. The candidate multiplier limit is {limit}; {route}.</code> | `expression`, `limit`, `reason`, `route` | [terrine/temporal/ranges.py](../../terrine/temporal/ranges.py) |
 | `terrine.temporal.retention_invalid` | Stable | <code>The retention request cannot be represented ({reason}).</code> | `reason` | [terrine/temporal/retention.py](../../terrine/temporal/retention.py) |
