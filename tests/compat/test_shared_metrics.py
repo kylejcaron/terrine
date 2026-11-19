@@ -47,7 +47,7 @@ def test_declared_population_refuses_wrong_roster_without_resolving_rows(duckdb_
     duckdb_con.raw_sql("CREATE TABLE paying_customers AS FROM customers")
     # No orders table: the population failure must precede fact resolution.
     for bind in (
-        lambda: tr.Model.from_shared_metrics(
+        lambda: tr.Model.from_metric_definitions(
             parsed, con=duckdb_con, units=units, readiness={}, metrics=[_METRIC]
         ),
         lambda: tr.Model.from_catalog(
@@ -110,7 +110,7 @@ def test_oversized_formula_literal_has_the_native_catalog_refusal(duckdb_con):
     with pytest.raises(tr.TerrineError) as native:
         tr.Model.from_catalog(native_catalog, con=duckdb_con, units=units, readiness={})
     with pytest.raises(tr.TerrineError) as translated:
-        tr.Model.from_shared_metrics(shared_catalog, con=duckdb_con, units=units, readiness={})
+        tr.Model.from_metric_definitions(shared_catalog, con=duckdb_con, units=units, readiness={})
     assert translated.value.code == native.value.code == "terrine.catalog.invalid_definition"
     assert translated.value.context == native.value.context
     assert native.value.context["issues"][0]["kind"] == "invalid_formula_literal"

@@ -944,7 +944,7 @@ class Model:
 
     @classmethod
     @metadata_operation()
-    def from_shared_metrics(
+    def from_metric_definitions(
         cls,
         path_or_catalog: str | Path | SharedCatalog,
         *,

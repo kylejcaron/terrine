@@ -41,7 +41,7 @@ def _frame(model, **metrics):
 
 
 def test_calculates_formulas_after_window_aggregation(shop):
-    model = tr.Model.from_shared_metrics(
+    model = tr.Model.from_metric_definitions(
         _SHOP / "metrics.yaml",
         con=shop,
         units=_UNITS,
@@ -61,7 +61,7 @@ def test_calculates_formulas_after_window_aggregation(shop):
 @pytest.mark.parametrize("complete", [True, False], ids=["complete", "incomplete"])
 def test_round_trip_preserves_population_values_and_reasons(shop, complete):
     readiness = _coverage(_END if complete else "2026-01-01T18:00:00Z")
-    model = tr.Model.from_shared_metrics(
+    model = tr.Model.from_metric_definitions(
         _SHOP / "metrics.yaml",
         con=shop,
         units=_UNITS,
@@ -108,7 +108,7 @@ def test_round_trip_preserves_population_values_and_reasons(shop, complete):
 
 def test_duplicate_dimension_key_refuses_before_publishing(shop):
     shop.raw_sql("INSERT INTO channels VALUES ('web', 'duplicate')")
-    model = tr.Model.from_shared_metrics(
+    model = tr.Model.from_metric_definitions(
         _SHOP / "metrics.yaml",
         con=shop,
         units=_UNITS,
@@ -125,7 +125,7 @@ def test_duplicate_dimension_key_refuses_before_publishing(shop):
 def test_native_v4_conversion_does_not_require_amounts_for_presence(shop):
     shop.raw_sql("ALTER TABLE orders ALTER COLUMN gross_amount DROP NOT NULL")
     shop.raw_sql("UPDATE orders SET gross_amount = NULL")
-    model = tr.Model.from_shared_metrics(
+    model = tr.Model.from_metric_definitions(
         _SHOP / "metrics.yaml",
         con=shop,
         units=_UNITS,
