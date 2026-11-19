@@ -36,6 +36,7 @@ from terrine.execution.gates import (
     gated_output,
     run_schedule,
 )
+from terrine.semantic.models import BoundDimension, BoundMetric, BoundSource
 from terrine.spec.anchors import FixedDate
 from terrine.spec.design import _output_shape_name
 from terrine.spec.sequence import EventSequence
@@ -127,9 +128,20 @@ def _definition_record(value: object) -> object:
     if callable(model_dump):
         return _definition_record(model_dump(mode="json"))
     if is_dataclass(value):
-        return {
+        record = {
             field.name: _definition_record(getattr(value, field.name)) for field in fields(value)
         }
+        # Preserve existing feature identities when shared-only fields are unused.
+        if isinstance(value, BoundSource) and value.row_key is None:
+            del record["row_key"]
+        if isinstance(value, BoundDimension) and value.foreign_key is None:
+            del record["foreign_key"]
+        if isinstance(value, BoundMetric):
+            if not value.formula:
+                del record["formula"]
+            if not value.presence:
+                del record["presence"]
+        return record
     if isinstance(value, Mapping):
         return {str(key): _definition_record(item) for key, item in value.items()}
     if isinstance(value, (tuple, list)):
