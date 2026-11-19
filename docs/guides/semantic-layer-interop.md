@@ -8,7 +8,7 @@ SQL compilation or a familiar file extension does not prove that mapping.
 | --- | --- | --- |
 | Native Catalog schema versions 2–4 | Verified on local DuckDB | Explicit source and metric bindings; v4 also stores formulas and population requirements |
 | `increment==0.1.0a2` | Verified for the documented dataset projection | [Versioned mapping and limits](increment-compatibility.md); [executed mapping/refusal tests](../../tests/compat/test_increment_semantics.py) |
-| Shared metric YAML v1 | Verified on local DuckDB | Use `Model.from_shared_metrics` for named measures, formulas and explicitly bound populations |
+| Portable metric definitions v1 | Verified on local DuckDB | Use `Model.from_metric_definitions` for named measures, formulas and explicitly bound populations |
 | Other increment versions | Unverified | Use the tested optional release or provide a native Catalog |
 | MetricFlow/LookML and arbitrary semantic YAML | Unsupported mapping | No versioned lossless adapter exists; foreign fields fail native Catalog validation rather than becoming guessed metrics |
 | New reviewed dbt manifest-to-Catalog binding | Owner-gated, unimplemented | No new manifest reader or named dbt integration is supplied; bind an explicit native relation instead |
@@ -25,19 +25,19 @@ metric meanings with the existing shared temporal refusal. Preserving a metric
 or filter declaration is not proof of executable availability or transformed
 outcomes; the normal Design validation and completeness rules still apply.
 
-## Use shared metrics in a Design
+## Metrics
 
-Install Terrine with the `shared-metrics` extra once `metric-definitions-core` is
-available from your package index. In a development environment, install the
-matching core wheel directly. Open an Ibis connection to the tables named by
-your v1 YAML and pass the unit roster and complete event days explicitly:
+Install `terrine[metric-definitions]` once `metric-definitions` is available
+from your package index. In development, install the matching wheel directly.
+Open an Ibis connection to the tables named by your YAML and pass the unit
+roster and complete event days explicitly:
 
 ```python
 import terrine as tr
 
 units = {"customer": tr.UnitSource("customers", "customer_id")}
 readiness = {"orders": tr.Coverage("2026-01-01", "2026-01-02")}
-model = tr.Model.from_shared_metrics(
+model = tr.Model.from_metric_definitions(
     "metrics.yaml",
     con=con,
     units=units,
@@ -80,8 +80,8 @@ connection or readiness. Bind it again with
 Native v3 catalogs continue to load without a declared eligible population.
 
 Use `Model.from_increment` for existing Increment SDK objects or native YAML.
-The shared reader does not reinterpret Increment SQL, historical properties,
-exposure settings or transforms as portable declarations.
+The metric definitions reader does not reinterpret Increment SQL, historical
+properties, exposure settings or transforms as portable declarations.
 
 The [common-stack guide](common-stack-interop.md) covers bounded Arrow/dataframe
 handoffs and pinned Dataset metadata. The [backend matrix](backend-compatibility.md)

@@ -14,7 +14,7 @@ from terrine.semantic.io import dump_catalog
 
 shared = pytest.importorskip("metric_definitions")
 
-_SHOP = Path(sys.prefix) / "share/metric-definitions-core/examples/shop"
+_SHOP = Path(sys.prefix) / "share/metric-definitions/examples/shop"
 _METRIC = "revenue_per_customer"
 
 

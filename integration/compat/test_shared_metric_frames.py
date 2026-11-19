@@ -12,7 +12,7 @@ from terrine.data import BoundCoverage
 
 pytest.importorskip("metric_definitions")
 
-_SHOP = Path(sys.prefix) / "share/metric-definitions-core/examples/shop"
+_SHOP = Path(sys.prefix) / "share/metric-definitions/examples/shop"
 _UNITS = {"customer": tr.UnitSource("customers", "customer_id")}
 _START = "2026-01-01T12:00:00Z"
 _END = "2026-01-02T12:00:00Z"

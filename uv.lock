@@ -3293,9 +3293,9 @@ wheels = [
 ]
 
 [[package]]
-name = "metric-definitions-core"
+name = "metric-definitions"
 version = "0.1.0a1"
-source = { git = "https://github.com/kylejcaron/increment.git?subdirectory=packages%2Fmetric-definitions&rev=0d5640f6b1944f8d6e9af1f740e1ce06aebc786f#0d5640f6b1944f8d6e9af1f740e1ce06aebc786f" }
+source = { git = "https://github.com/kylejcaron/increment.git?subdirectory=packages%2Fmetric-definitions&rev=842dce440d89c6118fb7fbde72b404c647d338b4#842dce440d89c6118fb7fbde72b404c647d338b4" }
 dependencies = [
     { name = "pydantic" },
     { name = "pyyaml" },
@@ -6073,6 +6073,9 @@ increment = [
 lifelines = [
     { name = "lifelines" },
 ]
+metric-definitions = [
+    { name = "metric-definitions" },
+]
 pandas = [
     { name = "pandas" },
 ]
@@ -6081,9 +6084,6 @@ polars = [
 ]
 postgres = [
     { name = "ibis-framework", extra = ["postgres"] },
-]
-shared-metrics = [
-    { name = "metric-definitions-core" },
 ]
 sketches = [
     { name = "datasketches" },
@@ -6135,7 +6135,7 @@ requires-dist = [
     { name = "ibis-framework", extras = ["snowflake"], marker = "extra == 'snowflake'", specifier = ">=12,<13" },
     { name = "increment", marker = "extra == 'increment'", specifier = ">=0.1.0a2,<0.2" },
     { name = "lifelines", marker = "extra == 'lifelines'", specifier = ">=0.30,<1" },
-    { name = "metric-definitions-core", marker = "extra == 'shared-metrics'", git = "https://github.com/kylejcaron/increment.git?subdirectory=packages%2Fmetric-definitions&rev=0d5640f6b1944f8d6e9af1f740e1ce06aebc786f" },
+    { name = "metric-definitions", marker = "extra == 'metric-definitions'", git = "https://github.com/kylejcaron/increment.git?subdirectory=packages%2Fmetric-definitions&rev=842dce440d89c6118fb7fbde72b404c647d338b4" },
     { name = "numpy", specifier = ">=2.1,<3" },
     { name = "pandas", marker = "extra == 'pandas'", specifier = ">=2.2,<4" },
     { name = "polars", marker = "extra == 'polars'", specifier = ">=1.21,<2" },
@@ -6144,7 +6144,7 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6.0.2,<7" },
     { name = "sqlglot", specifier = ">=29,<30" },
 ]
-provides-extras = ["duckdb", "postgres", "bigquery", "snowflake", "pandas", "polars", "airflow", "dagster", "dbt", "increment", "shared-metrics", "sketches", "doubleml", "dowhy", "duckreg", "lifelines", "diff-diff"]
+provides-extras = ["duckdb", "postgres", "bigquery", "snowflake", "pandas", "polars", "airflow", "dagster", "dbt", "increment", "metric-definitions", "sketches", "doubleml", "dowhy", "duckreg", "lifelines", "diff-diff"]
 
 [package.metadata.requires-dev]
 dev = [

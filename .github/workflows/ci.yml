@@ -105,7 +105,7 @@ jobs:
           python-version: "${{ matrix.python-version }}"
       - run: uv sync --locked --group dev --all-extras
       - run: >-
-          /usr/bin/time -f "terrine-pytest-cpu %U %S" uv run --locked --extra shared-metrics pytest -q integration
+          /usr/bin/time -f "terrine-pytest-cpu %U %S" uv run --locked --extra metric-definitions pytest -q integration
           -n auto --dist loadscope --splits 4 --group ${{ matrix.group }}
           --splitting-algorithm duration_based_chunks
           --durations-path integration/.test_durations
@@ -190,8 +190,8 @@ jobs:
       - run: >-
           /usr/bin/time -f "terrine-pytest-cpu %U %S" uv run pytest -n auto
           integration/parity integration/compat/test_increment_metric_frames.py
-      - name: Sync shared metric definitions extras
-        run: uv sync --locked --group dev --extra duckdb --extra shared-metrics
+      - name: Sync the metric definitions extra
+        run: uv sync --locked --group dev --extra duckdb --extra metric-definitions
       - run: >-
           /usr/bin/time -f "terrine-pytest-cpu %U %S" uv run --no-sync pytest -q -n auto
           tests/compat/test_shared_metrics.py

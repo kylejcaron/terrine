@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Use `Model.from_metric_definitions(...)` with `terrine[metric-definitions]`
+  to bind portable metric definitions to a native Design.
+
 ## 0.1.0a2
 
 ### Internal aggregation

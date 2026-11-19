@@ -222,7 +222,7 @@ def to_catalog(
     except ModuleNotFoundError as exc:
         if exc.name != "metric_definitions":
             raise
-        raise _MISSING.error(extra="shared-metrics") from exc
+        raise _MISSING.error(extra="metric-definitions") from exc
     try:
         catalog = (
             path_or_catalog if isinstance(path_or_catalog, SharedCatalog) else load(path_or_catalog)
