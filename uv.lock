@@ -2513,6 +2513,15 @@ wheels = [
 ]
 
 [[package]]
+name = "increment-metrics"
+version = "0.1.0a1"
+source = { git = "https://github.com/kylejcaron/increment.git?subdirectory=packages%2Fmetric-definitions&rev=26444da565b27132585e4e44d783ce17f008527c#26444da565b27132585e4e44d783ce17f008527c" }
+dependencies = [
+    { name = "pydantic" },
+    { name = "pyyaml" },
+]
+
+[[package]]
 name = "iniconfig"
 version = "2.3.1"
 source = { registry = "https://pypi.org/simple" }
@@ -3290,15 +3299,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/13/3b/c21b74ac17befdf17b286494b02221b7a84affb1d410ff86e38ba0e14b13/methodtools-0.4.7.tar.gz", hash = "sha256:e213439dd64cfe60213f7015da6efe5dd4003fd89376db3baa09fe13ec2bb0ba", size = 3586, upload-time = "2023-02-05T13:17:54.473Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b6/4b/6497ffb463b1b75e04b348ef31070606d43e3c503fa295383538ded999c9/methodtools-0.4.7-py2.py3-none-any.whl", hash = "sha256:5e188c780b236adc12e75b5f078c5afb419ef99eb648569fc6d7071f053a1f11", size = 4038, upload-time = "2024-08-23T09:18:03.631Z" },
-]
-
-[[package]]
-name = "metric-definitions"
-version = "0.1.0a1"
-source = { git = "https://github.com/kylejcaron/increment.git?subdirectory=packages%2Fmetric-definitions&rev=842dce440d89c6118fb7fbde72b404c647d338b4#842dce440d89c6118fb7fbde72b404c647d338b4" }
-dependencies = [
-    { name = "pydantic" },
-    { name = "pyyaml" },
 ]
 
 [[package]]
@@ -6074,7 +6074,7 @@ lifelines = [
     { name = "lifelines" },
 ]
 metric-definitions = [
-    { name = "metric-definitions" },
+    { name = "increment-metrics" },
 ]
 pandas = [
     { name = "pandas" },
@@ -6134,8 +6134,8 @@ requires-dist = [
     { name = "ibis-framework", extras = ["postgres"], marker = "extra == 'postgres'", specifier = ">=12,<13" },
     { name = "ibis-framework", extras = ["snowflake"], marker = "extra == 'snowflake'", specifier = ">=12,<13" },
     { name = "increment", marker = "extra == 'increment'", specifier = ">=0.1.0a2,<0.2" },
+    { name = "increment-metrics", marker = "extra == 'metric-definitions'", git = "https://github.com/kylejcaron/increment.git?subdirectory=packages%2Fmetric-definitions&rev=26444da565b27132585e4e44d783ce17f008527c" },
     { name = "lifelines", marker = "extra == 'lifelines'", specifier = ">=0.30,<1" },
-    { name = "metric-definitions", marker = "extra == 'metric-definitions'", git = "https://github.com/kylejcaron/increment.git?subdirectory=packages%2Fmetric-definitions&rev=842dce440d89c6118fb7fbde72b404c647d338b4" },
     { name = "numpy", specifier = ">=2.1,<3" },
     { name = "pandas", marker = "extra == 'pandas'", specifier = ">=2.2,<4" },
     { name = "polars", marker = "extra == 'polars'", specifier = ">=1.21,<2" },

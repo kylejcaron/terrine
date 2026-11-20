@@ -12,9 +12,9 @@ import terrine as tr
 from terrine.adapters.shared import to_catalog
 from terrine.semantic.io import dump_catalog
 
-shared = pytest.importorskip("metric_definitions")
+shared = pytest.importorskip("increment_metrics")
 
-_SHOP = Path(sys.prefix) / "share/metric-definitions/examples/shop"
+_SHOP = Path(sys.prefix) / "share/increment-metrics/examples/shop"
 _METRIC = "revenue_per_customer"
 
 

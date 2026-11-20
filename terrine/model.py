@@ -42,7 +42,7 @@ from terrine.semantic.time import boundary_timezone
 from terrine.temporal.readiness import Readiness
 
 if TYPE_CHECKING:
-    from metric_definitions import Catalog as SharedCatalog
+    from increment_metrics import Catalog as SharedCatalog
 
     from terrine.execution.inputs import ExecutionContext, VerifiedInputBinding
 __all__ = ["Catalog", "EventMetric", "Model", "Ratio", "Readiness"]

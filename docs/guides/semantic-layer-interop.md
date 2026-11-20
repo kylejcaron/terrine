@@ -27,7 +27,7 @@ outcomes; the normal Design validation and completeness rules still apply.
 
 ## Metrics
 
-Install `terrine[metric-definitions]` once `metric-definitions` is available
+Install `terrine[metric-definitions]` once `increment-metrics` is available
 from your package index. In development, install the matching wheel directly.
 Open an Ibis connection to the tables named by your YAML and pass the unit
 roster and complete event days explicitly:

@@ -142,7 +142,7 @@ License artifacts: LICENSE and NOTICE in the installed distribution.
 Upstream NOTICE: increment, Copyright 2026 Kyle Caron. This product includes
 software developed by Kyle Caron (https://github.com/kylejcaron/increment).
 
-Package: metric-definitions
+Package: increment-metrics
 Extra: metric-definitions
 Version inspected: 0.1.0a1
 License: Apache-2.0

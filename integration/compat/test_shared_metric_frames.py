@@ -10,9 +10,9 @@ import pytest
 import terrine as tr
 from terrine.data import BoundCoverage
 
-pytest.importorskip("metric_definitions")
+pytest.importorskip("increment_metrics")
 
-_SHOP = Path(sys.prefix) / "share/metric-definitions/examples/shop"
+_SHOP = Path(sys.prefix) / "share/increment-metrics/examples/shop"
 _UNITS = {"customer": tr.UnitSource("customers", "customer_id")}
 _START = "2026-01-01T12:00:00Z"
 _END = "2026-01-02T12:00:00Z"

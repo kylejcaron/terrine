@@ -23,7 +23,7 @@ from terrine.semantic.models import (
 )
 
 if TYPE_CHECKING:
-    import metric_definitions as shared
+    import increment_metrics as shared
 
 _MISSING = RefusalSpec(
     "terrine.shared_metrics.missing_extra",
@@ -81,7 +81,7 @@ class _MetricDeclaration(TypedDict):
 
 
 def _formula(node: shared.Formula, catalog: shared.Catalog) -> _FormulaDeclaration:
-    from metric_definitions import Binary, Literal, Negation, Reference
+    from increment_metrics import Binary, Literal, Negation, Reference
 
     match node:
         case Literal(value=value):
@@ -101,7 +101,7 @@ def _formula(node: shared.Formula, catalog: shared.Catalog) -> _FormulaDeclarati
 
 
 def _metrics(catalog: shared.Catalog, units: frozenset[str]) -> dict[str, _MetricDeclaration]:
-    from metric_definitions import ConversionMetric, FormulaMetric, MeanMetric, references
+    from increment_metrics import ConversionMetric, FormulaMetric, MeanMetric, references
 
     lowered: dict[str, _MetricDeclaration] = {}
 
@@ -217,10 +217,10 @@ def to_catalog(
 ) -> Catalog:
     """Select and translate declarations without connecting to their relations."""
     try:
-        from metric_definitions import Catalog as SharedCatalog
-        from metric_definitions import CatalogError, load
+        from increment_metrics import Catalog as SharedCatalog
+        from increment_metrics import CatalogError, load
     except ModuleNotFoundError as exc:
-        if exc.name != "metric_definitions":
+        if exc.name != "increment_metrics":
             raise
         raise _MISSING.error(extra="metric-definitions") from exc
     try:
