@@ -1,9 +1,11 @@
 # Changelog
 
-## Unreleased
+## 0.1.0a3
 
-- Use `Model.from_metric_definitions(...)` with `terrine[metric-definitions]`
-  to bind portable metric definitions to a native Design.
+- Install `terrine[metric-definitions]` and call `Model.from_metric_definitions(...)`
+  to reuse metric YAML from Increment Metrics in a Terrine Design. Formulas
+  evaluate over the selected window; roster and data completeness stay explicit.
+  Existing catalogs and the `Model.from_increment(...)` bridge are unchanged.
 
 ## 0.1.0a2
 

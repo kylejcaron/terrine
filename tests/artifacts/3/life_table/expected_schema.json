@@ -1,0 +1,428 @@
+{
+  "design.json": [
+    {
+      "name": "unit",
+      "type": "int64",
+      "role": "unit"
+    },
+    {
+      "name": "anchor_id",
+      "type": "int64",
+      "role": "anchor"
+    },
+    {
+      "name": "t0",
+      "type": "int64",
+      "role": "t0"
+    },
+    {
+      "name": "has_orders",
+      "type": "bool",
+      "role": "feature"
+    },
+    {
+      "name": "has_orders__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "has_orders__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
+      "name": "time_bin",
+      "type": "int64",
+      "role": "feature"
+    },
+    {
+      "name": "at_risk",
+      "type": "int64",
+      "role": "outcome"
+    },
+    {
+      "name": "at_risk__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "at_risk__reason",
+      "type": "list<item: string>",
+      "role": "output"
+    },
+    {
+      "name": "events",
+      "type": "int64",
+      "role": "outcome"
+    },
+    {
+      "name": "events__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "events__reason",
+      "type": "list<item: string>",
+      "role": "output"
+    },
+    {
+      "name": "censored",
+      "type": "int64",
+      "role": "outcome"
+    },
+    {
+      "name": "censored__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "censored__reason",
+      "type": "list<item: string>",
+      "role": "output"
+    },
+    {
+      "name": "censored_by_reason",
+      "type": "map<string, int64>",
+      "role": "outcome"
+    },
+    {
+      "name": "censored_by_reason__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "censored_by_reason__reason",
+      "type": "list<item: string>",
+      "role": "output"
+    },
+    {
+      "name": "delayed_entries",
+      "type": "int64",
+      "role": "outcome"
+    },
+    {
+      "name": "delayed_entries__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "delayed_entries__reason",
+      "type": "list<item: string>",
+      "role": "output"
+    },
+    {
+      "name": "event_rate",
+      "type": "double",
+      "role": "outcome"
+    },
+    {
+      "name": "event_rate__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "event_rate__reason",
+      "type": "list<item: string>",
+      "role": "output"
+    },
+    {
+      "name": "censor_rate",
+      "type": "double",
+      "role": "outcome"
+    },
+    {
+      "name": "censor_rate__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "censor_rate__reason",
+      "type": "list<item: string>",
+      "role": "output"
+    }
+  ],
+  "design.yaml": [
+    {
+      "name": "unit",
+      "type": "int64",
+      "role": "unit"
+    },
+    {
+      "name": "anchor_id",
+      "type": "int64",
+      "role": "anchor"
+    },
+    {
+      "name": "t0",
+      "type": "int64",
+      "role": "t0"
+    },
+    {
+      "name": "has_orders",
+      "type": "bool",
+      "role": "feature"
+    },
+    {
+      "name": "has_orders__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "has_orders__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
+      "name": "time_bin",
+      "type": "int64",
+      "role": "feature"
+    },
+    {
+      "name": "at_risk",
+      "type": "int64",
+      "role": "outcome"
+    },
+    {
+      "name": "at_risk__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "at_risk__reason",
+      "type": "list<item: string>",
+      "role": "output"
+    },
+    {
+      "name": "events",
+      "type": "int64",
+      "role": "outcome"
+    },
+    {
+      "name": "events__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "events__reason",
+      "type": "list<item: string>",
+      "role": "output"
+    },
+    {
+      "name": "censored",
+      "type": "int64",
+      "role": "outcome"
+    },
+    {
+      "name": "censored__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "censored__reason",
+      "type": "list<item: string>",
+      "role": "output"
+    },
+    {
+      "name": "censored_by_reason",
+      "type": "map<string, int64>",
+      "role": "outcome"
+    },
+    {
+      "name": "censored_by_reason__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "censored_by_reason__reason",
+      "type": "list<item: string>",
+      "role": "output"
+    },
+    {
+      "name": "delayed_entries",
+      "type": "int64",
+      "role": "outcome"
+    },
+    {
+      "name": "delayed_entries__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "delayed_entries__reason",
+      "type": "list<item: string>",
+      "role": "output"
+    },
+    {
+      "name": "event_rate",
+      "type": "double",
+      "role": "outcome"
+    },
+    {
+      "name": "event_rate__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "event_rate__reason",
+      "type": "list<item: string>",
+      "role": "output"
+    },
+    {
+      "name": "censor_rate",
+      "type": "double",
+      "role": "outcome"
+    },
+    {
+      "name": "censor_rate__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "censor_rate__reason",
+      "type": "list<item: string>",
+      "role": "output"
+    }
+  ],
+  "definition.json": [
+    {
+      "name": "unit",
+      "type": "int64",
+      "role": "unit"
+    },
+    {
+      "name": "anchor_id",
+      "type": "int64",
+      "role": "anchor"
+    },
+    {
+      "name": "t0",
+      "type": "int64",
+      "role": "t0"
+    },
+    {
+      "name": "has_orders",
+      "type": "bool",
+      "role": "feature"
+    },
+    {
+      "name": "has_orders__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "has_orders__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
+      "name": "time_bin",
+      "type": "int64",
+      "role": "feature"
+    },
+    {
+      "name": "at_risk",
+      "type": "int64",
+      "role": "outcome"
+    },
+    {
+      "name": "at_risk__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "at_risk__reason",
+      "type": "list<item: string>",
+      "role": "output"
+    },
+    {
+      "name": "events",
+      "type": "int64",
+      "role": "outcome"
+    },
+    {
+      "name": "events__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "events__reason",
+      "type": "list<item: string>",
+      "role": "output"
+    },
+    {
+      "name": "censored",
+      "type": "int64",
+      "role": "outcome"
+    },
+    {
+      "name": "censored__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "censored__reason",
+      "type": "list<item: string>",
+      "role": "output"
+    },
+    {
+      "name": "censored_by_reason",
+      "type": "map<string, int64>",
+      "role": "outcome"
+    },
+    {
+      "name": "censored_by_reason__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "censored_by_reason__reason",
+      "type": "list<item: string>",
+      "role": "output"
+    },
+    {
+      "name": "delayed_entries",
+      "type": "int64",
+      "role": "outcome"
+    },
+    {
+      "name": "delayed_entries__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "delayed_entries__reason",
+      "type": "list<item: string>",
+      "role": "output"
+    },
+    {
+      "name": "event_rate",
+      "type": "double",
+      "role": "outcome"
+    },
+    {
+      "name": "event_rate__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "event_rate__reason",
+      "type": "list<item: string>",
+      "role": "output"
+    },
+    {
+      "name": "censor_rate",
+      "type": "double",
+      "role": "outcome"
+    },
+    {
+      "name": "censor_rate__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "censor_rate__reason",
+      "type": "list<item: string>",
+      "role": "output"
+    }
+  ]
+}

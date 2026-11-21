@@ -2515,10 +2515,14 @@ wheels = [
 [[package]]
 name = "increment-metrics"
 version = "0.1.0a1"
-source = { git = "https://github.com/kylejcaron/increment.git?subdirectory=packages%2Fmetric-definitions&rev=26444da565b27132585e4e44d783ce17f008527c#26444da565b27132585e4e44d783ce17f008527c" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pydantic" },
     { name = "pyyaml" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ec/e7/7431c246878b160b7c99b29e54afc7d2697f14f275b4bb7a9dd1e0020d43/increment_metrics-0.1.0a1.tar.gz", hash = "sha256:1e5cca64e68347d26f3b985e382305ceeff18edecd6b1609b962b6e4996e6ddc", size = 19236, upload-time = "2026-11-20T03:42:52.717Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/52/3d/c105b0802ad4848a1cab9417f07a26655f214df5d199b34e09da4b74eb35/increment_metrics-0.1.0a1-py3-none-any.whl", hash = "sha256:1af232a9faab75b362d68a3bbd1b4ad1dc9a6ca6f20d31db9914b973d40c2062", size = 23350, upload-time = "2026-11-20T03:42:51.48Z" },
 ]
 
 [[package]]
@@ -6024,7 +6028,7 @@ wheels = [
 
 [[package]]
 name = "terrine"
-version = "0.1.0a2"
+version = "0.1.0a3"
 source = { editable = "." }
 dependencies = [
     { name = "ibis-framework" },
@@ -6134,7 +6138,7 @@ requires-dist = [
     { name = "ibis-framework", extras = ["postgres"], marker = "extra == 'postgres'", specifier = ">=12,<13" },
     { name = "ibis-framework", extras = ["snowflake"], marker = "extra == 'snowflake'", specifier = ">=12,<13" },
     { name = "increment", marker = "extra == 'increment'", specifier = ">=0.1.0a2,<0.2" },
-    { name = "increment-metrics", marker = "extra == 'metric-definitions'", git = "https://github.com/kylejcaron/increment.git?subdirectory=packages%2Fmetric-definitions&rev=26444da565b27132585e4e44d783ce17f008527c" },
+    { name = "increment-metrics", marker = "extra == 'metric-definitions'", specifier = ">=0.1.0a1,<0.2" },
     { name = "lifelines", marker = "extra == 'lifelines'", specifier = ">=0.30,<1" },
     { name = "numpy", specifier = ">=2.1,<3" },
     { name = "pandas", marker = "extra == 'pandas'", specifier = ">=2.2,<4" },
