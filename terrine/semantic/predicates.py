@@ -11,7 +11,7 @@ import math
 import operator
 import re
 from collections.abc import Callable
-from datetime import date
+from datetime import UTC, date, datetime
 from fractions import Fraction
 from typing import TYPE_CHECKING, Any, cast, overload
 
@@ -150,6 +150,17 @@ def _exact_comparison(value, coefficient, scale, bounds, item, op, name):
     return _COMPARISONS[op](coefficient, exact_literal(threshold, coefficient))
 
 
+def _timestamp_literal(value: str) -> datetime | None:
+    # Do not silently truncate a shared threshold that needs finer precision.
+    if any(digit != "0" for fraction in re.findall(r"[.,](\d+)", value) for digit in fraction[6:]):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+        return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
+    except (OverflowError, ValueError):
+        return None
+
+
 def _filter_literal(value, item, name):
     dtype = value.type()
     if item is None:
@@ -169,6 +180,11 @@ def _filter_literal(value, item, name):
             return ibis.literal(date.fromisoformat(item))
         except ValueError:
             raise _SCHEMA.error(field=f"date filter {name}", column=name) from None
+    if dtype.is_timestamp() and isinstance(item, str):
+        timestamp = _timestamp_literal(item)
+        if timestamp is not None:
+            return ibis.literal(timestamp if dtype.timezone else timestamp.replace(tzinfo=None))
+        raise _SCHEMA.error(field=f"timestamp filter {name}", column=name)
     if (dtype.is_string() and isinstance(item, str)) or (
         dtype.is_boolean() and isinstance(item, bool)
     ):

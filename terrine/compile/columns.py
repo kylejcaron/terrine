@@ -175,6 +175,17 @@ class _HistoryValidation:
 
 
 @dataclass(frozen=True, slots=True)
+class _FactKeyValidation:
+    key_checks: AnchorTable
+
+    def reads(self) -> tuple[ibis.Table, ...]:
+        return self.key_checks.reads()
+
+    def validate(self, execute: Callable[[ibis.Table], pa.Table]) -> None:
+        self.key_checks.validate(execute=execute)
+
+
+@dataclass(frozen=True, slots=True)
 class SketchSidecar:
     outputs: tuple[str, ...]
     rows: ibis.Table
@@ -458,6 +469,15 @@ def compile_columns(
             )
             histories = {}
             source_checks[source_name] = []
+            if source.row_key is not None:
+                key_checks = tuple(
+                    replace(
+                        check,
+                        context=(*check.context, ("source", source.name), ("key", source.row_key)),
+                    )
+                    for check in _unique_checks(raw, source.row_key, "event")
+                )
+                source_checks[source_name].append(_FactKeyValidation(AnchorTable(raw, key_checks)))
             for dimension in source.dimensions:
                 history = model._relation(dimension.relation)
                 histories[dimension.name] = history

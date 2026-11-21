@@ -48,6 +48,14 @@ _HINTS = {
     "invalid_metric_shape": (
         "For kind ratio, set numerator and denominator only; other kinds require measure only."
     ),
+    "invalid_formula_shape": "Set only the formula expression on a formula metric.",
+    "formula_cycle": "Remove cyclic references between formulas.",
+    "formula_grain": "Use operands with the same unit and declared population.",
+    "formula_operand_kind": "Use additive measures or supported formula dependencies.",
+    "population_unit": "Use the entity declared by the population.",
+    "invalid_dimension_join": "Set a unit or a static foreign key, not both.",
+    "invalid_formula_literal": "Use a finite number within the binary64 range.",
+    "shared_requires_version_4": "Declare schema_version: 4 for shared metric fields.",
     "unsafe_transform": (
         "Use JSON-safe winsorization data rather than callbacks or runtime objects."
     ),
@@ -64,12 +72,11 @@ _HINTS = {
     ),
 }
 _DEFAULT_HINT = "Correct this field to match the declared Catalog schema."
-_SCHEMA_VERSION = 3
-_SCHEMA_VERSIONS = (2, 3)
+_NATIVE_SCHEMA_VERSION = 3
+_SCHEMA_VERSIONS = (2, 3, 4)
 _SCHEMA_VERSION_HINT = (
-    "Declare schema_version: 3 (version 2 documents still load) and use the current keys: "
-    "sources carry time, units and events; the root and each source list events; "
-    "dimensions carry unit and key; measures carry event; metrics carry unit."
+    "Declare schema_version: 3 for native declarations or schema_version: 4 "
+    "for formulas, population requirements and shared keys (version 2 still loads)."
 )
 
 
@@ -140,7 +147,9 @@ def validate_catalog(value: Any) -> Catalog:
     Version 2 definitions, which predate ``exact``, load as version 3 with every measure
     exact.
     """
-    declared = value.get("schema_version", _SCHEMA_VERSION) if isinstance(value, Mapping) else None
+    declared = (
+        value.get("schema_version", _NATIVE_SCHEMA_VERSION) if isinstance(value, Mapping) else None
+    )
     if isinstance(value, Mapping) and declared not in _SCHEMA_VERSIONS:
         raise _refusal(
             (
@@ -154,7 +163,7 @@ def validate_catalog(value: Any) -> Catalog:
     if isinstance(value, Mapping) and declared == 2:
         if issues := _version_2_issues(value):
             raise invalid_definition(issues)
-        value = {**value, "schema_version": _SCHEMA_VERSION}
+        value = {**value, "schema_version": _NATIVE_SCHEMA_VERSION}
     try:
         return Catalog.model_validate(value)
     except ValidationError as exc:
@@ -219,21 +228,18 @@ def catalog_payload(catalog: Catalog) -> dict[str, Any]:
     which pydantic's ``exclude_defaults`` ignores, so defaults are pruned against the
     record fields here.
 
-    Measures write ``exact: false`` when native and omit ``exact`` when exact, and the
-    payload declares the oldest schema version that expresses it: 2 when every measure is
-    exact, 3 when any is native. A version 2 document therefore keeps its payload and every
-    identity derived from it, while a native measure gets a distinct identity. Documents
-    are this payload declared at the current version.
+    Native v3 payloads keep their original identity: 2 when every measure is exact, 3
+    otherwise. Version 4 carries shared declarations, never the runtime bindings.
     """
     payload = _prune_defaults(catalog, catalog.model_dump(mode="json"))
-    if all(measure.exact for measure in catalog.measures.values()):
+    if catalog.schema_version == 3 and all(measure.exact for measure in catalog.measures.values()):
         payload["schema_version"] = 2
     return payload
 
 
 def dump_catalog(catalog: Catalog) -> str:
-    """Serialize a native Catalog as a current-version document of safe YAML values."""
+    """Serialize a native Catalog as safe YAML at its declared schema version."""
     if not isinstance(catalog, Catalog):
         raise _INVALID_INPUT.error(reason="wrong_type", field="catalog")
-    payload = catalog_payload(catalog) | {"schema_version": _SCHEMA_VERSION}
+    payload = catalog_payload(catalog) | {"schema_version": catalog.schema_version}
     return yaml.safe_dump(payload, sort_keys=False)

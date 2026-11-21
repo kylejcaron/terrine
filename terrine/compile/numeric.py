@@ -17,7 +17,7 @@ from terrine.temporal.aggregate import (
     TemporalResult,
     aggregate_windows,
 )
-from terrine.temporal.daily import native_arithmetic, resolve_measure
+from terrine.temporal.daily import resolve_measure
 from terrine.windows import Window
 
 if TYPE_CHECKING:
@@ -112,8 +112,7 @@ def lower_aggregates(
         groups.setdefault(resolution, []).append(
             replace(request, metric=replace(request.metric, measures=tuple(resolved)))
         )
-        native = any(native_arithmetic(measure) for measure in resolved)
-        strategies[request.output] = f"local_{resolution}/{'native_float' if native else 'exact'}"
+        strategies[request.output] = resolution
     table = anchors
     columns = {}
     checks = []
@@ -128,6 +127,9 @@ def lower_aggregates(
             _origin_bounds=None if relative else ctx.origin_bounds,
         )
         table = result.table
+        for output, meta in result.columns.items():
+            arithmetic = "native_float" if meta.arithmetic == "native" else "exact"
+            strategies[output] = f"local_{strategies[output]}/{arithmetic}"
         columns.update(result.columns)
         checks.extend(result.row_checks)
     ordered = {request.output: columns[request.output] for request in requests}

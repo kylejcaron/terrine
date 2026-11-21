@@ -172,6 +172,9 @@ class _Renderer:
 
     def _metric(self, name: str) -> str:
         metric = self.model.metrics[name]
+        if metric.formula:
+            operands = "; ".join(self._measure(measure) for measure in metric.measures)
+            return f"formula {name!r} over {operands}" if operands else f"constant formula {name!r}"
         if metric.kind == "ratio":
             numerator, denominator = metric.measures
             return f"ratio of {self._measure(numerator)} to {self._measure(denominator)}"
@@ -189,6 +192,8 @@ class _Renderer:
 
     def _empty_metric(self, name: str) -> tuple[str, str | None]:
         metric = self.model.metrics[name]
+        if metric.formula:
+            return "formula evaluated on its empty operands", None
         if metric.kind == "conversion":
             return "false", None
         if metric.kind == "ratio":

@@ -134,7 +134,7 @@ def test_from_catalog_mapping_binds_same_model_as_catalog():
     assert from_mapping.catalog == from_catalog.catalog
 
     with pytest.raises(TerrineError) as error:
-        Model.from_catalog({**CATALOG, "schema_version": 4}, con=con, readiness=readiness)
+        Model.from_catalog({**CATALOG, "schema_version": 5}, con=con, readiness=readiness)
     assert error.value.code == "terrine.catalog.invalid_definition"
 
     with pytest.raises(TerrineError) as error:
@@ -247,7 +247,7 @@ def test_catalog_v3_written_with_exact_false_for_native(tmp_path: Path):
     assert yaml.safe_load(dump_catalog(exact))["measures"] == FLOAT_CATALOG["measures"]
 
 
-@pytest.mark.parametrize("version", [1, 4, "2", None])
+@pytest.mark.parametrize("version", [1, 5, "2", None])
 def test_unsupported_schema_version_refuses_before_field_diagnostics(version):
     document = {**CATALOG, "schema_version": version, "surprise": True}
     with pytest.raises(TerrineError) as error:

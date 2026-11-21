@@ -96,6 +96,10 @@ _RECOVERY = {
     ),
     "semantic": ("temporal-engine.md", "Correct native semantics or use an admitted staged table."),
     "sequence": ("temporal-engine.md", "Declare stable event IDs and bounded sequence sizes."),
+    "shared_metrics": (
+        "semantic-layer-interop.md",
+        "Install the shared metrics extra, select supported definitions and bind declared units.",
+    ),
     "simulate": ("synthetic-worlds.md", "Use representable, consistent raw-source configurations."),
     "spec": (
         "design-specs.md",

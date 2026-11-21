@@ -7,7 +7,7 @@ import re
 from collections.abc import Callable, Mapping
 from datetime import date
 from types import MappingProxyType
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import ibis
 import ibis.expr.types as ir
@@ -24,12 +24,23 @@ from terrine.semantic.models import (
     BoundValidity,
     Catalog,
     Filter,
+    Formula,
+    FormulaBinary,
+    FormulaLiteral,
+    FormulaNegation,
+    FormulaOperand,
+    FormulaOperation,
+    FormulaReference,
+    FormulaStep,
     PropertyBinding,
     RelationSpec,
 )
 from terrine.semantic.rules import UNSUPPORTED_TEMPORAL_KIND
 from terrine.semantic.sql import DIALECT_MISMATCH
 from terrine.semantic.time import boundary_timezone
+
+if TYPE_CHECKING:
+    from terrine.data import UnitSource
 
 __all__ = [
     "normalize_source",
@@ -62,6 +73,11 @@ _MISSING = RefusalSpec(
     "terrine.semantic.missing_reference",
     "The model does not declare {reference!r}. "
     "Add the missing declaration or use a name already declared in the model.",
+)
+_POPULATION = RefusalSpec(
+    "terrine.semantic.population_binding",
+    "Metric {metric!r} requires population {population!r} from {relation!r}.{key}. "
+    "Bind that table and key as the {unit!r} roster without entry or exit filters.",
 )
 _AMBIGUOUS = RefusalSpec(
     "terrine.semantic.ambiguous_column",
@@ -101,10 +117,14 @@ def _dtype_ok(dtype: Any, expected: str) -> bool:
         return dtype.is_integer() or (dtype.is_decimal() and dtype.scale == 0)
     if expected == "float":
         return dtype.is_floating() or dtype.is_decimal()
+    if expected == "number":
+        return dtype.is_integer() or dtype.is_floating() or dtype.is_decimal()
     if expected == "bool":
         return dtype.is_boolean()
     if expected == "date":
         return dtype.is_date()
+    if expected == "timestamp":
+        return dtype.is_timestamp()
     return False
 
 
@@ -125,7 +145,11 @@ def validate_filter_values(filt: Filter, dtype: str) -> None:
                     valid = date.fromisoformat(value).isoformat() == value
                 except ValueError:
                     valid = False
-        elif dtype in {"int", "float"}:
+        elif dtype == "timestamp":
+            from terrine.semantic.predicates import _timestamp_literal
+
+            valid = isinstance(value, str) and _timestamp_literal(value) is not None
+        elif dtype in {"int", "float", "number"}:
             if isinstance(value, bool):
                 valid = False
             elif isinstance(value, int):
@@ -198,6 +222,8 @@ def normalize_source(
     for name, column in source.units.items():
         if column not in columns:
             raise _SCHEMA.error(field=f"unit {name}", column=column)
+    if source.row_key is not None and source.row_key not in columns:
+        raise _SCHEMA.error(field="row key", column=source.row_key)
     for filt in source.where:
         column = filt.property
         if column not in columns:
@@ -257,7 +283,10 @@ def normalize_source(
     dimensions = []
     for name in source.dimensions:
         dim = _reference(catalog.dimensions, name, "dimension")
-        if dim.unit not in source.units:
+        if dim.foreign_key is not None:
+            if dim.foreign_key not in columns:
+                raise _SCHEMA.error(field=f"dimension {name} foreign key", column=dim.foreign_key)
+        elif dim.unit not in source.units:
             raise _MISSING.error(reference=f"dimension {name} unit {dim.unit}")
         dimension_relation = (
             resolver(dim.relation)
@@ -267,6 +296,11 @@ def normalize_source(
         dimension_columns = dict(dimension_relation.schema().items())
         if dim.key not in dimension_columns:
             raise _SCHEMA.error(field=f"dimension {name} key", column=dim.key)
+        if dim.foreign_key is not None:
+            left = columns[dim.foreign_key].copy(nullable=True)
+            right = dimension_columns[dim.key].copy(nullable=True)
+            if left != right and not (left.is_integer() and right.is_integer()):
+                raise _SCHEMA.error(field=f"dimension {name} join key", column=dim.key)
         validity = None
         if dim.validity is not None:
             validity = BoundValidity(
@@ -304,6 +338,7 @@ def normalize_source(
                 dim.key,
                 validity,
                 MappingProxyType(dimension_properties),
+                dim.foreign_key,
             )
         )
     return BoundSource(
@@ -317,20 +352,127 @@ def normalize_source(
         expression_dialect(engine),
         catalog.day_boundary,
         source.where,
+        source.row_key,
     )
+
+
+def validate_populations(catalog: Catalog, units: Mapping[str, UnitSource]) -> None:
+    """Require the declared roster identity, not a table with coincident rows."""
+    for name, metric in catalog.metrics.items():
+        if metric.population is None:
+            continue
+        population = _reference(catalog.populations, metric.population, "population")
+        if metric.unit != population.unit:
+            raise invalid_definition([(("metrics", name, "population"), "population_unit")])
+        roster = units.get(population.unit)
+        if roster is None:
+            reason = "missing_roster"
+        elif roster.table != population.relation.name or roster.key != population.key:
+            reason = "roster_identity_mismatch"
+        elif roster.entered_at is not None or roster.exited_at is not None:
+            reason = "filtered_roster"
+        else:
+            continue
+        raise _POPULATION.error(
+            metric=name,
+            target="terrine",
+            population=metric.population,
+            relation=population.relation.name,
+            key=population.key,
+            unit=population.unit,
+            reason=reason,
+        )
+
+
+def _formula_plan(
+    catalog: Catalog, metric_name: str
+) -> tuple[tuple[FormulaStep, ...], tuple[str, ...], tuple[bool, ...]]:
+    root = catalog.metrics[metric_name]
+    steps: list[FormulaStep] = []
+    leaves: dict[tuple[str, bool], int] = {}
+    completed: dict[str, int] = {}
+    active: set[str] = set()
+
+    def invalid(kind: str) -> None:
+        raise invalid_definition([(("metrics", metric_name, "formula"), kind)])
+
+    def add(step: FormulaStep) -> int:
+        steps.append(step)
+        return len(steps) - 1
+
+    def leaf(name: str, presence: bool = False) -> int:
+        key = (name, presence)
+        if key not in leaves:
+            leaves[key] = len(leaves)
+        return add(FormulaOperand(leaves[key]))
+
+    def visit(node: Formula) -> int:
+        match node:
+            case FormulaLiteral():
+                return add(node)
+            case FormulaReference(kind="measure", name=name):
+                return leaf(name)
+            case FormulaReference(name=name):
+                return metric_step(name)
+            case FormulaNegation(operand=operand):
+                return add(FormulaOperation("-", visit(operand)))
+            case FormulaBinary(operator=operator, left=left, right=right):
+                return add(FormulaOperation(operator, visit(left), visit(right)))
+        raise AssertionError("unrecognized formula node")
+
+    def metric_step(name: str) -> int:
+        if name in completed:
+            return completed[name]
+        if name in active:
+            invalid("formula_cycle")
+        metric = _reference(catalog.metrics, name, "metric")
+        if metric.unit != root.unit or metric.population not in (None, root.population):
+            invalid("formula_grain")
+        active.add(name)
+        if metric.formula is not None and metric.winsorization is None:
+            result = visit(metric.formula)
+        elif (
+            metric.kind in {"mean", "conversion"}
+            and metric.measure is not None
+            and metric.winsorization is None
+        ):
+            result = leaf(metric.measure, metric.kind == "conversion")
+        else:
+            raise invalid_definition(
+                [(("metrics", metric_name, "formula"), "formula_operand_kind")]
+            )
+        active.remove(name)
+        completed[name] = result
+        return result
+
+    metric_step(metric_name)
+    return tuple(steps), tuple(name for name, _ in leaves), tuple(flag for _, flag in leaves)
 
 
 def bind_metric(catalog: Catalog, metric_name: str) -> BoundMetric:
     """Resolve metric and measure references while preserving declaration meaning."""
     metric = _reference(catalog.metrics, metric_name, "metric")
-    if metric.kind not in {"mean", "conversion", "ratio"}:
+    formula: tuple[FormulaStep, ...] = ()
+    presence: tuple[bool, ...] = ()
+    if metric.kind == "formula" and metric.formula is not None:
+        formula, names, presence = _formula_plan(catalog, metric_name)
+    elif metric.kind == "ratio":
+        names = (metric.numerator, metric.denominator)
+    elif metric.kind in {"mean", "conversion"}:
+        names = (metric.measure,)
+    else:
         raise UNSUPPORTED_TEMPORAL_KIND.error(kind=metric.kind)
-    names = (metric.numerator, metric.denominator) if metric.kind == "ratio" else (metric.measure,)
     bound_measures = []
     source_names = []
     unit_columns = {}
     for measure_name in names:
         measure = _reference(catalog.measures, measure_name, "measure")
+        if formula and (
+            measure.aggregation not in {"sum", "count"} or measure.window_days is not None
+        ):
+            raise invalid_definition(
+                [(("metrics", metric_name, "formula"), "formula_operand_kind")]
+            )
         event = _reference(catalog.events, measure.event, "event")
         source = _reference(catalog.sources, event.source, "source")
         if measure.event not in source.events:
@@ -380,6 +522,8 @@ def bind_metric(catalog: Catalog, metric_name: str) -> BoundMetric:
         tuple(bound_measures),
         tuple(dict.fromkeys(source_names)),
         transform,
+        formula,
+        presence,
     )
 
 
@@ -416,6 +560,7 @@ def normalize_events(
         for prop in source.properties.values()
         if prop.dimension_name is None and prop.column is not None
     )
+    physical.extend(dim.foreign_key for dim in source.dimensions if dim.foreign_key is not None)
     physical = list(dict.fromkeys(physical))
     if ("_unit" in physical and unit_column != "_unit") or (
         "_timestamp" in physical and source.time_column != "_timestamp"
