@@ -186,9 +186,10 @@ administrative compatibility does not permit obsolete execution or replay
   documents and for every runtime identity derived from a Catalog: the model
   hash and `ModelReference`. A Catalog that gains a defaulted field therefore
   keeps its model hash, saved plans and agent references. Measures omit `exact`
-  when exact, and the identity payload declares version 2 unless a measure is
-  native, so a version 2 Catalog keeps its identities; documents are written as
-  version 3.
+  when exact. The identity payload declares version 2 for exact native
+  measures, version 3 when a measure uses native float arithmetic, and
+  version 4 for Catalogs with shared metric fields. Catalog documents are
+  written as version 3 or 4.
 
 ### How the promises are checked
 
