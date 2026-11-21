@@ -335,6 +335,21 @@ def _documents(root: Path, data: Path) -> dict[str, str]:
     con = ibis.duckdb.connect(str(root / "owner.duckdb"))
     try:
         model = bind_model(con, data)
+        catalog = model.catalog.model_dump()
+        catalog["schema_version"] = 4
+        catalog["metrics"]["average_order_value"] = {
+            "kind": "formula",
+            "unit": "customer",
+            "formula": {
+                "kind": "binary",
+                "operator": "/",
+                "left": {"kind": "measure", "name": "spend"},
+                "right": {"kind": "measure", "name": "orders"},
+            },
+        }
+        model = tr.Model.from_catalog(
+            catalog, con=con, units=model.units, readiness=model.readiness
+        )
         training = (
             stored["design.json"]
             .build(model)

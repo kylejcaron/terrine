@@ -1,0 +1,25 @@
+design:
+  anchor:
+    event: orders
+    type: EventAnchor
+  features:
+    has_orders:
+      expr:
+        metric: orders
+        type: MetricAgg
+        window:
+          end: 0s
+          start: -30d
+          type: Window
+      type: Gt
+      value: 0
+  shape:
+    bin: 1w
+    group_by:
+    - has_orders
+    time_to_event:
+      end_event: orders
+      type: TimeToEvent
+    type: LifeTable
+  unit: null
+schema_version: 4

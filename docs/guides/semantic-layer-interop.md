@@ -27,8 +27,8 @@ outcomes; the normal Design validation and completeness rules still apply.
 
 ## Metrics
 
-Install `terrine[metric-definitions]` once `increment-metrics` is available
-from your package index. In development, install the matching wheel directly.
+Install `terrine[metric-definitions]` to load portable definitions with
+[`increment-metrics`](https://pypi.org/project/increment-metrics/).
 Open an Ibis connection to the tables named by your YAML and pass the unit
 roster and complete event days explicitly:
 

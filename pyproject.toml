@@ -1,6 +1,6 @@
 [project]
 name = "terrine"
-version = "0.1.0a2"
+version = "0.1.0a3"
 description = "Typed dataset construction and analytical workflows"
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -75,9 +75,6 @@ docs = [
     "mkdocstrings[python]>=0.29,<1",
     "pymdown-extensions>=10.11,<12",
 ]
-
-[tool.uv.sources]
-increment-metrics = { git = "https://github.com/kylejcaron/increment.git", rev = "26444da565b27132585e4e44d783ce17f008527c", subdirectory = "packages/metric-definitions" }
 
 [build-system]
 requires = ["hatchling>=1.27,<2"]
