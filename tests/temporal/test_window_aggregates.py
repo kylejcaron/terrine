@@ -351,6 +351,18 @@ def test_batch_quantizes_each_input_and_preserves_exact_output_domain(con, resol
     assert row[result.columns["native"].reason_column] is None
 
 
+def test_published_exact_window_rounds_both_halfway_signs_away_from_zero(con):
+    values = [1 / 1024, -1 / 1024]
+    units = ("positive", "negative")
+    pair = _local(con, values, units=list(units))
+    result = _result(_anchors(con, units=units), [pair])
+    rows = {row["unit"]: row for row in _rows(con, result)}
+    for unit, value, rounded in zip(units, values, (0.000976563, -0.000976563), strict=True):
+        row = rows[unit]
+        assert row["requested"] == pytest.approx(rounded, rel=1e-15, abs=1e-24)
+        assert abs(Fraction(row["requested"]) - Fraction(value)) <= window_sum_bound([value])
+
+
 def test_daily_scope_excludes_unused_days_and_units(con):
     # An envelope or missing unit key would evaluate overflowing unused buckets.
     pair = _local(
@@ -955,24 +967,6 @@ def test_small_window_after_large_history_keeps_selected_values(con, exact):
     else:
         # Three positive selected inputs need only a few binary64 rounding units.
         assert value == pytest.approx(0.03, rel=1e-15, abs=0)
-
-
-@pytest.mark.parametrize(
-    "value,expected",
-    [
-        (4e-10, 0.0),
-        (-4e-10, 0.0),
-        (6e-10, 1e-9),
-        (-6e-10, -1e-9),
-        (1 / 1024, 0.000976563),
-        (-1 / 1024, -0.000976563),
-    ],
-)
-def test_quantization_rounds_to_nearest_nano_unit(con, value, expected):
-    pair = _local(con, [value])
-    actual = _rows(con, _result(_anchors(con), [pair]))[0]["requested"]
-    assert actual == pytest.approx(expected, rel=1e-15, abs=1e-24)
-    assert abs(Fraction(actual) - Fraction(value)) <= window_sum_bound([value])
 
 
 @pytest.mark.parametrize(

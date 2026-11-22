@@ -37,6 +37,13 @@ and Ruff formatting respectively over the package, `tests/` and `integration/`.
 Keep tests at the cheapest boundary that protects consumer-visible behavior;
 see [AGENTS.md](AGENTS.md#tests-and-validation) for the complete rules.
 
+Check in-memory conversion and registration against descriptor Arrow tables
+or registered relations in `tests/semantic/test_from_tables.py`. Keep the
+named-table and one in-memory README study in `integration/test_model_from_tables.py`.
+Batch exact cast inputs at the numeric boundary, but keep published value and
+reason checks through window aggregation. Only batch quotient cases that share
+physical operand types; keep a separate oracle for every case.
+
 Documentation checks:
 
 ```sh

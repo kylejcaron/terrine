@@ -81,13 +81,14 @@ Reached schedules and deadlines use notify.* for the current owner, or the autho
   runs weekly and on demand. `integration/test_examples.py` runs
   `examples/first_dataset.py` on every push and the examples without their own
   contract tests weekly in the scale tier.
-- CI runs every job once per pushed commit. A branch push defers to the
-  pull-request CI run of the same commit when one exists (its `scope` job
-  waits up to a minute for it): only `scope` and a gate named
-  `ci-ok (checked by the pull request run)` execute, and the required `ci-ok`
-  check comes from the pull-request run. A pull request with merge conflicts
-  gets no pull-request run, so its pushes run in full, as do other pushes, tag
-  pushes and dispatches (`gh workflow run CI --ref <ref>`).
+- Pushes to the repository's known default branch run full CI without looking
+  for a pull-request run. Other branch pushes (including when the event lacks
+  the default-branch name) wait up to a minute for a matching pull-request CI
+  run of the same commit. When one exists, the push runs only `scope` and
+  `ci-ok (checked by the pull request run)`; the pull-request run reports the
+  required `ci-ok`. If no run appears (for example, on a merge conflict), the
+  lookup fails, or the event is a tag push, pull request, or manual dispatch
+  (`gh workflow run CI --ref <ref>`), CI runs in full.
 - CI splits the integration tier into four groups balanced from
   `integration/.test_durations`. Tests without a stored time still run (they
   are assigned the average). CI splits the unit tier into two groups balanced
