@@ -165,10 +165,13 @@ class _Inventory:
         origin: str,
         imported: _Imports | None,
         materialize: Callable[[Path, str | None, Callable[[bytes], None] | None], Path],
+        *,
+        restoring: bool = False,
     ) -> None:
         self.origin = origin
         self.imported = imported
         self.materialize = materialize
+        self.restoring = restoring
         self.records: dict[str, _Record] = {}
         self.artifacts: set[Path] = set()
 
@@ -287,10 +290,21 @@ class _Inventory:
         key = _key("plan", namespace, plan_hash)
         prior = None if self.imported is None else self.imported.records.get(key)
         origin = self.origin if prior is None else prior.origin
-        if Path(database).is_absolute():
+        # Persist the exact destination binding so restore never follows a
+        # historical alias, which may no longer exist or name the same file.
+        digest = _hash(_json((plan_hash, database)))
+        if prior is None:
+            _require(not self.restoring, "foreign_plan_destination")
             source_state, _ = _owner_parts(origin)
-            _require(database == str(source_state), "foreign_plan_destination")
-        self.record(key, origin, plan_hash)
+            path = Path(database)
+            if path.is_absolute():
+                _require(
+                    path == source_state or path.resolve() == source_state,
+                    "foreign_plan_destination",
+                )
+        else:
+            _require(prior.digest == digest, "foreign_plan_destination")
+        self.record(key, origin, digest)
 
     def scan(self, con: Any, location: Path) -> list[str]:
         namespaces = [
@@ -566,7 +580,6 @@ class _Inventory:
                 (gen.dataset_id, gen.generation_id, plan.dataset) == (dataset, generation, dataset),
                 "manifest_binding",
             )
-            _require(requests.get(request_key) == (saved, plan), "manifest_plan_binding")
             _require(
                 manifest.design_hash == saved.design_hash
                 and manifest.model_hash == saved.model.model_hash,
@@ -581,10 +594,17 @@ class _Inventory:
                 and links.get(run_id) == (dataset, generation, published[dataset, generation])
             ]
             _require(len(writer_ids) == 1, "manifest_publication_binding")
+            writer = runs[writer_ids[0]]
+            _require(
+                (writer[1], writer[5])
+                == (plan.definition.fingerprint, _json(saved.destination.to_dict()).decode())
+                and (request_key not in requests or requests[request_key] == (saved, plan)),
+                "manifest_plan_binding",
+            )
             snapshot_id = manifest.source_snapshots["snapshot_id"]
             origin = manifest.source_snapshots["owner"]
             _require(
-                snapshot_id == plan.snapshot_id == runs[writer_ids[0]][6],
+                snapshot_id == plan.snapshot_id == writer[6],
                 "manifest_snapshot_binding",
             )
             if snapshot_id not in collected:
@@ -770,7 +790,7 @@ def restore_owner(bundle: Path, expected_digest: str, destination: Path) -> dict
                     check(artifact.read_bytes())
                 return artifact
 
-            inventory = _Inventory(origin, _Imports(records), materialize)
+            inventory = _Inventory(origin, _Imports(records), materialize, restoring=True)
             with _read_only(stage / _STATE) as con:
                 namespaces = inventory.scan(con, stage / _ROOT)
             _require(

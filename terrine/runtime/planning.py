@@ -284,7 +284,9 @@ def _plan_no_work(
     recipe = SavedPlan.from_json(recipe_json)
     if recipe.schema_version != 2:
         return None
-    base_plan = _bind_saved_plan(recipe, namespace=namespace)
+    if namespace.lower() != recipe.namespace.lower():
+        raise _INVALID_BASE.error(reason="committed refresh recipe differs from publication")
+    base_plan = _bind_saved_plan(recipe, namespace=recipe.namespace)
     if (
         base_plan.definition.fingerprint != fingerprint
         or destination_json != _canonical(recipe.destination.to_dict())
@@ -333,7 +335,7 @@ def _plan_no_work(
     if store.snapshot_marked_for_gc(snapshot_id):
         return None
     try:
-        receipt = authority.find_retained(snapshot_id, namespace=namespace)
+        receipt = authority.find_retained(snapshot_id, namespace=recipe.namespace)
     except TerrineError:
         # No valid retained receipt was found for this owner and snapshot.
         return None
