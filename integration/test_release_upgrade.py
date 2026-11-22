@@ -8,8 +8,16 @@ from pathlib import Path
 from urllib.request import urlopen
 
 import pytest
+from packaging.version import Version
 
-from scripts.release_upgrade import candidate_version, published_predecessor, sha256
+from scripts import release_upgrade
+from scripts.release_upgrade import (
+    PublishedWheel,
+    candidate_version,
+    proof_route,
+    published_predecessor,
+    sha256,
+)
 from tests._timing import HANG_GUARD_SECONDS
 from tests.integration import release_upgrade_probe as probe
 
@@ -74,6 +82,41 @@ def _install(wheel: Path, digest: str, directory: Path) -> tuple[str, str, str]:
 def _wheel_probe(installation: tuple[str, str, str], operation: str, output: Path) -> None:
     executable, version, source = installation
     _run([executable, "-I", PROBE, operation, version, source, str(output)], cwd=output)
+
+
+def test_candidate_wheel_proof_exempts_only_proven_bookkeeping(tmp_path, monkeypatch):
+    monkeypatch.setattr(release_upgrade, "CHECKOUT", tmp_path)
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+
+    def git(*args):
+        subprocess.run(
+            ["git", "-c", "user.name=Terrine", "-c", "user.email=test@example.com", *args],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
+
+    predecessor = PublishedWheel(Version("0.1.0a2"), "prior.whl", "", "0" * 64)
+    git("init")
+    (tmp_path / "pyproject.toml").write_text('[project]\nversion = "0.1.0a2"\n')
+    git("add", "pyproject.toml")
+    git("commit", "-m", "Published writer")
+    assert proof_route(predecessor)[0] is True
+
+    git("tag", "v0.1.0a2")
+    (tmp_path / "pyproject.toml").write_text('[project]\nversion = "0.1.0a3"\n')
+    (tmp_path / "README.md").write_text("Release notes\n")
+    git("add", "pyproject.toml", "README.md")
+    git("commit", "-m", "Bookkeeping")
+    assert proof_route(predecessor)[0] is False
+
+    source = tmp_path / "terrine" / "runtime"
+    source.mkdir(parents=True)
+    (source / "saved_plan.py").write_text("FORMAT_VERSION = 2\n")
+    git("add", "terrine/runtime/saved_plan.py")
+    git("commit", "-m", "Saved format change")
+    assert proof_route(predecessor)[0] is True
 
 
 if CANDIDATE is None and RELEASES:
