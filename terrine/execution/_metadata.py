@@ -13,9 +13,14 @@ _FACTS: ContextVar[dict[tuple[Any, ...], Any] | None] = ContextVar("metadata_fac
 
 @contextmanager
 def metadata_operation() -> Generator[None]:
-    """Share facts through nested reads, discarding them before the next operation."""
-    if _FACTS.get() is not None:
-        yield
+    """Share metadata through nested reads until failure, invalidation or exit."""
+    facts = _FACTS.get()
+    if facts is not None:
+        try:
+            yield
+        except BaseException:
+            facts.clear()
+            raise
         return
     token = _FACTS.set({})
     try:

@@ -538,7 +538,7 @@ class _PostgresProvider:
 
         return resolve
 
-    def open_execution(self, catalog, con, *, units=None, input_binding=None):
+    def open_execution(self, catalog, con, *, units=None, input_binding=None, _study_roots=None):
         from terrine.execution.inputs import _open_postgres_execution
 
         return _open_postgres_execution(

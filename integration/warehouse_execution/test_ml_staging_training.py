@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import FrozenInstanceError, replace
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import ibis
@@ -26,34 +27,49 @@ from tests.dataset.test_training_view import _frame
 from tests.fixtures.winsorization import bind_model, design
 
 
-def test_training_split_assigns_support_without_reassigning_overlap(events_world, tmp_path):
-    initial, con = _durable_frame(events_world, tmp_path)
+def test_training_drop_counts_labels_before_assigning_split_overlap(events_world, tmp_path):
+    users = events_world.tables["users"].append_column(
+        "observed_until", pa.array([None, datetime(2025, 1, 3, 18, tzinfo=UTC)])
+    )
+    world = replace(
+        events_world,
+        tables={**events_world.tables, "users": users},
+        units={"user": UnitSource("users", "user_id", observed_until="observed_until")},
+    )
+    model = _worlds.bind_model(world, tmp_path)
     base = Design(
         "user",
         EventAnchor("session"),
         features={"sessions": agg("sessions", window=("-1d", "0s"))},
-        outcomes={"churn": agg("churned", window=("0s", "1d"))},
-    ).build(initial._model)
+        outcomes={
+            "churn": agg("churned", window=("0s", "1d")),
+            "churn_later": agg("churned", window=("0s", "2d")),
+        },
+    ).build(model)
     training = base.training_set(
-        label="churn",
-        incomplete_labels="keep",
+        label=("churn", "churn_later"),
+        incomplete_labels="drop",
         split=TimeSplit(train_until="2025-01-03T12:00:00Z"),
     )
-    ordinary = training.materialize(budget=Budget(strict_scan=False))
-    assert ordinary.table["__terrine_split"].to_pylist() == ["unassigned"] * 2
-    assert ordinary.table["__terrine_split_reason"].to_pylist() == ["label_overlap"] * 2
+    budget = Budget(strict_scan=False)
+    try:
+        ordinary = training.materialize(budget=budget)
+        staged = training.stage("training", budget=budget)
+        actual = MaterializedFrame.from_arrow(
+            pa.Table.from_batches(list(staged.to_arrow_batches(batch_size=1)))
+        )
+    finally:
+        model.con.disconnect()
+    assert ordinary.table["unit"].to_pylist() == ["a"]
+    assert ordinary.table["__terrine_split"].to_pylist() == ["unassigned"]
+    assert ordinary.table["__terrine_split_reason"].to_pylist() == ["label_overlap"]
+    counts = {"incomplete_observation": 2, "label_overlap": 1}
     assert ordinary.provenance.dataset_view is not None
-    assert ordinary.provenance.dataset_view.counts_by_reason == {"label_overlap": 2}
-    staged = training.stage("training", budget=Budget(strict_scan=False))
-    actual = MaterializedFrame.from_arrow(
-        pa.Table.from_batches(list(staged.to_arrow_batches(batch_size=1)))
-    )
+    assert ordinary.provenance.dataset_view.counts_by_reason == counts
     assert actual.provenance.dataset_view == ordinary.provenance.dataset_view
-    assert actual.table.sort_by("unit").equals(ordinary.table.sort_by("unit"))
-    assert staged.manifest.frame_metadata["provenance"]["dataset_view"]["counts_by_reason"] == {
-        "label_overlap": 2
-    }
-    con.disconnect()
+    assert actual.table.equals(ordinary.table)
+    view_metadata = staged.manifest.frame_metadata["provenance"]["dataset_view"]
+    assert view_metadata["counts_by_reason"] == counts
 
 
 def test_group_split_view_matches_typed_reference_and_reconstruction(events_world, tmp_path):

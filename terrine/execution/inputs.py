@@ -828,6 +828,9 @@ def _open_postgres_execution(
             session.close()
 
 
+type _StudyRoots = Callable[[], tuple[RelationSpec, ...] | None]
+
+
 @contextlib.contextmanager
 def _open_bigquery_execution(
     provider: Any,
@@ -836,6 +839,7 @@ def _open_bigquery_execution(
     *,
     units: Mapping[str, Any] | None = None,
     input_binding: VerifiedInputBinding | None = None,
+    study_roots: _StudyRoots | None = None,
 ) -> Generator[ExecutionContext]:
     """Read in a private session transaction so the caller's client is never touched."""
     from terrine.execution import _bigquery
@@ -850,14 +854,29 @@ def _open_bigquery_execution(
             dataset_id=f"{con.data_project}.{con.dataset}" if con.dataset else "",
         )
         resolver = provider.bind_resolver(
-            catalog, private, units=units, input_binding=input_binding
+            catalog,
+            private,
+            units=units,
+            input_binding=input_binding,
+            _study_roots=study_roots,
+            _partition_owner=con,
         )
+
+        def preflight(query: Any) -> str:
+            try:
+                return private.compile(query.as_table(), pretty=False)
+            except Exception as exc:
+                raise _SNAPSHOT_UNAVAILABLE.error(
+                    reason="compiled query could not be inspected"
+                ) from exc
+
         context = ExecutionContext(
             private,
             _execution_snapshot(catalog, units, backend="bigquery"),
             resolver,
             _session=session,
             owner_con=con,
+            _preflight=preflight,
         )
         yield context
     finally:
@@ -935,11 +954,12 @@ def open_execution(
     units: Mapping[str, Any] | None = None,
     input_binding: VerifiedInputBinding | None = None,
     engine: Engine | None = None,
+    _study_roots: _StudyRoots | None = None,
 ) -> contextlib.AbstractContextManager[ExecutionContext]:
     from terrine.execution.backend import backend_provider
 
     return backend_provider(con, engine=engine).open_execution(
-        catalog, con, units=units, input_binding=input_binding
+        catalog, con, units=units, input_binding=input_binding, _study_roots=_study_roots
     )
 
 

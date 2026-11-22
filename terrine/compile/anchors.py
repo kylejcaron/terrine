@@ -66,10 +66,18 @@ _UTC_CONVERSION_UNSUPPORTED = RefusalSpec(
 
 
 @dataclass(frozen=True, slots=True)
+class _AnchorRefusal:
+    spec: RefusalSpec
+    context: tuple[tuple[str, str], ...]
+    count_column: str
+
+
+@dataclass(frozen=True, slots=True)
 class _AnchorCheck:
     query: ibis.Table
     refusal: RefusalSpec
     context: tuple[tuple[str, str], ...]
+    following: tuple[_AnchorRefusal, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,17 +97,26 @@ class AnchorTable:
             raise TypeError("execute must be callable")
         for check in self._checks:
             result = execute(check.query)
+            columns = ["invalid_count", *(r.count_column for r in check.following)]
             if (
                 not isinstance(result, pa.Table)
                 or result.num_rows != 1
-                or result.column_names != ["invalid_count"]
+                or result.column_names != columns
             ):
                 raise _INTEGRITY.error(check_key="invalid_executor_result")
-            count = result.column(0)[0].as_py()
-            if type(count) is not int or count < 0:
-                raise _INTEGRITY.error(check_key="invalid_executor_result")
-            if count:
-                raise check.refusal.error(**dict(check.context))
+            _check_count(result, 0, check.refusal, check.context)
+            for index, refusal in enumerate(check.following, start=1):
+                _check_count(result, index, refusal.spec, refusal.context)
+
+
+def _check_count(
+    result: pa.Table, index: int, spec: RefusalSpec, context: tuple[tuple[str, str], ...]
+) -> None:
+    count = result.column(index)[0].as_py()
+    if type(count) is not int or count < 0:
+        raise _INTEGRITY.error(check_key="invalid_executor_result")
+    if count:
+        raise spec.error(**dict(context))
 
 
 def _integrity_check(key: str, query: ibis.Table) -> _AnchorCheck:
@@ -126,20 +143,38 @@ def _unique_checks(
     *,
     scope: tuple[str, ...] = (),
 ) -> list[_AnchorCheck]:
-    null_key = "null_roster_key" if entity == "roster" else "null_event_id"
-    nulls = _null_check(table, column, null_key)
     # Isolate physical names before grouping; event IDs may be local to a unit.
     keys = {"_anchor_check_key": table[column]}
     keys.update({f"_anchor_check_scope_{index}": table[name] for index, name in enumerate(scope)})
-    projected = table.select(**keys)
-    duplicates = (
-        projected.group_by(*keys)
-        .aggregate(_anchor_check_count=ibis._.count())
-        .filter(ibis._._anchor_check_count > 1)
-        .aggregate(invalid_count=ibis._.count())
-    )
-    duplicate_key = "duplicate_roster_key" if entity == "roster" else "duplicate_event_id"
-    return [nulls, _integrity_check(duplicate_key, duplicates)]
+    groups = table.select(**keys).group_by(*keys).aggregate(_anchor_check_count=ibis._.count())
+    count = groups._anchor_check_count
+    if entity == "roster":
+        # Nulls count original rows; duplicates count groups, including the null group.
+        # The null refusal still wins before the duplicate count is interpreted.
+        zero = ibis.literal(0, type="int64")
+        null_rows = count.sum(where=groups._anchor_check_key.isnull()).fill_null(zero)
+        duplicate_groups = groups.count(where=count > 1).fill_null(zero)
+        query = groups.aggregate(
+            invalid_count=null_rows.cast("int64"), duplicate_count=duplicate_groups
+        )
+        return [
+            _AnchorCheck(
+                query,
+                _INTEGRITY,
+                (("check_key", "null_roster_key"),),
+                (
+                    _AnchorRefusal(
+                        _INTEGRITY, (("check_key", "duplicate_roster_key"),), "duplicate_count"
+                    ),
+                ),
+            )
+        ]
+    return [
+        _null_check(table, column, "null_event_id"),
+        _integrity_check(
+            "duplicate_event_id", groups.filter(count > 1).aggregate(invalid_count=ibis._.count())
+        ),
+    ]
 
 
 def _relation(model: Model, source: Any) -> Any:

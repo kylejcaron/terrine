@@ -29,6 +29,7 @@ from terrine.spec.state_panel import (
 from terrine.windows import Duration, Window
 
 if TYPE_CHECKING:
+    from terrine.data import _SourceRead
     from terrine.model import Model
 
 __all__ = ["compile_state_panel"]
@@ -158,7 +159,7 @@ def _state_period_relation(
     design: Design,
     model: Model,
     metric: str,
-) -> tuple[ibis.Table, CompiledStudy, CompiledStudy]:
+) -> tuple[ibis.Table, CompiledStudy, CompiledStudy, tuple[_SourceRead, ...]]:
     schedule = design.anchor
     assert isinstance(schedule, Schedule) and isinstance(schedule.every, Duration)
     period = Window(Duration(-schedule.every.seconds), 0)
@@ -183,11 +184,14 @@ def _state_period_relation(
         or resolved.transforms
         or compiled.table.schema()["_state_period"] != dt.Decimal(38, 0)
         or not policy._unbounded_coefficients
+        or (extended := _compact_state_schedule(schedule, model)) is None
     ):
-        return compiled.table.union(final.table), compiled, final
-    extended = _compact_state_schedule(schedule, model)
-    if extended is None:
-        return compiled.table.union(final.table), compiled, final
+        return (
+            compiled.table.union(final.table),
+            compiled,
+            final,
+            (*compiled.source_reads, *final.source_reads),
+        )
     # Scale-zero coefficients add exactly in an unbounded domain. Count payloads
     # stay below physical source rows < 2**63 (see the policy's count_type).
     # Keep both original studies: their checks retain separate failure domains
@@ -211,7 +215,8 @@ def _state_period_relation(
         original = getattr(original_meta, attribute)
         if original is not None:
             projection[original] = compact.table[getattr(compact_meta, attribute)]
-    return compact.table.select(**projection), compiled, final
+    # The originals supply checks, but only the compact relation supplies state values.
+    return compact.table.select(**projection), compiled, final, compact.source_reads
 
 
 def _binned(
@@ -226,7 +231,7 @@ def _binned(
     schedule = design.anchor
     assert isinstance(schedule, Schedule) and isinstance(schedule.every, Duration)
     every = schedule.every.seconds
-    period_relation, period_compiled, endpoint_compiled = _state_period_relation(
+    period_relation, period_compiled, endpoint_compiled, period_reads = _state_period_relation(
         design, model, spec.metric
     )
     state_meta = period_compiled.columns["_state_period"]
@@ -475,6 +480,11 @@ def _binned(
             **(baseline_compiled.range_plans if baseline_compiled is not None else {}),
             **compiled.range_plans,
         },
+        source_reads=(
+            *compiled.source_reads,
+            *period_reads,
+            *(baseline_compiled.source_reads if baseline_compiled is not None else ()),
+        ),
     )
 
 

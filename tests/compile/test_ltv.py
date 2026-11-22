@@ -12,7 +12,7 @@ from terrine.spec import CohortSpec, Design, EventAnchor, agg
 from terrine.spec.trajectory import Trajectory
 
 
-def _trajectory_model(*, decimal_type="DECIMAL(18, 2)", unit=None):
+def _trajectory_model(*, decimal_type="DECIMAL(18, 2)", unit=None, float_exact=True):
     con = ibis.duckdb.connect()
     con.raw_sql("""
         CREATE TABLE events AS SELECT * FROM (VALUES
@@ -64,7 +64,11 @@ def _trajectory_model(*, decimal_type="DECIMAL(18, 2)", unit=None):
             "measures": {
                 "net_revenue_sum": {"event": "revenue", "aggregation": "sum"},
                 "decimal_revenue_sum": {"event": "decimal_revenue", "aggregation": "sum"},
-                "float_revenue_sum": {"event": "float_revenue", "aggregation": "sum"},
+                "float_revenue_sum": {
+                    "event": "float_revenue",
+                    "aggregation": "sum",
+                    "exact": float_exact,
+                },
             },
             "metrics": {
                 "net_revenue": {"kind": "mean", "unit": "user", "measure": "net_revenue_sum"},
@@ -315,44 +319,12 @@ def test_cutoff_nulls_immature_float_period_value():
         ("generic", 4e307, 8e307),
     ],
 )
-def test_cumulative_float_overflow_refuses(monkeypatch, dialect, value, published):
-    from dataclasses import replace
-    from datetime import UTC, datetime
-
+def test_cumulative_float_overflow_refuses(dialect, value, published):
     from terrine.backends.dialect import dialect_scope
-    from terrine.compile.columns import compile_columns
-    from terrine.data import ColumnMeta
-    from terrine.windows import Window
 
-    con, model = _trajectory_model(unit="u1")
+    con, model = _trajectory_model(unit="u1", float_exact=False)
     try:
-        base = compile_columns(Design("user", EventAnchor("purchase", occurrence="first")), model)
-        periods = con.create_table(
-            "period_values",
-            base.table.mutate(
-                __trajectory_age_0=ibis.literal(value),
-                __trajectory_age_1=ibis.literal(value),
-                complete=ibis.literal(True),
-                reason=ibis.null().cast("string"),
-                observed_from=ibis.literal(datetime(2025, 1, 1, tzinfo=UTC)),
-                observed_until=ibis.literal(datetime(2025, 1, 31, tzinfo=UTC)),
-            ),
-        )
-        period = 7 * 24 * 60 * 60
-        metadata = {
-            f"__trajectory_age_{age}": ColumnMeta(
-                window=Window(f"{age * period}s", f"{(age + 1) * period}s"),
-                role="outcome",
-                observed_from_column="observed_from",
-                observed_until_column="observed_until",
-                complete_column="complete",
-                reason_column="reason",
-                arithmetic="native",
-            )
-            for age in range(2)
-        }
-        prepared = replace(base, table=periods, columns=metadata)
-        monkeypatch.setattr("terrine.compile.shapes.ltv.compile_columns", lambda *_args: prepared)
+        con.raw_sql(f"UPDATE events SET float_amount = {value} WHERE kind = 'revenue'")
         with dialect_scope(dialect):
             frame = compile_ltv(
                 Design(

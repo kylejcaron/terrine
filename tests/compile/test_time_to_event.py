@@ -294,7 +294,7 @@ def test_life_table_delayed_entries_and_incomplete_records_preserve_reason():
     assert rows[0]["censored_by_reason"] == [("incomplete_initial_history", 1)]
 
 
-def test_life_table_row_budget_applies_to_expanded_output():
+def test_life_table_row_budget_sums_distinct_group_bins():
     import pyarrow as pa
 
     from terrine.compile.shapes.life_table import aggregate_life_table
@@ -304,77 +304,159 @@ def test_life_table_row_budget_applies_to_expanded_output():
     origin = datetime(2025, 1, 1, tzinfo=UTC)
     records = pa.table(
         {
-            "t0": pa.array([origin], type=timestamp),
-            "duration": pa.array([timedelta(days=2)], type=duration),
-            "entry_time": pa.array([origin], type=timestamp),
-            "event": pa.array([True]),
-            "censor_reason": pa.array([None], type=pa.string()),
+            "t0": pa.array([origin] * 3, type=timestamp),
+            "duration": pa.array([timedelta(days=days) for days in (1, 0, 2)], type=duration),
+            "entry_time": pa.array([origin] * 3, type=timestamp),
+            "event": pa.array([True] * 3),
+            "censor_reason": pa.array([None] * 3, type=pa.string()),
+            "region": ["north", "north", "south"],
         }
     )
     with pytest.raises(TerrineError) as error:
-        aggregate_life_table(records, interval_seconds=86_400, group_by=[], max_rows=1)
+        aggregate_life_table(records, interval_seconds=86_400, group_by=["region"], max_rows=4)
     assert error.value.code == "terrine.budget.rows_exceeded"
+    assert error.value.context["limit"] == 4
+    at_limit = aggregate_life_table(
+        records, interval_seconds=86_400, group_by=["region"], max_rows=5
+    )
+    assert at_limit.num_rows == 5
 
 
-def test_life_table_keeps_boundary_censor_at_risk_and_group_support():
+def test_life_table_matches_grouped_interval_intersection_oracle():
     import pyarrow as pa
 
-    from terrine.compile.shapes.life_table import aggregate_life_table
+    from terrine.compile.shapes.life_table import _LifeTableAccumulator, aggregate_life_table
 
-    timestamp = pa.timestamp("us", tz="UTC")
-    duration = pa.duration("us")
-    origin = datetime(2025, 1, 1, tzinfo=UTC)
+    second = 1_000_000_000
+    timestamp = pa.timestamp("ns", tz="UTC")
+    bound_type = pa.timestamp("s", tz="UTC")
+    entry = [2 * second, second - 1, second, 2 * second, 0, 0, 5 * second, 0, 0]
+    terminal = [
+        2 * second, second - 1, second, 3 * second, 3 * second, None, 3 * second, second, -1
+    ]
+    regions = [None, "north", "north", None, "north", None, None, "north", "north"]
+    duration_reasons = [
+        None,
+        None,
+        None,
+        "incomplete_initial_history",
+        None,
+        "missing_history",
+        "no_eligible_followup",
+        None,
+        None,
+    ]
     records = pa.table(
         {
-            "t0": pa.array([origin, origin, origin], type=timestamp),
-            "duration": pa.array(
-                [
-                    timedelta(days=1),
-                    timedelta(days=1),
-                    -timedelta(days=1),
-                ],
-                type=duration,
-            ),
-            "entry_time": pa.array([origin, origin, origin], type=timestamp),
-            "event": pa.array([False, False, False]),
-            "censor_reason": pa.array(
-                ["administrative_cutoff", "administrative_cutoff", "invalid_record"]
-            ),
-            "region": pa.array([None, None, None], type=pa.string()),
-            "region_complete": pa.array([False, False, True]),
-            "region_reason": pa.array(["coverage_gap", "source_missing", "invalid_reason"]),
-            "region_observed_until": pa.array(
-                [
-                    origin + timedelta(days=1),
-                    origin + timedelta(days=2),
-                    origin + timedelta(days=3),
-                ],
-                type=timestamp,
-            ),
+            "t0": pa.array([0] * len(regions), type=timestamp),
+            "duration": pa.array(terminal, type=pa.duration("ns")),
+            "entry_time": pa.array(entry, type=timestamp),
+            "event": [False, True, False, True, True, False, False, False, False],
+            "duration__complete": [reason is None for reason in duration_reasons],
+            "duration__reason": duration_reasons,
+            "censor_reason": [
+                "exit",
+                None,
+                "administrative_cutoff",
+                None,
+                None,
+                None,
+                None,
+                "administrative_cutoff",
+                "invalid_record",
+            ],
+            "region": regions,
+            "region__complete": [False, True, True, False, True, False, True, True, False],
+            "region__reason": [
+                "source_missing",
+                None,
+                None,
+                "coverage_gap",
+                None,
+                "invalid_reason",
+                "coverage_gap",
+                None,
+                "invalid_reason",
+            ],
+            "bound_start": pa.array([21, 11, 12, 20, 13, 0, None, 12, 0], bound_type),
+            "bound_end": pa.array([None, 30, None, None, 31, 99, None, 31, 99], bound_type),
         }
     )
+    group_supports = {
+        "region__complete": "all",
+        "region__reason": "reasons",
+        "bound_start": "min",
+        "bound_end": "max",
+    }
     result = aggregate_life_table(
-        records,
-        interval_seconds=86_400,
-        group_by=["region"],
-        group_supports={
-            "region_complete": "all",
-            "region_reason": "reasons",
-            "region_observed_until": "max",
-        },
+        records, interval_seconds=1, group_by=["region"], group_supports=group_supports
     )
-    assert result.num_rows == 2
-    row = result.to_pylist()[-1]
-    assert row["region_complete"] is False
-    assert row["region_reason"] == "coverage_gap;source_missing"
-    assert row["region_observed_until"] == origin + timedelta(days=2)
-    assert row["at_risk"] == 2
-    assert row["censored"] == 2
-    assert row["censor_rate"] == 1
-    without_support_metadata = aggregate_life_table(
-        records, interval_seconds=86_400, group_by=["region"]
+    empty = _LifeTableAccumulator(
+        records.schema, interval_seconds=1, group_by=["region"], group_supports=group_supports
+    ).finish()
+    assert empty.num_rows == 0
+    assert empty.schema.equals(result.schema, check_metadata=True)
+    accumulator = _LifeTableAccumulator(
+        records.schema, interval_seconds=1, group_by=["region"], group_supports=group_supports
     )
-    assert without_support_metadata.num_rows == 2
+    reversed_records = records.take(list(reversed(range(records.num_rows))))
+    batches = reversed_records.to_batches(max_chunksize=3)
+    accumulator.consume(batches[0].slice(0, 0))
+    for batch in batches:
+        accumulator.consume(batch)
+    batched = accumulator.finish()
+    assert batched.schema.equals(result.schema, check_metadata=True)
+    assert batched.equals(result)
+    groups = {
+        "north": (True, None, 11, 31, []),
+        None: (
+            False,
+            "coverage_gap;source_missing",
+            20,
+            None,
+            ["incomplete_initial_history", "missing_history", "no_eligible_followup"],
+        ),
+    }
+    terminations = {
+        ("north", 0): (1, []),
+        ("north", 1): (0, [("administrative_cutoff", 2)]),
+        ("north", 3): (1, []),
+        (None, 2): (0, [("exit", 1)]),
+        (None, 3): (0, [("incomplete_initial_history", 1), ("no_eligible_followup", 1)]),
+    }
+    delayed_entries = {("north", 0): 1, ("north", 1): 1, (None, 2): 2}
+    order = [(unit, region, b) for unit, region in enumerate(groups) for b in range(4)]
+    rows = result.to_pylist()
+    assert [(row["unit"], row["region"], row["time_bin"]) for row in rows] == order
+    for row, (_, region, time_bin) in zip(rows, order, strict=True):
+        lower = time_bin * second
+        upper = (time_bin + 1) * second - 1
+        # Intersect closed integer timestamp intervals, without using bin deltas.
+        risk = sum(
+            max(lower, entered) <= min(upper, stopped)
+            for group, entered, stopped in zip(regions, entry, terminal, strict=True)
+            if group == region and stopped is not None
+        )
+        events, censor_reasons = terminations.get((region, time_bin), (0, []))
+        censored = sum(count for _, count in censor_reasons)
+        complete, reason, start, end, reasons = groups[region]
+        assert row["anchor_id"] == row["t0"] == time_bin
+        assert row["region__complete"] is complete
+        assert row["region__reason"] == reason
+        assert row["bound_start"] == datetime.fromtimestamp(start, tz=UTC)
+        assert row["bound_end"] == (None if end is None else datetime.fromtimestamp(end, tz=UTC))
+        for name, value in {
+            "at_risk": risk,
+            "events": events,
+            "censored": censored,
+            "censored_by_reason": censor_reasons,
+            "delayed_entries": delayed_entries.get((region, time_bin), 0),
+            "event_rate": pytest.approx(events / risk) if risk else None,
+            "censor_rate": pytest.approx(censored / risk) if risk else None,
+        }.items():
+            assert row[name] == value
+            assert row[f"{name}__complete"] is (not reasons)
+            assert row[f"{name}__reason"] == reasons
 
 
 def test_duration_is_elapsed_from_t0_for_event_and_censored_rows():

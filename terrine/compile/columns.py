@@ -6,6 +6,7 @@ import copy
 import unicodedata
 from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager
+from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from decimal import Decimal
 from importlib.metadata import version as package_version
@@ -44,6 +45,7 @@ from terrine.data import (
     RowCheckGroup,
     SequenceMeta,
     _ordered_columns,
+    _SourceRead,
 )
 from terrine.errors import RefusalSpec
 from terrine.execution.gates import fold, foldable, gate_totals, validate_schedule
@@ -207,6 +209,7 @@ class CompiledStudy:
     sequence_meta: SequenceMeta | None = None
     sketches: tuple[SketchSidecar, ...] = ()
     range_plans: Mapping[str, RangePlan] = field(default_factory=dict)
+    source_reads: tuple[_SourceRead, ...] = ()
 
     def _publish(self) -> None:
         columns = dict(self.columns)
@@ -406,6 +409,69 @@ def exact_scope(model: Model) -> AbstractContextManager[None]:
     return dialect_scope(expression_policy(model))
 
 
+@dataclass(frozen=True, slots=True)
+class _OutputRequirement:
+    name: str
+    role: Literal["feature", "outcome", "eligibility"]
+    node: Expr | Predicate
+    leaves: tuple[Expr, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _ColumnRequirements:
+    """The declared columns and candidate-grain producers, before any Ibis binding.
+
+    Leaf order is also the order in which producers register deferred checks.
+    A producer's actual checks and support fields depend on the bound expression.
+    """
+
+    outputs: tuple[_OutputRequirement, ...]
+    names: Mapping[Expr, str]
+    additive_groups: Mapping[EventTime | None, tuple[MetricAgg, ...]]
+    range_plans: Mapping[Expr, RangePlan]
+    roles: Roles
+
+
+def _resolve_columns(design: Design, model: Model) -> _ColumnRequirements:
+    _validate_names(design)
+    design.validate(model)
+    outputs = tuple(
+        _OutputRequirement(name, role, node, tuple(_output_leaves(node)))
+        for role, named in (
+            ("feature", design.features),
+            ("outcome", design.outcomes),
+            ("eligibility", design.eligibility),
+        )
+        for name, node in named.items()
+    )
+    # Reserve names before lowering a batch, which may finish leaves of later outputs.
+    leaves = tuple(dict.fromkeys(leaf for output in outputs for leaf in output.leaves))
+    range_plans = plan_ranges(design, model, leaves=leaves)
+    additive: dict[EventTime | None, list[MetricAgg]] = {}
+    for leaf in leaves:
+        if isinstance(leaf, MetricAgg) and leaf not in range_plans:
+            additive.setdefault(leaf.relative_to, []).append(leaf)
+    return _ColumnRequirements(
+        outputs,
+        MappingProxyType({leaf: f"__terrine_value_{index}" for index, leaf in enumerate(leaves)}),
+        MappingProxyType({origin: tuple(group) for origin, group in additive.items()}),
+        MappingProxyType(range_plans),
+        Roles(
+            unit="unit",
+            anchor="anchor_id",
+            t0="t0",
+            treatment="treatment" if design.treatment else None,
+            features=tuple(design.features),
+            outcomes=tuple(design.outcomes),
+        ),
+    )
+
+
+_column_resolver: ContextVar[Callable[[Design, Model], _ColumnRequirements] | None] = ContextVar(
+    "study_column_resolver", default=None
+)
+
+
 def compile_columns(
     design: Design,
     model: Model,
@@ -414,12 +480,14 @@ def compile_columns(
     _anchor_table: AnchorTable | None = None,
     persisted_anchors: ibis.Table | None = None,
 ) -> CompiledStudy:
-    """Compile candidates and distinct expressions once without reading source rows."""
-    _validate_names(design)
-    design.validate(model)
+    """Bind candidates and distinct expressions without reading source rows."""
+    resolve = _column_resolver.get() or _resolve_columns
+    requirements = resolve(design, model)
     unit_name = design.unit
     assert unit_name is not None  # every entry point resolves the design first
-    range_plans = plan_ranges(design, model)
+    output_names = requirements.names
+    additive_groups = requirements.additive_groups
+    range_plans = requirements.range_plans
     anchors = _anchor_table or compile_anchors(
         design, model, include_membership=include_membership, persisted=persisted_anchors
     )
@@ -437,6 +505,7 @@ def compile_columns(
     selector_identity_checks = []
     checked_selector_sources = set()
     columns, feature_cutoffs, eligibility_cutoffs, strategies = {}, {}, {}, {}
+    source_reads: list[_SourceRead] = []
     public: dict[str, str] = {}
     selector_identity_columns: dict[str, str] = {}
     source_property_columns = {}
@@ -864,28 +933,7 @@ def compile_columns(
         )
         return renamed_metadata
 
-    # Reserve names before any group is pending. A group may finish leaves that
-    # appear much later in the public traversal, without changing outward order.
-    output_names: dict[Expr, str] = {}
-    additive_groups: dict[EventTime | None, list[MetricAgg]] = {}
     additive_checks: dict[MetricAgg, TemporalResult] = {}
-    for named in (design.features, design.outcomes, design.eligibility):
-        for node in named.values():
-            for leaf in _output_leaves(node):
-                if leaf in output_names:
-                    continue
-                output_names[leaf] = f"__terrine_value_{len(output_names)}"
-                if isinstance(leaf, MetricAgg):
-                    metric = model.metrics[leaf.metric]
-                    if len(metric.measures) == 1 and metric.measures[0].aggregation in {
-                        "min",
-                        "max",
-                        "count_distinct",
-                    }:
-                        continue
-                    # Every origin here is resolved against this invocation's
-                    # one candidate relation, including its full anchor identity.
-                    additive_groups.setdefault(leaf.relative_to, []).append(leaf)
 
     def compile_additives(origin: EventTime | None) -> None:
         group = additive_groups[origin]
@@ -901,6 +949,7 @@ def compile_columns(
             anchors=expression_anchors,
             relative=origin is not None,
         )
+        source_reads.extend(lowered.source_reads)
         result = lowered.result
         result_table = result.table
         metadata = dict(result.columns)
@@ -1226,12 +1275,7 @@ def compile_columns(
             )
             strategy = "blocked_range_join/hll"
             result_table = result.table
-        elif (
-            isinstance(node, MetricAgg)
-            and len(model.metrics[node.metric].measures) == 1
-            and model.metrics[node.metric].measures[0].aggregation
-            in {"min", "max", "count_distinct"}
-        ):
+        elif isinstance(node, MetricAgg) and node in range_plans:
             metric = model.metrics[node.metric]
             unresolved = metric.measures[0]
             source = model.sources[unresolved.source_name]
@@ -1447,34 +1491,37 @@ def compile_columns(
         )
 
     expression_timings = {}
-    for role, named in (("feature", design.features), ("outcome", design.outcomes)):
-        for name, node in named.items():
-            if isinstance(node, _PREDICATE_NODES):
-                for leaf in _output_leaves(node):
-                    expression(leaf)
-                result = compile_predicate(table, node, values, output=name, role=role)
-                table = result.table
-                public[name] = name
-                columns[name] = result.meta
-                expression_timings[name] = predicate_timing(node, name)
-                strategies[name] = "three_valued"
-                cutoff = result.cutoff
-            else:
-                value = expression(node)
-                public[name] = value.name
-                if any(value.name in sidecar.outputs for sidecar in sketches):
-                    sketch_aliases.setdefault(value.name, []).append(name)
-                columns[name] = replace(value.meta, role=role)
-                if isinstance(node, EventTime) and node.measure == "elapsed":
-                    table = table.mutate(**{f"__terrine_selected_at_{name}": table[value.name]})
-                expression_timings[name] = expression_timing(node, output=name)
-                strategies[name] = strategies[value.name]
-                cutoff = value.cutoff
-            if role == "feature":
-                feature_cutoffs[name] = cutoff
-    for node in design.eligibility.values():
-        for leaf in _output_leaves(node):
-            expression(leaf)
+    for requirement in requirements.outputs:
+        name, role, node = requirement.name, requirement.role, requirement.node
+        if role == "eligibility":
+            continue
+        if isinstance(node, _PREDICATE_NODES):
+            for leaf in requirement.leaves:
+                expression(leaf)
+            result = compile_predicate(table, node, values, output=name, role=role)
+            table = result.table
+            public[name] = name
+            columns[name] = result.meta
+            expression_timings[name] = predicate_timing(node, name)
+            strategies[name] = "three_valued"
+            cutoff = result.cutoff
+        else:
+            value = expression(node)
+            public[name] = value.name
+            if any(value.name in sidecar.outputs for sidecar in sketches):
+                sketch_aliases.setdefault(value.name, []).append(name)
+            columns[name] = replace(value.meta, role=role)
+            if isinstance(node, EventTime) and node.measure == "elapsed":
+                table = table.mutate(**{f"__terrine_selected_at_{name}": table[value.name]})
+            expression_timings[name] = expression_timing(node, output=name)
+            strategies[name] = strategies[value.name]
+            cutoff = value.cutoff
+        if role == "feature":
+            feature_cutoffs[name] = cutoff
+    for requirement in requirements.outputs:
+        if requirement.role == "eligibility":
+            for leaf in requirement.leaves:
+                expression(leaf)
     for name, node in design.eligibility.items():
         result = compile_predicate(table, node, values, output=name, role="eligibility")
         table = result.table
@@ -1530,17 +1577,19 @@ def compile_columns(
     # later: an as-of lookup whose history conflicts duplicates candidate rows
     # until its own refusal, which would inflate an earlier count. Such a
     # result keeps its own relation, exactly as it validated itself.
-    audit_bound: dict[int, tuple[str, ...]] = {}
-    for index, check in enumerate(checks):
-        if (
-            isinstance(check, TemporalResult)
-            and check.row_checks
-            and not any(
-                not isinstance(later, TemporalResult) and not foldable(later)
-                for later in checks[index + 1 :]
-            )
-        ):
-            audit_bound[id(check)] = lifted[id(check)]
+    last_barrier = max(
+        (
+            ordinal
+            for ordinal, check in enumerate(checks)
+            if not isinstance(check, TemporalResult) and not foldable(check)
+        ),
+        default=-1,
+    )
+    audit_bound = {
+        id(check): lifted[id(check)]
+        for check in checks[last_barrier + 1 :]
+        if isinstance(check, TemporalResult) and check.row_checks
+    }
     audit = table.select(
         **projection,
         __terrine_eligible=table.__terrine_eligible,
@@ -1581,14 +1630,7 @@ def compile_columns(
     return CompiledStudy(
         retained,
         audit,
-        Roles(
-            unit="unit",
-            anchor="anchor_id",
-            t0="t0",
-            treatment="treatment" if design.treatment else None,
-            features=tuple(design.features),
-            outcomes=tuple(design.outcomes),
-        ),
+        requirements.roles,
         columns,
         feature_cutoffs,
         eligibility_cutoffs,
@@ -1602,12 +1644,11 @@ def compile_columns(
             for sidecar_output in sidecar.outputs
         ),
         range_plans={
-            name if len(plans) == 1 else f"__terrine_{name}_leaf_{index}": plan
-            for named in (design.features, design.outcomes)
-            for name, node in named.items()
-            if (
-                plans := [range_plans[leaf] for leaf in _output_leaves(node) if leaf in range_plans]
-            )
+            output.name if len(plans) == 1 else f"__terrine_{output.name}_leaf_{index}": plan
+            for output in requirements.outputs
+            if output.role != "eligibility"
+            if (plans := [range_plans[leaf] for leaf in output.leaves if leaf in range_plans])
             for index, plan in enumerate(plans)
         },
+        source_reads=tuple(source_reads),
     )

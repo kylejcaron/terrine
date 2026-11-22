@@ -581,6 +581,8 @@ class DatasetTools:
             result = cost.preview(design, self.model, effective, bounded_count=bounded_count)
             return replace(
                 result,
+                # Physical column names belong to the owner preview.
+                source_reads=(),
                 coverage={
                     name: value
                     for name, value in result.coverage.items()

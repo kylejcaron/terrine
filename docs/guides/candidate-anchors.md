@@ -44,6 +44,8 @@ Frame materialization or a full rebuild instead.
 
 ## Source integrity
 
+Roster keys are checked before membership filtering. If the roster has both
+null and duplicate keys, the refusal reports `null_roster_key` first.
 
 An event anchor must name an event declared by its bound source, not merely
 present elsewhere in the Catalog; missing references use the same refusal

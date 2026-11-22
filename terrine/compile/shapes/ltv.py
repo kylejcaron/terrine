@@ -19,7 +19,8 @@ from terrine.backends.numeric import (
     guard_accumulation,
 )
 from terrine.compile.columns import CompiledStudy, compile_columns
-from terrine.data import ColumnMeta, Roles, RowCheck
+from terrine.compile.shapes._ltv_periods import PeriodChecks, compact_periods
+from terrine.data import ColumnMeta, Roles, RowCheck, _SourceRead
 from terrine.errors import RefusalSpec
 from terrine.spec._columns import TRAJECTORY
 from terrine.spec.design import Design
@@ -40,7 +41,7 @@ __all__ = ["compile_ltv"]
 
 
 def compile_ltv(design: Design, model: Model) -> CompiledStudy:
-    """Compile each requested half-open age from the regular temporal compiler."""
+    """Compile a bounded trajectory, using wide windows where age lowering is unproven."""
     if not isinstance(design.shape, CohortSpec):
         raise TypeError("compile_ltv requires a CohortSpec design")
     design.validate(model)
@@ -65,33 +66,77 @@ def compile_ltv(design: Design, model: Model) -> CompiledStudy:
             from terrine.compile.columns import _RESERVED_NAME
 
             raise _RESERVED_NAME.error(name=feature)
-    names = tuple(f"__trajectory_age_{age}" for age in range(trajectory.periods))
     period = trajectory.period.seconds
-    outcomes = {
-        name: MetricAgg(
-            trajectory.metric,
-            Window(
-                _elapsed(age * period, field="window"), _elapsed((age + 1) * period, field="window")
-            ),
-        )
-        for age, name in enumerate(names)
-    }
-    source_design = Design(
+    _elapsed(trajectory.periods * period, field="window")
+    window = Window(0, trajectory.period)
+    base = Design(
         design.unit,
         design.anchor,
         features=design.features,
-        outcomes=outcomes,
         eligibility=design.eligibility,
         treatment=design.treatment,
         gap=design.gap,
         shape="cross_section",
         anchor_range=design.anchor_range,
     )
-    compiled = compile_columns(source_design, model)
-    source = compiled.table
+    compact = None
+    # The wide path sequences shared-source checks among feature, eligibility
+    # and trajectory requests. Keep it when that schedule cannot be separated.
+    if not (design.features or design.eligibility or design.treatment):
+        compiled = compile_columns(base, model)
+        assert design.unit is not None
+        metric = model.metrics[trajectory.metric]
+        compact = compact_periods(compiled, model, design.unit, trajectory, metric, window)
+        if compact is not None:
+            # The fact join is bounded per origin, not by provable source-wide literals.
+            fact_read = _SourceRead(
+                family="trajectory_periods",
+                source=metric.measures[0].source_name,
+                event_span=None,
+                physical_key=None,
+                reason="event_bounds_unknown",
+            )
+            compiled = replace(compiled, source_reads=(*compiled.source_reads, fact_read))
+    if compact is not None:
+        source = compact.table
+        period_rows = [
+            (
+                source,
+                next(iter(compact.columns)),
+                next(iter(compact.columns.values())),
+                source.age,
+                source.cohort_time,
+                source.t0,
+                source.t0 + ibis.interval(seconds=period),
+            )
+        ]
+    else:
+        outcomes = {
+            f"__trajectory_age_{age}": MetricAgg(
+                trajectory.metric,
+                Window(
+                    _elapsed(age * period, field="window"),
+                    _elapsed((age + 1) * period, field="window"),
+                ),
+            )
+            for age in range(trajectory.periods)
+        }
+        compiled = compile_columns(replace(base, outcomes=outcomes), model)
+        source = compiled.table
+        period_rows = [
+            (
+                source,
+                name,
+                compiled.columns[name],
+                ibis.literal(age, type="int64"),
+                source.t0,
+                source.t0 + ibis.interval(seconds=age * period),
+                source.t0 + ibis.interval(seconds=(age + 1) * period),
+            )
+            for age, name in enumerate(outcomes)
+        ]
     age_tables = []
-    for age, name in enumerate(names):
-        meta = compiled.columns[name]
+    for source, name, meta, age, origin, start_time, end_time in period_rows:
         if (
             meta.complete_column is None
             or meta.reason_column is None
@@ -102,26 +147,21 @@ def compile_ltv(design: Design, model: Model) -> CompiledStudy:
         value = source[name]
         complete = source[meta.complete_column].fill_null(ibis.literal(False))
         reason = source[meta.reason_column]
-        end_time = source.t0 + ibis.interval(seconds=(age + 1) * period)
+        mature = ibis.literal(True)
         if design.administrative_cutoff is not None:
             immature = end_time > ibis.literal(design.administrative_cutoff)
             value = immature.ifelse(ibis.null().cast(value.type()), value)
             complete = complete & ~immature
+            mature = start_time < ibis.literal(design.administrative_cutoff)
             reason = immature.ifelse(reason_codes.ADMINISTRATIVE_CUTOFF, reason)
-        mature = (
-            ibis.literal(True)
-            if design.administrative_cutoff is None
-            else source.t0 + ibis.interval(seconds=age * period)
-            < ibis.literal(design.administrative_cutoff)
-        )
         projection = dict(
             zip(
                 TRAJECTORY,
                 (
                     source.unit,
                     source.anchor_id,
-                    source.t0,
-                    ibis.literal(age).cast("int64"),
+                    origin,
+                    age,
                     value,
                     mature,
                 ),
@@ -181,17 +221,19 @@ def compile_ltv(design: Design, model: Model) -> CompiledStudy:
         or name == compiled.roles.treatment
     }
     output_columns["period_value"] = ColumnMeta(
-        window=Window(0, trajectory.period),
+        window=window,
         role="outcome",
         observed_from_column="period_value_observed_from",
         observed_until_column="period_value_observed_until",
         complete_column="period_value_complete",
         reason_column="period_value_reason",
-        numeric_policy=compiled.columns[names[0]].numeric_policy,
-        arithmetic=compiled.columns[names[0]].arithmetic,
+        numeric_policy=meta.numeric_policy,
+        arithmetic=meta.arithmetic,
     )
     outcome_names = ["period_value"]
     checks = list(compiled._checks)
+    if compact is not None and compact.row_checks:
+        checks.append(PeriodChecks.from_result(compact))
     if trajectory.cumulative:
         partition = ["unit", "anchor_id", "cohort_time"]
         numeric_type = table.period_value.type()
@@ -287,8 +329,20 @@ def compile_ltv(design: Design, model: Model) -> CompiledStudy:
         # earliest note among the periods it adds.
         no_reason = ibis.null().cast("string")
         period_missing = table.period_value.isnull()
+        age_width = len(str(trajectory.periods - 1))
 
         def earliest(reason):
+            if compact is not None:
+                # A fixed-width age prefix orders the nonnull reasons. MIN
+                # ignores nulls, unlike Ibis FIRST_VALUE on this window.
+                prefix = table.age.cast("string").lpad(age_width, "0")
+                return (
+                    reason.notnull()
+                    .ifelse(prefix.concat(reason), no_reason)
+                    .min()
+                    .over(frame)
+                    .substr(age_width)
+                )
             return ibis.coalesce(
                 *(
                     reason.lag(offset=offset).over(frame)
@@ -342,4 +396,5 @@ def compile_ltv(design: Design, model: Model) -> CompiledStudy:
         _checks=tuple(checks),
         expression_timings=expression_timings,
         range_plans=compiled.range_plans,
+        source_reads=compiled.source_reads,
     )
