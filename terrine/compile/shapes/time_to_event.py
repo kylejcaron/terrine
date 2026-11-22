@@ -425,6 +425,7 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
             ibis.ifelse(no_followup, reason_codes.NO_ELIGIBLE_FOLLOWUP, ibis.null().cast("string")),
         ),
     )
+
     prevalent = result._prior_event_time.notnull()
     retained = result.filter(~prevalent)
     support_columns = {

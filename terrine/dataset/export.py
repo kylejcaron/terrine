@@ -7,6 +7,9 @@ import json
 import os
 import sys
 import warnings
+from base64 import b64decode
+from collections.abc import Generator
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -16,8 +19,15 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from terrine.compile.cost import _scan_policy
-from terrine.data import _OUTPUT_BYTES_EXCEEDED, _ROWS_EXCEEDED, Budget
-from terrine.errors import RefusalSpec
+from terrine.data import (
+    _OUTPUT_BYTES_EXCEEDED,
+    _ROWS_EXCEEDED,
+    Budget,
+    MaterializedFrame,
+    Provenance,
+    _decode_arrow_metadata,
+)
+from terrine.errors import RefusalSpec, TerrineError
 
 __all__ = ["ExportManifest", "ExportShard", "export_dataset"]
 
@@ -33,11 +43,8 @@ _UNSUPPORTED_PLATFORM = RefusalSpec(
 
 
 def _hash_file(path: Path) -> str:
-    digest = hashlib.sha256()
     with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1_048_576), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+        return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,31 +135,175 @@ class ExportManifest:
             payload["target_file_bytes"],
         )
 
+    def read_frame(self, directory: str | Path) -> MaterializedFrame:
+        """Reassemble the complete lossless export listed in this trusted manifest.
 
-def _verify_shards(root: Path, manifest: ExportManifest) -> bool:
+        Args:
+            directory: Local directory containing the listed Parquet shards.
+
+        Returns:
+            The verified generation's typed rows and one copy of its frame metadata.
+        """
+        tables = []
+        schema = decoded = None
+        with closing(_checked_shards(Path(directory), self, read_frame=True)) as shards:
+            for parquet, part_schema, physical_schema in shards:
+                if schema is None:
+                    decoded = _decode_export_metadata(part_schema)
+                    schema = part_schema
+                elif not schema.equals(part_schema, check_metadata=True):
+                    # An identical schema includes the exact validated Terrine envelope.
+                    # Do not let Arrow select one envelope from disagreeing inputs.
+                    raise _INVALID.error(reason="mixed_shard_schema")
+                try:
+                    part = parquet.read()
+                    if not physical_schema.equals(part.schema, check_metadata=True):
+                        raise _INVALID.error(reason="mixed_shard_schema")
+                    if part_schema is not physical_schema:
+                        part = part.cast(part_schema)
+                except (OSError, ValueError) as error:
+                    raise _INVALID.error(reason="unreadable_shard") from error
+                if part.num_rows != parquet.metadata.num_rows:
+                    raise _INVALID.error(reason="invalid_shard_rows")
+                tables.append(part)
+        if decoded is None:
+            raise _INVALID.error(reason="missing_export_shards")
+        return MaterializedFrame._from_decoded_arrow(pa.concat_tables(tables), *decoded)
+
+
+def _decode_export_metadata(schema: pa.Schema):
+    try:
+        decoded = _decode_arrow_metadata(schema)
+    except TerrineError:
+        raise
+    except ValueError as error:
+        raise _INVALID.error(reason="missing_frame_metadata") from error
+    provenance: Provenance = decoded[2]
+    snapshot = provenance.execution_snapshot
+    if (
+        provenance.engine_status != "verified"
+        or provenance.execution_revision is None
+        or snapshot.replay_equivalence != "verified"
+        or snapshot.snapshot_id is None
+        or snapshot.input_binding_id is None
+        or snapshot.source_generations != provenance.source_generations
+        or not snapshot.source_generations
+        or not all(snapshot.source_generations.values())
+    ):
+        raise _INVALID.error(reason="unverified_frame_identity")
+    return decoded
+
+
+def _parquet_list_field(field: pa.Field) -> pa.Field:
+    """Match the original compliant LIST writer's child-name rewrite."""
+    dtype = field.type
+    if isinstance(dtype, (pa.ListType, pa.LargeListType, pa.FixedSizeListType)):
+        element = _parquet_list_field(dtype.value_field)
+        if element.name == "item":
+            element = element.with_name("element")
+        if isinstance(dtype, pa.FixedSizeListType):
+            dtype = pa.list_(element, dtype.list_size)
+        elif isinstance(dtype, pa.LargeListType):
+            dtype = pa.large_list(element)
+        else:
+            dtype = pa.list_(element)
+    elif isinstance(dtype, pa.StructType):
+        dtype = pa.struct([_parquet_list_field(child) for child in dtype])
+    elif isinstance(dtype, pa.MapType):
+        dtype = pa.map_(
+            _parquet_list_field(dtype.key_field),
+            _parquet_list_field(dtype.item_field),
+            keys_sorted=dtype.keys_sorted,
+        )
+    return field.with_type(dtype)
+
+
+def _shard_schema(
+    parquet: pq.ParquetFile, physical: pa.Schema, expected: tuple[tuple[str, str], ...]
+) -> pa.Schema:
+    if tuple((field.name, str(field.type)) for field in physical) == expected:
+        return physical
+    # Older exports recorded the original Arrow schema before Parquet named LIST children.
+    encoded = (parquet.metadata.metadata or {}).get(b"ARROW:schema")
+    if encoded is not None:
+        original = pa.ipc.read_schema(pa.BufferReader(b64decode(encoded, validate=True)))
+        if tuple((field.name, str(field.type)) for field in original) == expected:
+            legacy = pa.schema(
+                [_parquet_list_field(field) for field in original], metadata=original.metadata
+            )
+            if legacy.equals(physical, check_metadata=True):
+                return original
+    raise _INVALID.error(reason="invalid_shard_schema")
+
+
+def _checked_shards(
+    root: Path, manifest: ExportManifest, *, read_frame: bool
+) -> Generator[tuple[pq.ParquetFile, pa.Schema, pa.Schema]]:
+    """Verify membership, bytes, physical schema and counts for each listed shard."""
     try:
         root = root.resolve()
         rows = byte_count = 0
-        seen: set[str] = set()
+        seen: set[tuple[int, int]] = set()
+        paths: set[Path] = set()
         for shard in manifest.shards:
-            if shard.path in seen:
-                return False
-            seen.add(shard.path)
-            file_path = (root / shard.path).resolve()
-            if not file_path.is_relative_to(root) or not file_path.is_file():
-                return False
-            size = file_path.stat().st_size
-            if size != shard.byte_count or _hash_file(file_path) != shard.checksum:
-                return False
-            parquet = pq.ParquetFile(file_path)
-            schema = tuple((field.name, str(field.type)) for field in parquet.schema_arrow)
-            if schema != manifest.schema or parquet.metadata.num_rows != shard.row_count:
-                return False
+            relative = Path(shard.path)
+            path = (root / relative).resolve()
+            if (
+                relative.is_absolute()
+                or ".." in relative.parts
+                or not path.is_relative_to(root)
+                or not path.is_file()
+            ):
+                raise _INVALID.error(reason="invalid_shard_path")
+            if path in paths:
+                raise _INVALID.error(reason="duplicate_shard")
+            paths.add(path)
+            with path.open("rb") as stream:
+                stat = os.fstat(stream.fileno())
+                identity = (stat.st_dev, stat.st_ino)
+                if identity in seen:
+                    raise _INVALID.error(reason="duplicate_shard")
+                seen.add(identity)
+                size = stat.st_size
+                if size != shard.byte_count:
+                    raise _INVALID.error(reason="invalid_shard_size")
+                if read_frame:
+                    # Hash exactly the immutable bytes given to Arrow, not a second
+                    # read of a path which could have been replaced or changed.
+                    data = stream.read(size + 1)
+                    if len(data) != size or hashlib.sha256(data).hexdigest() != shard.checksum:
+                        raise _INVALID.error(reason="invalid_shard_checksum")
+                    source = pa.BufferReader(data)
+                    del data
+                else:
+                    if hashlib.file_digest(stream, "sha256").hexdigest() != shard.checksum:
+                        raise _INVALID.error(reason="invalid_shard_checksum")
+                    stream.seek(0)
+                    source = stream
+                with pq.ParquetFile(source) as parquet:
+                    physical = parquet.schema_arrow
+                    schema = _shard_schema(parquet, physical, manifest.schema)
+                    if parquet.metadata.num_rows != shard.row_count:
+                        raise _INVALID.error(reason="invalid_shard_rows")
+                    yield parquet, schema, physical
+                del source
             rows += shard.row_count
             byte_count += size
-        return rows == manifest.row_count and byte_count == manifest.byte_count
-    except (OSError, ValueError, TypeError, KeyError):
+        if rows != manifest.row_count or byte_count != manifest.byte_count:
+            raise _INVALID.error(reason="invalid_export_totals")
+    except TerrineError:
+        raise
+    except (OSError, RuntimeError, ValueError, TypeError, KeyError) as error:
+        raise _INVALID.error(reason="unreadable_shard") from error
+
+
+def _verify_shards(root: Path, manifest: ExportManifest) -> bool:
+    try:
+        for _ in _checked_shards(root, manifest, read_frame=False):
+            pass
+    except TerrineError:
         return False
+    return True
 
 
 def _existing_export(
@@ -211,6 +362,11 @@ def _shard_path(root: Path, key: tuple[Any, ...], columns: tuple[str, ...], inde
         directory = directory / f"{quote(name, safe='')}={encoded}"
     directory.mkdir(parents=True, exist_ok=True)
     return directory / f"part-{index:08d}.parquet"
+
+
+def _shard_writer(path: Path, schema: pa.Schema) -> pq.ParquetWriter:
+    # PyArrow's default LIST encoding renames Arrow child fields to "element".
+    return pq.ParquetWriter(path, schema, compression="zstd", use_compliant_nested_type=False)
 
 
 def _sync_directory(path: Path) -> None:
@@ -433,14 +589,15 @@ def _export_dataset_locked(
                         skip_active = True
                     else:
                         shard_path.unlink(missing_ok=True)
-                        writer = pq.ParquetWriter(shard_path, schema, compression="zstd")
+                        writer = _shard_writer(shard_path, schema)
                 if writer is not None:
                     writer.write_table(table)
                 current_estimate += estimated
                 current_rows += table.num_rows
         if row_count == 0 and not records and active_path is None:
-            active_path = _shard_path(partial, (), (), 0)
-            writer = pq.ParquetWriter(active_path, schema, compression="zstd")
+            empty_path = _shard_path(partial, (), (), 0)
+            active_path = empty_path
+            writer = _shard_writer(empty_path, schema)
         close_writer()
         byte_count = sum(shard.byte_count for shard in records)
         manifest = ExportManifest(

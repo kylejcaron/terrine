@@ -24,6 +24,58 @@ _TRANSFORM_DEFAULTS: Mapping[str, Any] = {
     "fit": None,
 }
 
+
+def _frozen_winsorization_schema() -> dict[str, Any]:
+    """Describe the canonical bound transform written into dataset definitions."""
+    text = {"type": "string", "minLength": 1}
+    digest = {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+    count = {"type": "integer", "minimum": 0}
+    fit: dict[str, Any] = {
+        key: digest
+        for key in (
+            "definition_hash",
+            "view_hash",
+            "design_hash",
+            "model_hash",
+            "feature_definition_hash",
+            "population_hash",
+        )
+    }
+    fit.update(
+        snapshot={"type": "object"},
+        split_policy={"type": "object"},
+        probabilities={"type": "array", "minItems": 2, "maxItems": 2, "items": text},
+        row_count=count,
+        non_null_count=count,
+    )
+    required_fit = list(fit)
+    fit.update({key: {"const": value} for key, value in _FIT_DEFAULTS.items()})
+    fields: dict[str, Any] = {
+        "kind": {"const": "winsorization"},
+        "schema_version": {"const": 1},
+        "column": text,
+        "lower": text,
+        "upper": text,
+        "source_type": text,
+        "output_precision": {"type": "integer", "minimum": 1, "maximum": 38},
+        "output_scale": {"type": "integer", "minimum": 0, "maximum": 38},
+    }
+    required = list(fields)
+    fields["stage"] = {"const": _TRANSFORM_DEFAULTS["stage"]}
+    fields["fit"] = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": required_fit,
+        "properties": fit,
+    }
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": required,
+        "properties": fields,
+    }
+
+
 INVALID_WINSORIZATION = RefusalSpec(
     "terrine.transform.invalid_winsorization", "Invalid winsorization: {reason}. {route}"
 )

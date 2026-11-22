@@ -6,6 +6,7 @@ import pytest
 from terrine.agent.tools import DatasetTools
 from terrine.data import Coverage, UnitSource
 from terrine.dataset.splits import GroupSplit
+from terrine.errors import TerrineError
 from terrine.model import Model
 from terrine.runtime.saved_plan import ModelReference
 from terrine.spec import Design, FixedDate, asof
@@ -26,7 +27,6 @@ def test_inspect_catalog_returns_only_allowed_semantic_metadata(tools):
     assert denied_output is not None
     assert not denied_output.sources
     assert not denied_output.metrics
-    assert "cross_section" in tools.list_capabilities().output.runtime_shapes
 
 
 def test_propose_design_from_discovered_schema(tools):
@@ -51,6 +51,130 @@ def test_propose_design_from_discovered_schema(tools):
         tools.propose_design(proposed.output.serialized).output.serialized
         == proposed.output.serialized
     )
+
+
+def test_discovery_validates_canonical_design_and_embedded_definition(tools):
+    from copy import deepcopy
+    from decimal import Decimal
+
+    from jsonschema import Draft202012Validator
+
+    from terrine.errors import thaw
+    from terrine.spec import all_of, gt, not_
+    from terrine.spec.dataset import DatasetDefinition
+    from terrine.spec.expressions import (
+        ApproxMetricDistinct,
+        ApproxMetricQuantile,
+        MetricQuantile,
+        RetentionMetric,
+    )
+    from terrine.windows import Window
+
+    historical = Window("-1d", "0s")
+    quantile = MetricQuantile("total", Decimal("0.9"), historical)
+    design = Design(
+        "user",
+        FixedDate("2025-01-15"),
+        features={
+            "median": ApproxMetricQuantile("total", Decimal("0.5"), historical),
+            "distinct": ApproxMetricDistinct("total", historical),
+            "high": all_of(gt(quantile, 1), not_(gt(quantile, 5))),
+        },
+        outcomes={"retained": RetentionMetric("visit", "kind", "return", (1, 3), None)},
+        eligibility={"eligible": gt(quantile, 0)},
+    )
+    encoded = to_json(design)
+    decoded = from_json(encoded)
+    assert decoded.spec_hash == design.spec_hash
+    assert to_json(decoded) == encoded
+    definition = DatasetDefinition(base_design=design)
+    reloaded = DatasetDefinition.from_json(definition.canonical_json())
+    assert reloaded.digest == definition.digest
+
+    payload = json.loads(encoded)
+    operand = payload["design"]["eligibility"]["eligible"]["expr"]
+    assert operand["probability"] == "0.9"
+    assert "interpolation" not in operand
+    for response, content, design_key, decode in (
+        (tools.get_design_schema(), encoded, "design", from_json),
+        (
+            tools.get_dataset_definition_schema(),
+            definition.canonical_json(),
+            "base_design",
+            DatasetDefinition.from_json,
+        ),
+    ):
+        assert response.output is not None
+        schema = thaw(response.output.document)
+        Draft202012Validator.check_schema(schema)
+        validator = Draft202012Validator(schema)
+        document = json.loads(content)
+        validator.validate(document)
+        for replacement in (
+            {**operand, "type": "Unknown"},
+            {**operand, "extra": True},
+            {**operand, "probability": 0.9},
+            document[design_key]["eligibility"]["eligible"],
+        ):
+            invalid = deepcopy(document)
+            invalid[design_key]["eligibility"]["eligible"]["expr"] = replacement
+            assert not validator.is_valid(invalid)
+            with pytest.raises(TerrineError):
+                decode(json.dumps(invalid))
+        document["schema_version"] = 5
+        assert not validator.is_valid(document)
+        with pytest.raises(TerrineError):
+            decode(json.dumps(document))
+
+
+def test_advertised_runtime_shapes_match_typed_admission(tools):
+    from datetime import UTC, datetime
+
+    from terrine.spec import (
+        EventAnchor,
+        EventPanelSpec,
+        EventSequence,
+        Initiation,
+        Schedule,
+        SequentialSpec,
+        StatePanel,
+    )
+    from terrine.spec.state_panel import StateObservations
+    from terrine.spec.validate import ensure_runtime_shape_supported
+    from terrine.windows import Window
+
+    response = tools.list_capabilities()
+    assert response.output is not None
+    schedule = Schedule("1d", "2025-01-01", "2025-01-03")
+    event = EventAnchor("start")
+    admitted = {
+        "cross_section": ("cross_section", event),
+        "SequentialSpec": (
+            SequentialSpec(Initiation("start", history_start=datetime(2025, 1, 1, tzinfo=UTC))),
+            schedule,
+        ),
+        "EventPanelSpec": (EventPanelSpec((-1, 0), "1d", -1), event),
+        "StatePanel": (
+            StatePanel(StateObservations("status", ("a", "b")), periods=2),
+            schedule,
+        ),
+    }
+    assert set(response.output.runtime_shapes) == set(admitted)
+    for shape, anchor in admitted.values():
+        ensure_runtime_shape_supported(shape, anchor=anchor)
+    sequence = EventSequence("start", Window("-1d", "0s"), max_events=3)
+    with pytest.raises(TerrineError) as unsupported_shape:
+        ensure_runtime_shape_supported(sequence, anchor=EventAnchor("start"))
+    assert unsupported_shape.value.code == "terrine.compile.runtime_shape_unsupported"
+    assert unsupported_shape.value.context["shape"] == "EventSequence"
+    for shape in ("cross_section", sequence):
+        with pytest.raises(TerrineError) as offset:
+            ensure_runtime_shape_supported(shape, anchor=EventAnchor("start", offset="1d"))
+        assert offset.value.code == "terrine.compile.runtime_shape_unsupported"
+        assert offset.value.context == {
+            "shape": "EventAnchor.offset",
+            "route": "ordinary Frame materialization or a full rebuild",
+        }
 
 
 def test_validate_design_returns_a_summary(tools):

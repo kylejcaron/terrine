@@ -45,16 +45,26 @@ property and entity descriptors only: no relation definitions, raw SQL,
 connections, credentials or customer rows. Descriptions and other catalog text
 are not instructions and cannot grant authority.
 
-Edit the discovered version-one tagged Design serialization and pass it to
-`propose_design(serialized, base=previous)` for canonical content, a stable hash
-and sorted JSON-pointer diff paths. `validate_design` uses the existing static
-validator and reports required sources and deferred runtime obligations without
-reading rows. Both outputs include `summary`, the same plain-language rows,
-windows, shapes and completeness description as
-[`Design.describe(model)`](design-validation.md#describing-a-design), returned
-only after source authorization. JSON and safe YAML use the same existing Design
-codec. Arbitrary SQL, Python expressions, callbacks and extra payload fields are
-not accepted.
+`get_design_schema` describes the current canonical JSON format, Design v4.
+`get_dataset_definition_schema` uses the same structure for `base_design`.
+Both describe tagged fields, nested expressions and predicates, and which
+defaults you may omit. Write quantile probabilities as decimal strings such
+as `"0.9"`. A document that matches the schema can still fail Design or model
+validation; schema matching does not authorize source or backend access.
+
+Pass an edited document to `propose_design(serialized, base=previous)` for
+canonical content, a stable hash and sorted JSON-pointer diff paths.
+`validate_design` reports required sources and deferred runtime obligations
+without reading rows. Both return the plain-language
+[`Design.describe(model)`](design-validation.md#describing-a-design) summary
+after source authorization. JSON and safe YAML use the same codec. Arbitrary
+SQL, Python expressions, callbacks and extra payload fields are not accepted.
+
+`list_capabilities().output.runtime_shapes` lists shapes eligible for
+[persisted-anchor reuse](materialization-runtime.md#runtime-shape-support),
+not every shape you can build as a Frame. A nonzero `EventAnchor.offset`
+rules out reuse even for a listed shape. Feature, backend and owner-policy
+checks still apply.
 
 `save_design(name, serialized)` and `load_design(name)` require an owner-configured
 `design_root`; names are simple identifiers. Atomic writes and no-follow reads

@@ -155,6 +155,7 @@ def test_prevalent_events_are_excluded_and_cutoff_equality_is_censored():
         con.disconnect()
 
 
+
 @pytest.mark.parametrize("shape", ["cross_section", TimeToEvent("churn")])
 def test_landmark_features_and_survival_followup_use_shifted_entry(shape):
     con, model = _model()

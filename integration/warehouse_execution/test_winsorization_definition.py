@@ -9,7 +9,6 @@ from tempfile import TemporaryDirectory
 import ibis
 
 from terrine import Budget
-from terrine.dataset.reference import _definition_for
 from terrine.dataset.splits import TimeSplit
 from tests._timing import HANG_GUARD_SECONDS
 from tests.fixtures.winsorization import create_model, design
@@ -31,20 +30,24 @@ def test_fitted_transform_reopens_without_training_rows_and_survives_publication
                 )
             )
             fitted = frame.fit_winsorization("value", lower="0.25", upper="0.75")
-            staged = frame.winsorize(fitted).stage("training", budget=Budget(strict_scan=False))
+            transformed = frame.winsorize(fitted)
+            definition = transformed.to_definition()
+            staged = transformed.stage("training", budget=Budget(strict_scan=False))
             stored = next(column for column in staged.manifest.columns if column.name == "value")
             assert (
                 stored.metadata["transformation"]["fit"]["definition_hash"]
-                == _definition_for(frame).digest
+                == frame.to_definition().digest
             )
             assert staged.manifest.definition.transforms == (fitted,)
+            assert staged.manifest.definition.canonical_json() == definition.canonical_json()
+            assert staged.manifest.definition_hash == definition.digest
             scoring = (
                 design()
                 .snapshot(model, as_of="2025-01-10", features=("value",), eligibility={})
                 .winsorize(fitted)
             )
-            (scoring_root / "training.json").write_bytes(_definition_for(frame).canonical_json())
-            (scoring_root / "scoring.json").write_bytes(_definition_for(scoring).canonical_json())
+            (scoring_root / "training.json").write_bytes(frame.to_definition().canonical_json())
+            (scoring_root / "scoring.json").write_bytes(scoring.to_definition().canonical_json())
             (scoring_root / "transform.json").write_bytes(fitted.to_json())
         finally:
             con.disconnect()

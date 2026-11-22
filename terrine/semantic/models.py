@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Annotated, Any, Literal, Self, TypeAlias, get_args, get_origin
 
@@ -462,6 +462,9 @@ class BoundSource:
     day_boundary: str
     where: tuple[Filter, ...] = ()
     row_key: str | None = None
+    event_types: Mapping[str, str] = field(
+        default_factory=lambda: MappingProxyType({}), repr=False, compare=False
+    )
 
 
 @dataclass(frozen=True, slots=True)

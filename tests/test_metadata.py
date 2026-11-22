@@ -88,6 +88,10 @@ def _frame(provenance):
                 "t0": pa.array(
                     [datetime(2025, 1, 1, tzinfo=UTC)], type=pa.timestamp("us", tz="UTC")
                 ),
+                **{
+                    name: pa.array([datetime(2025, 1, 1, tzinfo=UTC)])
+                    for name in ("selected_time", "start_bound", "end_bound")
+                },
             }
         ),
         roles=Roles(
@@ -105,6 +109,7 @@ def test_sequence_metadata_round_trips_arrow_as_typed_provenance():
     provenance = replace(
         _provenance(),
         shape="event_sequence",
+        expression_timings={},
         sequence_meta=SequenceMeta(
             event="signup",
             window=Window(0, "1h"),
@@ -137,7 +142,40 @@ def test_sequence_metadata_round_trips_arrow_as_typed_provenance():
         ),
     )
     frame = MaterializedFrame(
-        table=pa.table({"unit": ["a"], "nested": [[{"event_id": "e1", "amount": 3}]]}),
+        table=pa.table(
+            {
+                "unit": ["a"],
+                "anchor_id": ["fixed"],
+                "t0": [datetime(2025, 1, 1, tzinfo=UTC)],
+                "event_id": ["e1"],
+                "event_time": [datetime(2025, 1, 1, tzinfo=UTC)],
+                "sequence_position": [1],
+                "kind": ["view"],
+                "amount": [3],
+                "event_count": [1],
+                "sequence_complete": [True],
+                "sequence_reason": pa.array([None], pa.string()),
+                "kind_reason": pa.array([None], pa.string()),
+                "amount_reason": pa.array([None], pa.string()),
+                "session_index": [1],
+                "sessions": [[{"session_index": 1}]],
+                "sessions_complete": [True],
+                "sessions_reason": pa.array([None], pa.string()),
+                "transition_from": ["view"],
+                "transition_to": ["purchase"],
+                "funnel_attempts": [
+                    [
+                        {
+                            "start_time": datetime(2025, 1, 1, tzinfo=UTC),
+                            "matched_event_ids": ["e1"],
+                            "status": "incomplete",
+                        }
+                    ]
+                ],
+                "funnel_attempts_complete": [True],
+                "funnel_attempts_reason": pa.array([None], pa.string()),
+            }
+        ),
         roles=Roles(
             unit="unit", anchor="anchor_id", t0="t0", treatment=None, features=(), outcomes=()
         ),
@@ -178,13 +216,31 @@ def test_array_sequence_transition_references_survive_arrow_roundtrip():
     provenance = replace(
         _provenance(),
         shape="event_sequence",
+        expression_timings={},
         sequence_meta=sequence_meta,
     )
     frame = MaterializedFrame(
         table=pa.table(
             {
                 "unit": ["a"],
-                "event_values": [[{"transition_from": None, "transition_to": "signup"}]],
+                "anchor_id": ["fixed"],
+                "t0": [datetime(2025, 1, 1, tzinfo=UTC)],
+                "event_values": [
+                    [
+                        {
+                            "event_id": 42,
+                            "event_time": datetime(2025, 1, 1, tzinfo=UTC),
+                            "transition_from": "view",
+                            "transition_to": "signup",
+                        }
+                    ]
+                ],
+                "event_count": [1],
+                "sequence_complete": [True],
+                "sequence_reason": pa.array([None], pa.string()),
+                "sessions": [[{"session_index": 1}]],
+                "sessions_complete": [True],
+                "sessions_reason": pa.array([None], pa.string()),
             }
         ),
         roles=Roles(
@@ -198,6 +254,21 @@ def test_array_sequence_transition_references_survive_arrow_roundtrip():
     assert restored_meta is not None
     assert restored_meta.transition_from_column == "event_values.transition_from"
     assert restored_meta.transition_to_column == "event_values.transition_to"
+    arrow = frame.to_pyarrow()
+    field = arrow.schema.get_field_index("event_values")
+    row = arrow["event_values"][0].as_py()[0]
+    for missing in ("transition_to", "event_id", "event_time"):
+        payload = {name: value for name, value in row.items() if name != missing}
+        changed = arrow.set_column(field, "event_values", pa.array([[payload]]))
+        with pytest.raises(TerrineError) as error:
+            MaterializedFrame.from_arrow(changed)
+        assert error.value.code == "terrine.metadata.missing_columns"
+        assert error.value.context["columns"] == (f"event_values.{missing}",)
+    row["event_time"] = "2025-01-01"
+    changed = arrow.set_column(field, "event_values", pa.array([[row]]))
+    with pytest.raises(TerrineError) as wrong_type:
+        MaterializedFrame.from_arrow(changed)
+    assert wrong_type.value.code == "terrine.metadata.invalid"
 
 
 def test_data_exports_feature_cutoff():
@@ -278,7 +349,22 @@ def test_dataset_view_resolved_instant_round_trips_json_and_arrow():
             resolved_as_of=datetime(2025, 1, 1, tzinfo=UTC),
         ),
     )
-    frame = _frame(provenance)
+    source = _frame(provenance)
+    frame = replace(
+        source,
+        table=source.table.append_column("revenue", pa.array([42])),
+        roles=replace(source.roles, features=("revenue",)),
+        columns={
+            "revenue": ColumnMeta(
+                window=None,
+                role="feature",
+                observed_from_column=None,
+                observed_until_column=None,
+                complete_column=None,
+                reason_column=None,
+            )
+        },
+    )
     assert (
         MaterializedFrame.from_json(frame.to_json()).provenance.dataset_view
         == provenance.dataset_view
@@ -296,12 +382,27 @@ def test_materialized_frame_metadata_json_roundtrip_preserves_arrow_values(stamp
     table = pa.table(
         {
             "unit": pa.array(["a", "b"], type=pa.string()),
+            "anchor": ["a", "b"],
             "t0": pa.array(
                 [datetime(2025, 1, 1, tzinfo=UTC)] * 2, type=pa.timestamp("us", tz="UTC")
             ),
             "treated": pa.array([True, None], type=pa.bool_()),
             "amount": pa.array([Decimal("12.3400"), None], type=pa.decimal128(12, 4)),
+            "amount_complete": [True, False],
+            "amount_reason": [None, "incomplete_coverage"],
             "spend": pa.array([0.30000000000000004, None], type=pa.float64()),
+            "spend_complete": [True, False],
+            "spend_reason": [None, "incomplete_coverage"],
+            **{
+                name: pa.array([datetime(2025, 1, 1, tzinfo=UTC)] * 2)
+                for name in (
+                    "spend_observed_from",
+                    "spend_observed_until",
+                    "selected_time",
+                    "start_bound",
+                    "end_bound",
+                )
+            },
         }
     )
     frame = MaterializedFrame(
@@ -656,6 +757,14 @@ def test_state_panel_roles_and_metadata_survive_arrow_json_roundtrip():
                 "t0": pa.array(
                     [datetime(2025, 1, 1, tzinfo=UTC)], type=pa.timestamp("us", tz="UTC")
                 ),
+                "from_state": ["new"],
+                "to_state": ["active"],
+                "period_index": [0],
+                "from_time": [meta.panel_start],
+                "to_time": [meta.panel_start],
+                "scheduled_to": [meta.panel_start],
+                "gap": [timedelta(0)],
+                "terminal": [False],
             }
         ),
         roles=Roles(
@@ -669,7 +778,9 @@ def test_state_panel_roles_and_metadata_survive_arrow_json_roundtrip():
             prior_state="from_state",
         ),
         columns={},
-        provenance=replace(_provenance(), state_panel=meta),
+        provenance=replace(
+            _provenance(), shape="state_panel", state_panel=meta, expression_timings={}
+        ),
     )
     recovered = MaterializedFrame.from_arrow(frame.to_pyarrow())
     assert recovered.roles == frame.roles
@@ -692,3 +803,48 @@ def test_materialized_frame_from_arrow_malformed_is_coded():
         MaterializedFrame.from_arrow(table)
     assert error.value.code == "terrine.metadata.invalid"
     assert error.value.context["reason"] == "invalid_arrow_metadata"
+
+
+def test_typed_import_refuses_missing_physical_references():
+    import copy
+    import pickle
+
+    source = _frame(replace(_provenance(), expression_timings={}))
+    instant = source.table["t0"]
+    frame = replace(
+        source,
+        table=(
+            source.table.append_column("spend", pa.array([42]))
+            .append_column("complete", pa.array([True]))
+            .append_column("reason", pa.array([None], type=pa.string()))
+            .append_column("observed", instant)
+        ),
+        roles=replace(source.roles, features=("spend",)),
+        columns={
+            "spend": ColumnMeta(
+                window=None,
+                role="feature",
+                observed_from_column=None,
+                observed_until_column="observed",
+                complete_column="complete",
+                reason_column="reason",
+            )
+        },
+    )
+    arrow = frame.to_pyarrow()
+    assert MaterializedFrame.from_arrow(arrow).table.equals(frame.table)
+    for name in ("unit", "spend", "complete", "reason", "observed"):
+        projected = replace(frame, table=frame.table.drop([name]))
+        for decode in (
+            lambda name=name: MaterializedFrame.from_arrow(arrow.drop([name])),
+            lambda projected=projected: MaterializedFrame.from_json(projected.to_json()),
+        ):
+            with pytest.raises(TerrineError) as error:
+                decode()
+            for refusal in (
+                error.value,
+                copy.deepcopy(error.value),
+                pickle.loads(pickle.dumps(error.value)),
+            ):
+                assert refusal.code == "terrine.metadata.missing_columns"
+                assert refusal.context["columns"] == (name,)

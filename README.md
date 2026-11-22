@@ -133,11 +133,17 @@ from terrine.dataset import TimeSplit
 frame = design.build(model)
 split = TimeSplit(train_until="2025-03-03", validation_until="2025-04-01")
 training = frame.training_set(label="spend_next_30d", split=split)
+print(training.assumptions)
 modeling = training.to_pandas(values_only=True)
 train = modeling.loc[modeling["__terrine_split"].eq("train")]
 validation = modeling.loc[modeling["__terrine_split"].eq("validation")]
 ```
 <!-- --8<-- [end:train-validate] -->
+
+Inspect `training.assumptions` before exporting. A January 31 order inserted
+later can appear in a complete February 1 feature window. Without `entered_at`,
+a customer who joined in March can also appear in the February roster. See
+[what to check before training](https://github.com/kylejcaron/terrine/blob/main/docs/guides/ml-staging.md#training-data).
 
 Rows are split by `t0`, but a label window that crosses its split cutoff is
 `unassigned` with `__terrine_split_reason="label_overlap"`: training never uses a future
