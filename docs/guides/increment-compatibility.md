@@ -1,6 +1,12 @@
 # `increment` compatibility
 
-Terrine can translate the published [`increment`](https://pypi.org/project/increment/) semantic definitions into the same native `Catalog` and `Model` path used by Terrine catalogs. Install the optional extra with `pip install 'terrine[increment]'`; the supported release is exactly `increment==0.1.0a2`. Release `0.1.0a1` does not publish the semantic definitions API; other releases are not covered by this compatibility contract. The bridge imports `increment` only when `Model.from_increment(...)` is called, so native catalog use does not require the extra.
+Terrine translates published [`increment`](https://pypi.org/project/increment/) semantic
+definitions into the same native `Catalog` and `Model` path used by Terrine catalogs.
+Run `pip install 'terrine[increment]'` to install the bridge's pinned SDK,
+`increment==0.1.0a2`. Release `0.1.0a1` does not publish the semantic definitions
+API; other releases are not covered by this compatibility contract. The bridge
+imports `increment` only when you call `Model.from_increment(...)`, so native
+catalog use does not require the extra.
 
 ```python
 model = Model.from_increment(
