@@ -205,16 +205,27 @@ administrative compatibility does not permit obsolete execution or replay
   a materialization. The three distinct root definitions are materialized
   separately. Regeneration must match the recorded bytes without changing any
   saved generation.
-- Release tags in the 0.x series require a successful CI run. Release candidates
-  and final tags require successful CI, PostgreSQL, and scale jobs; the scale
-  tier includes the release-upgrade test. BigQuery and Snowflake are advisory
-  in the automated gate, but each needs a green run within seven days of the
-  tag or a waiver recorded in the release notes. Record each cloud backend's
-  latest passing release as `verified at vX.Y` in the [backend compatibility
-  table](backend-compatibility.md#operation-regression-environment).
+- Every release tag requires `ci-ok`. Non-development release candidates and
+  final tags for 1.x and later also require PostgreSQL and scale on the release
+  commit. The scale tier includes the release-upgrade test.
+- BigQuery and Snowflake are evaluated separately for every tag. Each backend's
+  latest executed job on the release commit must pass and complete within the
+  seven days ending at the original tag push. A retry or manual dispatch does
+  not move that cutoff. The only alternative is a release-owner waiver bound to
+  the exact release notes, verified before PyPI publication and published
+  verbatim. A waiver is not verification. See the
+  [dated backend results](backend-compatibility.md#backend-verification-status)
+  and the [release checklist](../../CONTRIBUTING.md#cloud-evidence-and-waivers).
 - An [upgrade test](../../integration/test_release_upgrade.py) installs each
   published release listed in `tests/artifacts/RELEASES`, starting with
   `0.1.0a1`, into an isolated interpreter, stages a dataset with it and reopens
   that dataset in place with the current code. It runs in the weekly scale tier.
+- Before publishing a release with saved-format changes or uncertain format
+  impact, a separate gate stages data with the immediately preceding published
+  release and with the built candidate wheel. The installed candidate reopens
+  both owners in place outside the checkout. The gate checks rows, schema and
+  roles, state-panel metadata and unsupported-shape outcomes, then verifies
+  that the uploaded wheel has the same SHA-256. A weekly pass is not evidence
+  about the built wheel.
 - Adding a format generation, and adding a release to `RELEASES`, are release
   checklist steps.
