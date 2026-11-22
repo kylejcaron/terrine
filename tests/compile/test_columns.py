@@ -125,11 +125,12 @@ def test_carried_inline_state_before_observation_start_is_unknown(column_model, 
 @pytest.mark.parametrize("names", [("same", "SAME"), ("é", "e\u0301")])
 def test_output_namespace_collisions_refuse_before_compilation(column_model, names):
     with pytest.raises(TerrineError) as error:
-        _compile(
-            column_model,
-            features={names[0]: asof("tier", before="0s")},
+        Design(
+            "user",
+            FixedDate("2025-01-02"),
+            features={names[0]: agg("not_declared", window=("-1d", "0s"))},
             eligibility={names[1]: is_null(asof("tier", before="0s"))},
-        )
+        ).build(column_model)
     assert error.value.code == "terrine.spec.output_name_conflict"
 
 

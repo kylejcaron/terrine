@@ -507,4 +507,8 @@ def compile_observed_state_panel(
             **(baseline_compiled.range_plans if baseline_compiled is not None else {}),
             **compiled.range_plans,
         },
+        source_reads=(
+            *compiled.source_reads,
+            *(baseline_compiled.source_reads if baseline_compiled is not None else ()),
+        ),
     )

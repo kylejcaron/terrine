@@ -7,21 +7,31 @@ import json
 from collections.abc import Generator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 import ibis
+import ibis.expr.datatypes as dt
+import ibis.expr.operations as ops
 import pyarrow as pa
 
 from terrine.backends.capabilities import _CAPABILITY_UNAVAILABLE, _SNAPSHOT_UNAVAILABLE
 from terrine.backends.registry import ENGINES
 from terrine.errors import TerrineError
-from terrine.execution._metadata import invalidate_metadata
-from terrine.semantic.models import Catalog, RelationSpec, SqlQuery, TableRef
+from terrine.execution._metadata import invalidate_metadata, metadata_fact, metadata_operation
+from terrine.semantic.models import BoundSource, Catalog, RelationSpec, TableRef
 from terrine.semantic.sql import _admit_read_query_ast, _scopes, _verified, admit_read_query
+
+if TYPE_CHECKING:
+    import ibis.expr.types as ir
+
+    from terrine.execution.inputs import ArrowReader
+
 
 DIALECT = "bigquery"
 # Physical row sources; external tables are not snapshot-consistent.
 _TABLE_TYPES = {"TABLE": "table", "SNAPSHOT": "table", "VIEW": "view"}
+type _QualifiedName = tuple[str, str, str]
+type _Defaults = tuple[str, str]
 
 
 def _snapshot_error(reason: str):
@@ -36,6 +46,13 @@ def client_of(con: Any) -> Any:
 
 
 @dataclass(frozen=True, slots=True)
+class _TimePartition:
+    field: str | None
+    grain: str | None
+    field_type: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class _Relation:
     project: str
     dataset: str
@@ -43,20 +60,22 @@ class _Relation:
     kind: str
     created: str
     definition_hash: str
+    view_query: str | None
+    partition: _TimePartition | None
 
     @property
     def identity(self) -> str:
         return json.dumps([self.project, self.dataset, self.name])
 
 
-def _defaults(con: Any) -> tuple[str, str]:
+def _defaults(con: Any) -> _Defaults:
     """The connection's data project and default dataset (not its billing project)."""
     return con.data_project, con.dataset
 
 
-def _reference(con: Any, name: str) -> tuple[str, str, str]:
+def _reference(defaults: _Defaults, name: str) -> _QualifiedName:
     parts = name.split(".")
-    project, dataset = _defaults(con)
+    project, dataset = defaults
     if len(parts) == 1:
         return project, dataset, parts[0]
     if len(parts) == 2:
@@ -66,21 +85,35 @@ def _reference(con: Any, name: str) -> tuple[str, str, str]:
     raise _snapshot_error(f"relation name {name!r} is not project.dataset.table")
 
 
-def _relation(con: Any, project: str, dataset: str, name: str) -> _Relation:
+@metadata_fact
+def _relation(client: Any, project: str, dataset: str, name: str) -> _Relation:
     try:
-        table = client_of(con).get_table(f"{project}.{dataset}.{name}")
+        table = client.get_table(f"{project}.{dataset}.{name}")
     except Exception as exc:
         raise _snapshot_error(f"relation {name!r} is not visible to this connection") from exc
     kind = _TABLE_TYPES.get(table.table_type)
     if kind is None:
         raise _snapshot_error(f"relation {name!r} has unsupported type {table.table_type!r}")
+    view_query = table.view_query
     definition = json.dumps(
         {
             "schema": [field.to_api_repr() for field in table.schema],
-            "view": table.view_query,
+            "view": view_query,
         },
         sort_keys=True,
     )
+    partition = None
+    if (
+        kind == "table"
+        and (table.project, table.dataset_id, table.table_id) == (project, dataset, name)
+        and table.external_data_configuration is None
+        and (time_partition := table.time_partitioning) is not None
+    ):
+        field_type = next(
+            (field.field_type for field in table.schema if field.name == time_partition.field),
+            None,
+        )
+        partition = _TimePartition(time_partition.field, time_partition.type_, field_type)
     return _Relation(
         project,
         dataset,
@@ -88,6 +121,8 @@ def _relation(con: Any, project: str, dataset: str, name: str) -> _Relation:
         kind,
         table.created.isoformat() if table.created is not None else "",
         hashlib.sha256(definition.encode()).hexdigest(),
+        view_query,
+        partition,
     )
 
 
@@ -118,7 +153,7 @@ def check_routines(sql: str) -> None:
             raise _snapshot_error("query calls a user-defined routine")
 
 
-def _tables_in(sql: str, con: Any) -> list[tuple[str, str, str]]:
+def _tables_in(sql: str, defaults: _Defaults) -> list[_QualifiedName]:
     from sqlglot import exp
 
     statement = _admit_read_query_ast(sql, DIALECT, DIALECT)
@@ -127,11 +162,11 @@ def _tables_in(sql: str, con: Any) -> list[tuple[str, str, str]]:
         for source in scope.sources.values():
             if isinstance(source, exp.Table):
                 parts = [part for part in (source.catalog, source.db, source.name) if part]
-                found.append(_reference(con, ".".join(parts)))
+                found.append(_reference(defaults, ".".join(parts)))
     return found
 
 
-def _view_tables(sql: str, con: Any) -> list[tuple[str, str, str]]:
+def _view_tables(sql: str, defaults: _Defaults) -> list[_QualifiedName]:
     from sqlglot import exp
 
     check_routines(sql)
@@ -140,36 +175,64 @@ def _view_tables(sql: str, con: Any) -> list[tuple[str, str, str]]:
         for source in scope.sources.values():
             if isinstance(source, exp.Table):
                 parts = [part for part in (source.catalog, source.db, source.name) if part]
-                found.append(_reference(con, ".".join(parts)))
+                found.append(_reference(defaults, ".".join(parts)))
     return found
 
 
+@metadata_fact
+def _bound_partitions(_client: Any) -> dict[_QualifiedName, tuple[_TimePartition | None, bool]]:
+    # Evidence belongs to the resolver's current metadata operation, not the table expression.
+    return {}
+
+
+@metadata_fact
+def _completed_closures(
+    _client: Any, _defaults: _Defaults
+) -> dict[_QualifiedName, frozenset[_Relation]]:
+    # The operation owns this memo; entries are immutable, completed subtrees.
+    return {}
+
+
 def _closure(
-    con: Any,
-    key: tuple[str, str, str],
-    seen: dict[tuple[str, str, str], _Relation],
-    path: frozenset[tuple[str, str, str]],
-) -> None:
-    if key in path:
+    client: Any,
+    defaults: _Defaults,
+    key: _QualifiedName,
+    completed: dict[_QualifiedName, frozenset[_Relation]],
+    active: set[_QualifiedName],
+) -> frozenset[_Relation]:
+    if key in active:
         raise _snapshot_error("view dependency cycle")
-    if key in seen:
-        return
-    relation = _relation(con, *key)
-    seen[key] = relation
+    if key in completed:
+        return completed[key]
+    relation = _relation(client, *key)
     if relation.kind == "view":
-        table = client_of(con).get_table(".".join(key))
-        for dependency in _view_tables(table.view_query, con):
-            _closure(con, dependency, seen, path | {key})
+        if relation.view_query is None:
+            raise _snapshot_error("view definition could not be parsed")
+        active.add(key)
+        try:
+            reachable = {relation}
+            for dependency in _view_tables(relation.view_query, defaults):
+                reachable.update(_closure(client, defaults, dependency, completed, active))
+            result = frozenset(reachable)
+        finally:
+            active.remove(key)
+    else:
+        result = frozenset((relation,))
+    completed[key] = result
+    return result
 
 
-def _closure_for(relation: RelationSpec, con: Any) -> dict[tuple[str, str, str], _Relation]:
-    seen: dict[tuple[str, str, str], _Relation] = {}
+@metadata_fact
+def _closure_for(relation: RelationSpec, client: Any, defaults: _Defaults) -> frozenset[_Relation]:
+    completed = _completed_closures(client, defaults)
+    active: set[_QualifiedName] = set()
     if isinstance(relation, TableRef):
-        _closure(con, _reference(con, relation.name), seen, frozenset())
-    elif isinstance(relation, SqlQuery):
-        for key in _tables_in(relation.sql, con):
-            _closure(con, key, seen, frozenset())
-    return seen
+        return _closure(client, defaults, _reference(defaults, relation.name), completed, active)
+    return frozenset(
+        item
+        for key in _tables_in(relation.sql, defaults)
+        for item in _closure(client, defaults, key, completed, active)
+    )
 
 
 def roots(catalog: Catalog, units: Mapping[str, Any] | None = None) -> tuple[RelationSpec, ...]:
@@ -179,19 +242,23 @@ def roots(catalog: Catalog, units: Mapping[str, Any] | None = None) -> tuple[Rel
     return tuple(relations)
 
 
+@metadata_operation()
 def required_relations(
     catalog: Catalog, con: Any, *, units: Mapping[str, Any] | None = None
 ) -> tuple[Any, ...]:
     from terrine.execution.inputs import PhysicalRelationId
 
-    seen: dict[tuple[str, str, str], _Relation] = {}
-    for relation in roots(catalog, units):
-        seen.update(_closure_for(relation, con))
+    client, defaults = client_of(con), _defaults(con)
+    seen = {
+        item
+        for relation in roots(catalog, units)
+        for item in _closure_for(relation, client, defaults)
+    }
     return tuple(
         sorted(
             (
                 PhysicalRelationId("table", item.project, item.dataset, item.name)
-                for item in seen.values()
+                for item in seen
                 if item.kind == "table"
             ),
             key=lambda item: (item.catalog or "", item.schema or "", item.name),
@@ -201,17 +268,22 @@ def required_relations(
 
 def admission_fingerprint(relation: RelationSpec, con: Any) -> str:
     """Return the identity of a relation's closure; any change alters it."""
+    return _fingerprint(relation, client_of(con), _defaults(con))
+
+
+@metadata_fact
+def _fingerprint(relation: RelationSpec, client: Any, defaults: _Defaults) -> str:
     payload = sorted(
         (item.identity, item.kind, item.created, item.definition_hash)
-        for item in _closure_for(relation, con).values()
+        for item in _closure_for(relation, client, defaults)
     )
     return hashlib.sha256(json.dumps(payload, separators=(",", ":")).encode()).hexdigest()
 
 
 def resolve(con: Any, relation: RelationSpec, catalog_dialect: str = DIALECT) -> Any:
     if isinstance(relation, TableRef):
-        project, dataset, name = _reference(con, relation.name)
-        item = _relation(con, project, dataset, name)
+        project, dataset, name = _reference(_defaults(con), relation.name)
+        item = _relation(client_of(con), project, dataset, name)
         return con.table(item.name, database=(item.project, item.dataset))
     sql = admit_read_query(relation.sql, catalog_dialect, DIALECT)
     return con.sql(sql, schema=_query_schema(con, sql))
@@ -272,6 +344,15 @@ def owned_session(con: Any) -> tuple[Any, Any, str]:
     return client, storage, session_id
 
 
+def _submit_arrow(con: Any, query: Any, sql: str) -> tuple[Any, Any]:
+    """Run Ibis's Arrow preparation, then submit the already admitted SQL."""
+    con._import_pyarrow()
+    table = query.as_table()
+    schema = table.schema() - ibis.schema({"_TABLE_SUFFIX": "string"})
+    con._run_pre_execute_hooks(table)
+    return con.raw_sql(sql), schema
+
+
 class BigQuerySession:
     """One snapshot transaction in a terrine-owned BigQuery session."""
 
@@ -286,20 +367,40 @@ class BigQuerySession:
         check_routines(sql)
 
     def execute(self, con: Any, query: Any, sql: str) -> pa.Table:
+        from ibis.backends.bigquery import _postprocess_arrow
+
         invalidate_metadata()
         with _overflow_refusal():
-            return con.to_pyarrow(query)
+            result, schema = _submit_arrow(con, query, sql)
+            table = result.to_arrow(progress_bar_type=None, bqstorage_client=self.storage)
+            table = _postprocess_arrow(table, list(schema.names))
+            return query.__pyarrow_result__(table, schema=schema)
 
-    def batches(self, con: Any, query: Any, sql: str, *, chunk_size: int) -> pa.RecordBatchReader:
+    def batches(self, con: Any, query: Any, sql: str, *, chunk_size: int) -> ArrowReader:
+        from ibis.backends.bigquery import _postprocess_arrow
+
+        from terrine.execution.inputs import _ClosingArrowReader
+
         invalidate_metadata()
         with _overflow_refusal():
-            reader = con.to_pyarrow_batches(query, chunk_size=chunk_size)
+            result, schema = _submit_arrow(con, query, sql)
+        names = list(schema.names)
 
-        def batches():
+        def batches() -> Generator[pa.RecordBatch]:
             with _overflow_refusal():
-                yield from reader
+                # Google controls storage batch sizes. Open the download lazily
+                # so closing an unread result has no download to release.
+                source = result.to_arrow_iterable(bqstorage_client=self.storage)
+                try:
+                    for batch in source:
+                        yield cast(pa.RecordBatch, _postprocess_arrow(batch, names))
+                finally:
+                    if (close := getattr(source, "close", None)) is not None:
+                        close()
 
-        return pa.RecordBatchReader.from_batches(reader.schema, batches())
+        source = batches()
+        reader = pa.RecordBatchReader.from_batches(schema.to_pyarrow(), source)
+        return _ClosingArrowReader(reader, source)
 
     def close(self) -> None:
         """Roll back and end the session; cleanup failures never mask a result."""
@@ -344,6 +445,37 @@ class _BigQueryProvider:
 
         return _bigquery.required_relations(catalog, con, units=units)
 
+    def event_partition(
+        self, con: Any, source: BoundSource, timestamp: ir.TimestampValue
+    ) -> tuple[str | None, str | None]:
+        if not isinstance(source.relation, TableRef):
+            return None, "layout_unverified"
+        key = _reference(_defaults(con), source.relation.name)
+        layout, changed = _bound_partitions(client_of(con)).get(key, (None, False))
+        if changed:
+            return None, "layout_changed"
+        if layout is None or layout.grain not in {"HOUR", "DAY", "MONTH", "YEAR"}:
+            return None, "layout_unverified"
+        if layout.field is None:
+            return None, "ingestion_time_partition"
+        if layout.field != source.time_column:
+            return None, "event_lineage_unverified"
+        dtype = timestamp.type()
+        if not isinstance(dtype, dt.Timestamp) or dtype.timezone != "UTC":
+            return None, "event_lineage_unverified"
+        tables = timestamp.op().find(ops.DatabaseTable)
+        if len(tables) == 1:
+            (table,) = tables
+            if (
+                isinstance(table, ops.DatabaseTable)
+                and table.source is con
+                and (table.namespace.catalog, table.namespace.database, table.name) == key
+                and layout.field_type == "TIMESTAMP"
+            ):
+                return layout.field, None
+        return None, "event_lineage_unverified"
+
+    @metadata_operation()
     def bind_resolver(self, catalog, con, **kwargs):
         from terrine.execution import _bigquery
         from terrine.execution.inputs import _INVALID
@@ -355,31 +487,63 @@ class _BigQueryProvider:
                 status="unverified",
                 route="Retained input bindings are DuckDB-only; materialize directly.",
             )
-        _bigquery.required_relations(catalog, con, units=kwargs.get("units"))
-        admitted: dict[tuple[str, str], Any] = {}
-        fingerprints: dict[tuple[str, str], str] = {}
+        requested = roots(catalog, kwargs.get("units"))
+        study_roots = kwargs.get("_study_roots")
+        if study_roots is not None and (scope := study_roots()) is not None:
+            selected = frozenset(scope)
+            requested = tuple(relation for relation in requested if relation in selected)
+        fingerprints = {
+            relation: _bigquery.admission_fingerprint(relation, con) for relation in requested
+        }
+        client, defaults = client_of(con), _defaults(con)
+        original_partitions = {
+            key: _relation(client, *key).partition
+            for relation in requested
+            if isinstance(relation, TableRef)
+            for key in (_reference(defaults, relation.name),)
+        }
+        owner = kwargs.get("_partition_owner")
+        owner_client = client_of(owner) if owner is not None else None
+        admitted: dict[RelationSpec, Any] = {}
 
+        @metadata_operation()
         def resolve(relation: RelationSpec) -> Any:
-            key = (relation.kind, relation.name if isinstance(relation, TableRef) else relation.sql)
             fingerprint = _bigquery.admission_fingerprint(relation, con)
-            if key in admitted:
-                if fingerprints[key] != fingerprint:
-                    raise _INVALID.error(
-                        reason="relation definition or identity changed after Model binding"
-                    )
-                return admitted[key]
-            admitted[key] = _bigquery.resolve(con, relation, catalog.dialect)
-            fingerprints[key] = fingerprint
-            return admitted[key]
+            original = fingerprints.get(relation)
+            if original is not None and original != fingerprint:
+                raise _INVALID.error(
+                    reason="relation definition or identity changed after Model binding"
+                )
+            if relation not in admitted:
+                admitted[relation] = _bigquery.resolve(con, relation, catalog.dialect)
+                fingerprints[relation] = fingerprint
+            if isinstance(relation, TableRef):
+                key = _reference(defaults, relation.name)
+                layout = _relation(client, *key).partition
+                changed = layout != original_partitions.setdefault(key, layout)
+                if owner_client is not None:
+                    changed |= _bound_partitions(owner_client).get(key) != (layout, False)
+                _bound_partitions(client)[key] = (layout, changed)
+            return admitted[relation]
 
         return resolve
 
-    def open_execution(self, catalog, con, *, units=None, input_binding=None):
+    @contextmanager
+    def open_execution(self, catalog, con, *, units=None, input_binding=None, _study_roots=None):
         from terrine.execution.inputs import _open_bigquery_execution
 
-        return _open_bigquery_execution(
-            self, catalog, con, units=units, input_binding=input_binding
-        )
+        with (
+            metadata_operation(),
+            _open_bigquery_execution(
+                self,
+                catalog,
+                con,
+                units=units,
+                input_binding=input_binding,
+                study_roots=_study_roots,
+            ) as context,
+        ):
+            yield context
 
 
 PROVIDER = _BigQueryProvider()

@@ -710,7 +710,7 @@ class _DuckDBProvider:
 
         return _bind_native_resolver(catalog, con, **kwargs)
 
-    def open_execution(self, catalog, con, *, units=None, input_binding=None):
+    def open_execution(self, catalog, con, *, units=None, input_binding=None, _study_roots=None):
         self.capabilities.require(
             "transaction_view",
             backend="duckdb",

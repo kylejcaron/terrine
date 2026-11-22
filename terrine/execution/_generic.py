@@ -367,6 +367,7 @@ class _GenericProvider:
         *,
         units: Mapping[str, Any] | None = None,
         input_binding: Any = None,
+        _study_roots: Any = None,
     ) -> Generator[Any]:
         from terrine.execution.inputs import ExecutionContext, _execution_snapshot
 

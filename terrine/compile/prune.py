@@ -125,6 +125,9 @@ def prune_columns(table: ibis.Table) -> ibis.Table:
 
     The result has the same schema and rows; shared relations stay shared, so
     a relation read in several places still compiles once.
+
+    For a guarded statement, pass the joined rows and gates together. Pruning
+    either branch first loses the shared demand on its candidate relations.
     """
     root: Node = table.op()
     need, consumers = _requirements(root)

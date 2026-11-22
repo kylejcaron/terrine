@@ -666,6 +666,12 @@ class Dialect:
         """
         return None
 
+    def literal_bound_keys(
+        self, column: ir.TimestampValue, bound: ir.TimestampValue
+    ) -> tuple[ir.Value, ir.Value] | None:
+        """Keys for a declaration-proven literal fact bound, or None."""
+        return self.comparison_keys(column, bound)
+
     def native_shifted_comparison_keys(
         self,
         left: ir.TimestampValue,

@@ -81,6 +81,11 @@ labels retain their spelling, but collisions and reserved support names refuse.
 Only sources selected by the design need readiness declarations; unused label
 definitions do not prevent building a feature-only design.
 
+The Frame reuses those declaration checks for the same design, including when
+you select training columns. Each export still verifies and binds its own input
+view; a successful build does not authorize reading a changed table or reuse
+an earlier export's snapshot.
+
 Safe Frame execution runs all deferred producer checks before export, including
 checks for candidates later excluded by eligibility. Known false excludes a
 candidate even when another conjunct is unknown. Otherwise unresolved eligibility
