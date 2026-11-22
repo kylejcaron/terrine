@@ -74,6 +74,8 @@ PROVISIONAL_NAMES: frozenset[str] = frozenset(
         "terrine.data.SamplingMeta",
         "terrine.data.SequenceMeta",
         "terrine.data.StatePanelMeta",
+        "terrine.data.SurvivalFlow",
+        "terrine.data.SurvivalGroupFlow",
         "terrine.data.TreatmentHistoryMeta",
         "terrine.data.ExecutionSnapshot",
         "terrine.data.CoverageSummary",
