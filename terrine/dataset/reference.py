@@ -29,6 +29,7 @@ from terrine.data import (
 from terrine.dataset.manifest import DatasetManifest, ManifestColumn, ManifestGeneration
 from terrine.errors import INVALID_VIEW, RefusalSpec, TerrineError
 from terrine.execution.backend import backend_capabilities, backend_provider
+from terrine.runtime._relocation import _hash, _Imports, _key
 from terrine.runtime.api import RunReceipt, run_serialized_plan
 from terrine.runtime.backends.base import PublicationReceipt
 from terrine.runtime.backends.duckdb import DuckDBBackend, _digest_relation, _digest_version
@@ -190,7 +191,7 @@ class Dataset:
 
     @classmethod
     def open_generation(cls, dataset: str, generation: str, *, con: Any, namespace: str) -> Dataset:
-        """Open an owner-persisted publication without rescanning its output."""
+        """Open an owner-persisted publication, verifying imported partition contents."""
         if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", namespace):
             raise _GENERATION_INVALID.error()
         _require_runtime_reader(con)
@@ -210,7 +211,9 @@ class Dataset:
             or instance.manifest.generation.generation_id != generation
         ):
             raise _GENERATION_INVALID.error()
-        instance._load_publication()
+        if instance._load_publication():
+            instance._verify_partitions()
+            return instance
         for partition, checksum in zip(
             instance.manifest.generation.output_refs,
             instance.manifest.generation.checksums,
@@ -230,12 +233,24 @@ class Dataset:
             raise _GENERATION_INVALID.error()
         return stored[1]
 
-    def _load_publication(self) -> None:
+    def _load_publication(self) -> bool:
+        owner = _owner_for(self._con)
+        self._receipt, imported = self._admit_publication(self._raw, owner)
+        return imported
+
+    def _admit_publication(self, raw: Any, owner: RuntimeOwner) -> tuple[PublicationReceipt, bool]:
         generation, namespace = self._manifest.generation, self._namespace
-        if self._manifest.source_snapshots.get("owner") != _owner_for(self._con).reference:
-            raise _GENERATION_INVALID.error()
-        check_runtime_schema(self._raw, namespace)
-        record = self._raw.execute(
+        origin = self._manifest.source_snapshots.get("owner")
+        imported = origin != owner.reference
+        binding = None
+        if imported:
+            imports = _Imports.read(owner)
+            key = _key("manifest", namespace, generation.dataset_id, generation.generation_id)
+            binding = None if imports is None else imports.records.get(key)
+            if binding is None or binding.origin != origin:
+                raise _GENERATION_INVALID.error()
+        check_runtime_schema(raw, namespace)
+        record = raw.execute(
             "SELECT d.manifest_json,p.version,r.state "
             f'FROM "{namespace}".runtime_dataset_recipes d '
             f'JOIN "{namespace}".runtime_runs r ON r.request_key=d.request_key '
@@ -246,18 +261,27 @@ class Dataset:
         ).fetchone()
         if record is None or record[2] != "succeeded":
             raise _GENERATION_INVALID.error()
+        if binding is not None and _hash(record[0].encode()) != binding.digest:
+            raise _GENERATION_INVALID.error()
         try:
             published = DatasetManifest.from_json(record[0])
         except TerrineError as error:
             raise _GENERATION_INVALID.error() from error
-        if published != replace(self._manifest, definition_reference=None):
+        supplied = self._manifest
+        if supplied.definition_reference is not None:
+            supplied = replace(supplied, definition_reference=None)
+        if published != supplied:
             raise _GENERATION_INVALID.error()
-        self._receipt = PublicationReceipt(
+        receipt = PublicationReceipt(
             generation.dataset_id, generation.generation_id, record[1], generation.output_refs
         )
+        return receipt, imported
 
     def _verify_publication(self) -> None:
         self._load_publication()
+        self._verify_partitions()
+
+    def _verify_partitions(self) -> None:
         generation, namespace = self._manifest.generation, self._namespace
         backend = DuckDBBackend(self._raw, namespace=namespace)
         expected_schema = tuple(
@@ -492,8 +516,8 @@ class Dataset:
         from terrine.runtime.api import preflight_runtime_shape
 
         owner = _owner_for(model.con)
-        if owner.reference != self.manifest.source_snapshots["owner"]:
-            raise _GENERATION_INVALID.error()
+        if self.manifest.source_snapshots.get("owner") != owner.reference:
+            self._admit_publication(model.con.con, owner)
         if changes is not None and not isinstance(changes, ChangeSet):
             raise _INVALID_REQUEST.error(reason="wrong_type", field="changes")
         if budget is not None and not isinstance(budget, Budget):
