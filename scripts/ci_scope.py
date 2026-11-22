@@ -1,8 +1,9 @@
 """Decide whether a branch push run of CI defers to a pull-request run of the same commit.
 
-GitHub runs no pull-request workflow for a pull request with merge conflicts, so an
-open pull request alone never defers: only an existing pull-request run does. Runs
-with the system ``python3`` and the ``gh`` CLI; standard library only.
+The workflow invokes this command only for branch pushes. An exact push to the
+known default branch never looks for a pull-request run. Elsewhere, an open pull
+request alone never defers: only an existing pull-request run does. Runs with
+the system ``python3`` and the ``gh`` CLI; standard library only.
 """
 
 from __future__ import annotations
@@ -73,7 +74,12 @@ def main() -> int:
     parser.add_argument("--repo", required=True, help="owner/name of the repository")
     args = parser.parse_args()
 
-    line = f"defer={'true' if _defer(args.repo, args.sha) else 'false'}\n"
+    default_branch = os.environ.get("DEFAULT_BRANCH")
+    is_default_branch = bool(default_branch) and (
+        os.environ.get("GITHUB_REF") == f"refs/heads/{default_branch}"
+    )
+    defer = not is_default_branch and _defer(args.repo, args.sha)
+    line = f"defer={'true' if defer else 'false'}\n"
     output = os.environ.get("GITHUB_OUTPUT")
     if output:
         with open(output, "a", encoding="utf-8") as stream:

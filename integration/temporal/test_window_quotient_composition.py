@@ -434,44 +434,74 @@ def test_fractional_results_do_not_narrow_internal_exact_states(con):
 
 
 @pytest.mark.parametrize(
-    "numerator,denominator",
+    "numerator_type,denominator_type,cases",
     [
-        ([1.25, -3.5, 0.75], None),
-        ([1.0, -1.0] * 100, None),
-        ([1.25, -3.5], [3]),
-        ([1.25, -3.5], [3e-7, 2.5]),
-        ([-1.25, -3.5], [-0.7]),
-        ([1.0], [9e28]),
-        ([Decimal("0.10"), Decimal("0.20")], None),
-        ([Decimal("0.10"), Decimal("0.20")], [7]),
+        pytest.param(
+            "float64",
+            None,
+            [
+                ("signed", [1.25, -3.5, 0.75], None),
+                ("cancelled", [1.0, -1.0] * 100, None),
+            ],
+            id="float-average",
+        ),
+        pytest.param("float64", "int64", [("signed", [1.25, -3.5], [3])], id="float-int-ratio"),
+        pytest.param(
+            "float64",
+            "float64",
+            [
+                ("mixed_scale", [1.25, -3.5], [3e-7, 2.5]),
+                ("negative_denominator", [-1.25, -3.5], [-0.7]),
+                ("large_denominator", [1.0], [9e28]),
+            ],
+            id="float-float-ratio",
+        ),
+        pytest.param(
+            "decimal(38,2)",
+            None,
+            [("decimal", [Decimal("0.10"), Decimal("0.20")], None)],
+            id="decimal-average",
+        ),
+        pytest.param(
+            "decimal(38,2)",
+            "int64",
+            [("decimal", [Decimal("0.10"), Decimal("0.20")], [7])],
+            id="decimal-int-ratio",
+        ),
     ],
 )
-def test_mixed_scale_ratio_and_average_meet_bound(con, numerator, denominator):
-    dtype = "decimal(38,2)" if isinstance(numerator[0], Decimal) else "float64"
-    if denominator is None:
-        pair = _local(con, numerator, aggregation="avg_event", dtype=dtype, name="numerator")
-        result = _result(_anchors(con), [pair])
-        p, q = _exact_sum(numerator), Fraction(len(numerator))
-    else:
-        pairs = [
-            _local(con, numerator, dtype=dtype, name="numerator"),
-            _local(
-                con,
-                denominator,
-                dtype="int64" if isinstance(denominator[0], int) else "float64",
-                name="denominator",
-            ),
-        ]
-        result = _result(_anchors(con), pairs, kind="ratio")
-        p, q = _exact_sum(numerator), _exact_sum(denominator)
-    row = _rows(con, result)[0]
-    e_n = window_sum_bound(numerator) if isinstance(numerator[0], float) else 0.0
-    e_d = (
-        window_sum_bound(denominator) if denominator and isinstance(denominator[0], float) else 0.0
+def test_mixed_scale_ratio_and_average_meet_bound(con, numerator_type, denominator_type, cases):
+    # Each checked unit is independent; only identical SQL operand types share a query.
+    def source(groups, *, dtype, name, aggregation="sum"):
+        units, values = zip(
+            *((unit, value) for unit, terms in groups for value in terms), strict=True
+        )
+        return _local(con, values, units=units, dtype=dtype, name=name, aggregation=aggregation)
+
+    numerator = source(
+        [(unit, n) for unit, n, _ in cases],
+        dtype=numerator_type,
+        name="numerator",
+        aggregation="avg_event" if denominator_type is None else "sum",
     )
-    _assert_quotient(row["requested"], p, q, e_n, e_d)
-    meta = result.columns["requested"]
-    assert meta.numeric_policy is None
+    anchors = _anchors(con, units=[unit for unit, _, _ in cases])
+    if denominator_type is None:
+        result = _result(anchors, [numerator])
+    else:
+        denominator = source(
+            [(unit, d) for unit, _, d in cases], dtype=denominator_type, name="denominator"
+        )
+        result = _result(anchors, [numerator, denominator], kind="ratio")
+
+    rows = _rows(con, result)
+    assert len(rows) == len(cases)
+    actual = {row["unit"]: row["requested"] for row in rows}
+    for unit, n, d in cases:
+        p, q = _exact_sum(n), Fraction(len(n)) if d is None else _exact_sum(d)
+        e_n = window_sum_bound(n) if numerator_type == "float64" else 0.0
+        e_d = window_sum_bound(d) if denominator_type == "float64" else 0.0
+        _assert_quotient(actual[unit], p, q, e_n, e_d)
+    assert result.columns["requested"].numeric_policy is None
 
 
 def test_ratio_of_averages_divides_the_exact_averages(con):

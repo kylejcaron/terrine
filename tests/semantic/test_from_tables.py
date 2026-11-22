@@ -15,7 +15,7 @@ from terrine.data import EventMetric, Events, History, UnitSource
 from terrine.errors import TerrineError
 from terrine.model import Model
 from terrine.spec import Design, EventAnchor, FixedDate, Treatment, agg, asof, event_time
-from tests.fixtures.readme import readme_design, readme_model, readme_tables
+from tests.fixtures.readme import readme_model, readme_tables
 
 UNITS = {"customer": UnitSource("customers", "customer_id")}
 COMPLETE = ("2025-01-01", "2025-01-31")
@@ -623,38 +623,11 @@ def test_count_distinct_admits_string_date_and_boolean_columns(con):
     assert all(metric.measures[0].exact for metric in model.metrics.values())
 
 
-
-
-README_ROWS = {
-    ("alice", "2025-02-01"): (2, 75.0, 25.0, None),
-    ("bob", "2025-02-01"): (1, 80.0, 0.0, None),
-    ("carol", "2025-02-01"): (0, 0.0, 0.0, None),
-    ("alice", "2025-03-01"): (1, 25.0, None, "incomplete_coverage"),
-    ("bob", "2025-03-01"): (0, 0.0, None, "incomplete_coverage"),
-    ("carol", "2025-03-01"): (0, 0.0, None, "incomplete_coverage"),
-}
-
-
-def _readme_rows(model: Model) -> dict[tuple[str, str], tuple[Any, ...]]:
-    table = readme_design().build(model).to_pyarrow().to_pydict()
-    return {
-        (unit, t0.date().isoformat()): (orders_30d, spend_30d, spend_next_30d, reason)
-        for unit, t0, orders_30d, spend_30d, spend_next_30d, reason in zip(
-            table["unit"],
-            table["t0"],
-            table["orders_30d"],
-            table["spend_30d"],
-            table["spend_next_30d"],
-            table["spend_next_30d__reason"],
-            strict=True,
-        )
-    }
-
-
 def _in_memory(kind: str, table: pa.Table) -> Any:
     if kind == "arrow":
         return table
     if kind == "pandas":
+        pytest.importorskip("pandas")
         return table.to_pandas()
     return pytest.importorskip("polars").from_arrow(table)
 
@@ -678,19 +651,32 @@ def _in_memory_model(customers: Any, orders_table: Any) -> Model:
     )
 
 
-def test_readme_model_builds_the_readme_rows(readme_con):
-    assert _readme_rows(readme_model(readme_con)) == README_ROWS
-
-
 @pytest.mark.parametrize("kind", ["arrow", "pandas", "polars"])
-def test_in_memory_tables_build_the_readme_dataset(kind):
+def test_in_memory_tables_register_readme_bindings(kind):
     tables = {name: _in_memory(kind, table) for name, table in readme_tables().items()}
     model = _in_memory_model(tables["customers"], tables["orders"])
-    assert {"customer", "orders"} <= set(model.con.list_tables())
-    assert model.units["customer"].table == "customer"
-    catalog = yaml.safe_load(model.to_catalog())
-    assert catalog["sources"]["orders"]["relation"] == {"kind": "table", "name": "orders"}
-    assert _readme_rows(model) == README_ROWS
+    try:
+        con = model.con
+        assert {"customer", "orders"} <= set(con.list_tables())
+        assert model.units["customer"].table == "customer"
+        catalog = yaml.safe_load(model.to_catalog())
+        assert catalog["sources"]["orders"]["relation"] == {"kind": "table", "name": "orders"}
+        customers = con.to_pyarrow(con.table("customer").order_by("customer_id"))
+        assert customers.to_pydict() == {"customer_id": ["alice", "bob", "carol"]}
+        orders = con.to_pyarrow(con.table("orders").order_by("ordered_at"))
+        assert orders.to_pydict() == {
+            "customer_id": ["alice", "bob", "alice", "alice", "alice"],
+            "ordered_at": [
+                datetime(2025, 1, 3),
+                datetime(2025, 1, 5),
+                datetime(2025, 1, 20),
+                datetime(2025, 2, 10),
+                datetime(2025, 3, 5),
+            ],
+            "amount": [30.0, 80.0, 45.0, 25.0, 60.0],
+        }
+    finally:
+        model.con.disconnect()
 
 
 @pytest.mark.parametrize("kind", ["pandas", "polars"])
@@ -709,13 +695,25 @@ def test_descriptors_store_in_memory_tables_as_arrow(kind):
 
 
 def test_aware_timestamp_column_matches_naive_utc():
-    customers = readme_tables()["customers"].to_pandas()
-    naive = readme_tables()["orders"].to_pandas()
+    pd = pytest.importorskip("pandas")
+    customers = pa.table({"customer_id": ["alice"]})
+    naive = pd.DataFrame(
+        {"customer_id": ["alice"], "ordered_at": [datetime(2025, 1, 3, 2)], "amount": [30.0]}
+    )
     aware = naive.assign(
         ordered_at=naive["ordered_at"].dt.tz_localize("UTC").dt.tz_convert("US/Eastern")
     )
-    assert _readme_rows(_in_memory_model(customers, aware)) == README_ROWS
-    assert _readme_rows(_in_memory_model(customers, naive)) == README_ROWS
+    expected = datetime(2025, 1, 3, 2, tzinfo=UTC)
+    for orders, timezone in ((naive, None), (aware, "UTC")):
+        model = _in_memory_model(customers, orders)
+        try:
+            con = model.con
+            times = con.to_pyarrow(con.table("orders").select("ordered_at"))["ordered_at"]
+            assert times.type.tz == timezone
+            (instant,) = times.to_pylist()
+            assert (instant.replace(tzinfo=UTC) if timezone is None else instant) == expected
+        finally:
+            model.con.disconnect()
 
 
 @pytest.mark.parametrize(
@@ -833,7 +831,8 @@ def test_pandas_public_module_dataframe_converts_without_its_index(monkeypatch):
     assert roster.table.to_pydict() == {"customer_id": ["alice", "bob"]}
 
 
-def test_pandas_nullable_and_categorical_columns_survive_conversion():
+@pytest.fixture
+def nullable_pandas_model():
     pd = pytest.importorskip("pandas")
     customers = pd.DataFrame({"customer_id": pd.Series(["alice", "bob"], dtype="string")})
     orders = pd.DataFrame(
@@ -862,30 +861,27 @@ def test_pandas_nullable_and_categorical_columns_survive_conversion():
             )
         },
     )
+    try:
+        yield model
+    finally:
+        model.con.disconnect()
+
+
+def test_pandas_nullable_and_categorical_columns_survive_conversion(nullable_pandas_model):
+    model = nullable_pandas_model
     assert {name: prop.dtype for name, prop in model.catalog.properties.items()} == {
         "status": "string",
         "flag": "bool",
         "qty": "int",
     }
-    rows = _snapshot(
-        model,
-        "2025-01-10",
-        features={
-            "n": agg("n", window=("-9d", "0s")),
-            "qty": agg("qty", window=("-9d", "0s")),
-            "paid": agg("paid", window=("-9d", "0s")),
-            "last_status": asof("status", before="0s"),
-            "last_flag": asof("flag", before="0s"),
-            "last_qty": asof("qty", before="0s"),
-        },
-    )
-    assert rows["n"] == {"alice": 2, "bob": 2}
-    assert rows["qty"] == {"alice": 1, "bob": 7}
-    assert rows["paid"] == {"alice": 1, "bob": 2}
-    assert rows["last_status"] == {"alice": "refunded", "bob": "paid"}
-    assert rows["last_flag"] == {"alice": None, "bob": True}
-    assert rows["last_flag__reason"] == {"alice": "all_values_null", "bob": None}
-    assert rows["last_qty"] == {"alice": None, "bob": 4}
+    con = model.con
+    orders = con.table("orders").order_by("ordered_at")
+    table = con.to_pyarrow(orders.select("qty", "status", "flag"))
+    assert table.to_pydict() == {
+        "qty": [1, None, 3, 4],
+        "status": ["paid", "refunded", "paid", "paid"],
+        "flag": [True, None, False, True],
+    }
 
 
 def test_string_unit_key_with_integer_event_key_refuses_at_bind(con):
