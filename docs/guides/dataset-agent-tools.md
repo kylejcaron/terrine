@@ -161,10 +161,10 @@ definitions, coverage literals, snapshots, SQL, database paths and arbitrary Fra
 metadata. Lookups compare the complete reference to persisted owner metadata and
 authorize the operation before opening the pinned dataset.
 
-`Dataset.open_generation` reopens this trusted owner publication metadata without
-rehashing all output rows. Integrity verification at staging and explicit
-`Dataset.from_manifest` reopening remains unchanged. Bounded previews trust the
-owner's fenced immutable publication rather than performing an unbounded scan.
+For in-place publications, `Dataset.open_generation` verifies the owner's
+metadata without rehashing all output rows. For an imported generation, it
+also verifies the contents of every referenced partition before opening.
+`Dataset.from_manifest` checks partition contents in either case.
 
 `export_parquet` additionally requires `export=True` and an exact resolved path in
 `allowed_exports`. An allowed runtime table is not an export grant. Export uses
@@ -178,6 +178,8 @@ The limit must be positive and at most `max_preview_rows`; columns must be
 explicitly listed in `preview_columns`. Names in `redacted_columns` produce null
 cells. Reads use Arrow batches bounded by `min(limit, batch_cap)`, stop at the
 limit, and close the iterator. No other columns are returned.
+The preview limit bounds returned rows and preview batches, not the partition
+verification required to open an imported generation.
 Row previews also enforce the owner `budget`: strict unverifiable scan bounds
 refuse before opening the reader, and row/output-byte bounds refuse rather than
 truncate to fit. Bytes are charged on selected, limit-sliced Arrow buffers before

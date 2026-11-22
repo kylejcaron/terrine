@@ -1010,24 +1010,21 @@ def _capture_native_inputs(
     )
 
 
-def _reopen_native_inputs(
+def _bind_native_inputs(
     catalog: Catalog,
     *,
     units: Mapping[str, Any] | None,
-    path: Path,
+    raw: Any,
     roots: tuple[dict[str, Any], ...],
 ) -> PublishedInputs:
-    import duckdb
-
-    raw = duckdb.connect(str(path), read_only=True)
-    managed = ibis.duckdb.from_connection(raw)
-    issuer = _Issuer(managed, raw)
-    issuer.catalog_hash = _catalog_hash(catalog)
-    issuer.units_hash = _units_hash(units)
-    issuer.namespace = _native._current_namespace(raw)
-    issuer.function_fingerprint = _native.function_fingerprint(raw)
-    objects = _native.native_objects(raw)
     try:
+        managed = ibis.duckdb.from_connection(raw)
+        issuer = _Issuer(managed, raw)
+        issuer.catalog_hash = _catalog_hash(catalog)
+        issuer.units_hash = _units_hash(units)
+        issuer.namespace = _native._current_namespace(raw)
+        issuer.function_fingerprint = _native.function_fingerprint(raw)
+        objects = _native.native_objects(raw)
         for entry in roots:
             identity = PhysicalRelationId(**entry["identity"])
             storage = entry["storage_name"]
@@ -1056,6 +1053,6 @@ def _reopen_native_inputs(
         issuer.cleanup = raw.close
         _register_published_backend(managed, issuer)
         return PublishedInputs(managed, issuer.handles, issuer)
-    except Exception:
+    except BaseException:
         raw.close()
         raise

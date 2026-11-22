@@ -22,7 +22,9 @@ The example publishes per-user one-day event totals and an effective-dated tier 
 
 In the example Catalog, the `tier` property references the `history` dimension, whose `starts` and `ends` columns define validity intervals in `user_tier`. The Design requests `"tier": asof("tier", before="0s")`, so the attribute is taken strictly before the anchor from the effective-dated event history. Updating those dimension rows requires a new retained snapshot just as inserting an event does. The example reopens the first receipt after publishing the correction and checks that its original rows are unchanged.
 
-For lower-level planning, `dependency_graph(model, design, partitions=...)` and `plan_refresh(...)` are metadata-only. A manually supplied `snapshot_id` is only an identity label; it does not freeze source rows. Persist and execute a saved plan tied to `SnapshotAuthority.capture` when source inputs must be retained and reopened across partitions, retries, or process restarts. Saved plans contain no live connection, relation handle, or credentials.
+For lower-level planning, `dependency_graph(model, design, partitions=...)` describes logical dependencies for invalidation. `plan_refresh(...)` is metadata-only. Pass `execution_mode="design"` for the built-in executor: it schedules an anchor job and a Frame job per partition, not separate jobs for rosters, selectors or state dependencies. The default `execution_mode="custom"` retains one callback per selected logical node. Set `OwnerPlanner(execution_mode="custom", ...)` when its plans will run through a custom executor that needs that schedule. An explicitly supplied executor gets the tasks in the saved plan unchanged.
+
+A manually supplied `snapshot_id` is an identity label, not frozen input. Use `SnapshotAuthority.capture` to retain the inputs of a saved plan across retries or process restarts. Saved plans contain no live connection, relation handle or credentials.
 
 `SavedPlan` lives in `terrine.runtime.saved_plan` and is also exported from
 `terrine.runtime`. Its serialized reconstruction binds `dataset_definition_json`
@@ -32,14 +34,15 @@ construction. The canonical runtime `PlanDefinition` is available as
 Owner preparation accepts `PlanRequest.dataset_definition` and persists the
 complete saved plan as `PlanInvocation.saved_plan_json`.
 
-New saved plans use envelope version **2** and runtime plan-definition version
-**3**, with execution revision **2** in the execution fingerprint. Declaration
-identity is unchanged: a plan's `definition_hash` still equals its saved
-Design's hash. Historical version-1 saved plans, version-2 runtime plans and
-revision-1 plans verify their original checksums and remain available for
-inspection, snapshot pin release, and authorized status, event and cancellation
-operations. They cannot execute or return an execution replay: rebuild a plan
-from the dataset definition after `terrine.runtime.saved_plan_mismatch`.
+Saved plans use envelope version **2** and execution revision **2**. The built-in
+schedule is fingerprinted in runtime plan version **4**; logical callback plans
+keep version **3** and their original fingerprints. A nonempty version-3 plan
+requires its custom executor, or you can replan it for built-in execution after
+`terrine.runtime.saved_plan_mismatch` (`reason="physical_jobs_required"`).
+Exact terminal replay and zero-job reuse keep their original generation fences.
+Version-1 saved plans, version-2 runtime plans and obsolete execution revisions
+remain checksum-verifiable for inspection, snapshot pin release, and authorized
+status, event and cancellation operations. Replan them before execution or replay.
 
 Missing, unknown or superseded current envelope fields also refuse, even with
 a valid checksum. Superseded owner request fields refuse with
@@ -55,6 +58,13 @@ The owner namespace records the version of its runtime metadata tables. A namesp
 `SnapshotAuthority.capture` is scoped to the resolved `Design`: it captures only required fact/property sources, their required dimensions and integrity inputs, and that design unit's roster. It keeps the full Catalog/model identity bound in the receipt without copying unrelated source rows. For example, a label source unused by the plan is not captured.
 
 DuckDB capture uses backend-native `COPY` into retained storage rather than transferring source rows through the Ibis client. Output row/byte limits do not limit this input capture, and unknown source scan work cannot satisfy a strict scan budget. Capture acceptance increases input cardinality while prohibiting client row-fetch APIs and bounding steady-state Python allocations independently of the retained row count; backend-native memory and one-time initialization are not presented as measured client buffers.
+
+For built-in execution, each attempt copies and verifies the retained input once
+when it can detach a private read-only DuckDB image. Its jobs use separate
+readers and temporary relations against that image. If detaching isn't supported,
+each job verifies the retained file on open, as custom callbacks do. A new
+attempt verifies again, including on process restart. A zero-job reuse opens
+no input image. Neither artifact sizes nor task counts are physical scan bounds.
 
 ## Runtime shape support
 
@@ -116,14 +126,20 @@ legacy provenance leaves that optional field absent when reserialized.
 generation's complete partition-schema evidence without reading source rows.
 All markers absent means historical/unknown revision 0. Missing schema rows,
 mixed absence, malformed markers or unequal revisions cannot authorize reuse.
-Only a verified current-revision base permits a reduced or no-change plan;
-unknown or older bases retain the full graph even for an empty or partial
-ChangeSet. Explicit historical reads keep the selected generation's original
-values and provenance; refreshing it does not relabel or mutate that generation.
-Reuse is rechecked under the dataset lease before callbacks and transactionally
-before recording its receipt. A custom no-op returning an arbitrary generation
-is not verified reuse. Request-key replay and post-commit recovery check the
-exact committed generation, including when a newer generation is current.
+An empty operator `ChangeSet` says the inputs did not change relative to the
+specified base. With `Dataset.refresh` or an explicitly base-bound
+`PlanRequest`, the owner checks the current generation, destination and
+scope, the full saved definition (including its view and transforms), the
+Model declarations, and the retained snapshot receipt. Only a matching
+current-revision base can be reused without capturing or reading source rows.
+Missing change evidence, a readiness watermark alone, or a legacy revision
+label does not establish that the inputs are unchanged.
+
+Reuse is rechecked under the dataset lease and again before recording its
+receipt. If the base moved, prepare a new refresh from the current generation.
+An already completed request still resolves its exact committed generation,
+even after a later publication. Historical reads keep the original values and
+provenance; refreshing does not relabel or mutate the old generation.
 The marker uses the existing partition schema storage: runtime namespaces
 remain at schema version **1**, and DatasetManifest envelopes remain version
 **1**, with no schema migration or new runtime columns.
@@ -164,11 +180,12 @@ dispatch and survive failed runs/restarts. Exhaustion refuses before another
 read with `terrine.budget.scan_attempts_exhausted`; a new run requires a new
 budget allowance.
 
-Native DuckDB query scan bounds/caps remain unavailable. Its estimates stay
-`None`, including snapshot capture; strict scan budgets still refuse before
-source execution. Apply the same budget to capture as to execution: a later
-plan cannot authorize already-unbudgeted source capture. Retaining input rows
-or limiting output does not turn their size into a scan bound.
+Native DuckDB query scan bounds/caps remain unavailable. Strict source-scan
+budgets refuse before capture when refresh needs to read inputs. A verified
+no-work refresh has no source-scan phases and can reuse its generation under
+a strict scan cap; checking the published output's integrity is separate.
+Retaining input rows or limiting output does not turn their size into a scan
+bound.
 
 Runtime plan schema **3** fingerprints execution revision, verified reuse-base
 identity/evidence, cost evidence, forecast fields, attempt limits, budget,
@@ -263,6 +280,50 @@ established; interpreting JSON alone never proves run ownership.
 
 Run-state transitions distinguish recoverable failure from terminal results. A `failed` run may retry only after acquiring a newer lease fencing token; an expired writer cannot resume or publish. `succeeded` and `cancelled` runs are terminal and never regress.
 
+## Back up and restore one owner
+
+On Linux or macOS, stop the owner, checkpoint its DuckDB database, and close
+the connection before backing it up. Leave unrelated owners running, even
+when they share the snapshot root. The bundle includes the **whole DuckDB
+database, including user tables**, plus the selected owner's retained inputs
+and task artifacts across its runtime namespaces. Protect the bundle like
+the original database. A Parquet export is not a runtime backup.
+
+```console
+terrine backup /srv/analytics/study.duckdb /srv/analytics/.terrine/snapshots /backups/study
+terrine restore /backups/study EXPECTED_SHA256 /srv/recovered-study
+```
+
+Use the `digest` from the first command's JSON as `EXPECTED_SHA256`. Keep it
+in a trusted location separate from the bundle. The same output lists each
+included file, its size, and checksum. Restore requires a new directory with
+an existing parent; it does not replace an owner or recover an uncheckpointed
+database. Use absolute paths without symlinks.
+
+Open `/srv/recovered-study/owner.duckdb` and use its
+`/srv/recovered-study/.terrine/snapshots` root and original namespace. Keep
+the `owner.duckdb.terrine-import.json` file beside the database. Historical
+manifests, receipt IDs and saved plans are unchanged. To start an imported
+pending request or replay an existing run, use its original saved plan and
+request key. Fresh plans target the restored owner. Only verified records in
+the import map can resolve historical references, and their artifacts are read
+from the new root. An ordinary directory copy does not establish that binding.
+An imported manifest that refers to a separately stored definition still
+needs that definition store. The resolved manifest must match the original
+inline manifest recorded in the owner database.
+
+Restore checks bundle files, retained receipt and plan identities, and
+published output content before installing the owner. Missing or foreign
+objects refuse rather than expanding the copy to the whole snapshot root.
+New task files bind their bytes to an exact owner, namespace, run, and task.
+Legacy task files have no such proof. Backup preserves terminal run history
+without copying legacy task files, because exact terminal replay uses the
+published generation or cancellation record, not task outputs. If an
+unfinished run still needs a legacy file, backup refuses with
+`terrine.runtime.backup_invalid` (`reason="legacy_retry_artifact_unbound"`).
+Finish the run in place with its compatible reader and back up again. If
+you only need the published data, export it to Parquet instead.
+
 ### Optional telemetry
 
 Telemetry is off unless the owner application creates an adapter and supplies
@@ -313,15 +374,25 @@ When an operator declares a correction, capture or identify the corrected source
 
 Effective-dated attribute corrections and roster exits or re-entries are source changes too: they can change output rows without changing fact-table totals. Nested `event_time(..., relative_to=...)` selectors can depend on corrections outside an aggregate's window around `t0`; refresh their dependent outputs rather than limiting change evidence to that aggregate window. The runtime correction matrix compares complete published rows and column metadata with ordinary Frame materialization, including these cases and a two-period `StatePanel`.
 
-That comparison also covers stable `EventAnchor(..., "each")` identities after removal, input schema widening, incomplete-to-complete readiness, panel baseline attributes, and corrected absorbing terminal histories. Every corrected saved request is replayed without re-executing its tasks. Published provenance names the exact retained input generations. A fresh process can reconstruct and execute a previously saved Model/Design plan even after live facts change. If any retained input artifact changes after partial task completion, execution refuses the artifact and publishes no generation; live fact, dimension, and roster mutations do not change a valid retained artifact.
+That comparison also covers stable `EventAnchor(..., "each")` identities after removal, input schema widening, incomplete-to-complete readiness, panel baseline attributes, and corrected absorbing terminal histories. Every corrected saved request is replayed without re-executing its tasks. Published provenance names the exact retained input generations. A fresh process can reconstruct and execute a previously saved Model/Design plan even after live facts change. Changes to live facts, dimensions, or rosters do not alter a valid retained artifact.
 
-An authoritative empty revision change set against a verified current base produces
-a no-change refresh. `Dataset.refresh` checks the original runtime owner and
-rechecks that exact base and revision under a lease, returning the identical
-manifest without source capture or recomputation-only scan-budget preflight.
-The built-in executor records no-change runs against their expected current
-publication without creating an empty generation: exact result selection, column
-metadata, and the publication's original retained input binding remain unchanged.
+If the retained artifact changes after the built-in executor has detached a
+verified input image, the current attempt can still publish from that image.
+A later attempt that opens the changed artifact refuses it. Custom executors
+and built-in runs that fall back to per-open verification check the artifact
+on each open and refuse if it has changed.
+
+To skip a rebuild, pass `ChangeSet((), "operator")` to `Dataset.refresh` on a
+pinned dataset, or use it in a `PlanRequest` with `bind_base_manifest=True` and
+`expected_base_manifest` set to the current generation. The owner reuses the
+generation only if the committed definition and retained input receipt match
+and the execution revision is current. `ChangeSet((), "revision")` alone
+requires a rebuild; with a strict source-scan cap, it instead refuses with
+`terrine.budget.scan_unknown` before capture.
+
+On reuse, `Dataset.refresh` returns the identical manifest. The built-in
+executor records a run against the existing generation, preserving its result
+partitions, column metadata, and original retained input binding.
 
 ## Consistency guarantees and limits
 

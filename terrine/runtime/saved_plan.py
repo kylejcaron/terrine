@@ -352,7 +352,7 @@ def _stored_plan_identities(
             if not isinstance(document, dict):
                 continue
             saved_version = None
-            if invocation and document.get("schema_version") == 3:
+            if invocation and document.get("schema_version") in {3, 4}:
                 bound = RefreshPlan.deserialize(payload)
                 if bound.definition.namespace != namespace:
                     continue

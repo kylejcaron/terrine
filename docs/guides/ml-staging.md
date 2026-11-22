@@ -2,6 +2,44 @@
 
 Terrine builds immutable datasets from a `Design` and a bound `Model`; it does not fit estimators. Training and scoring are lazy dataset views over the same feature specifications, and Parquet exports are pinned to one published dataset generation. Dataset staging is currently DuckDB-only. `Dataset` and `Frame.stage` are provisional and may change in a minor release.
 
+## Narrow an input before staging
+
+A short feature window does not narrow the retained snapshot. For example, a
+one-day order count can retain an unrelated note column and orders outside
+that day. To omit the notes, bind an explicit projection before staging:
+
+```python
+from terrine import Model, preview
+
+catalog = model.catalog.model_dump(mode="python")
+catalog["sources"]["orders"]["relation"] = {
+    "kind": "sql",
+    "sql": "SELECT ts, user_id FROM orders",
+}
+projected = Model.from_catalog(
+    catalog,
+    con=model.con,
+    units=model.units,
+    readiness=model.readiness,
+    event_ids=model.event_ids,
+)
+footprint = preview(design, projected).staging_footprint
+```
+
+This example assumes `ts` and `user_id` are the only columns needed for the
+`orders` declaration. Keep all referenced keys, filters, values and check
+columns. If the Design uses another name for the same wide table, bind that
+name to the projection too. Keep the full eligible roster, including units
+with no orders.
+
+Inspect the projected root for `all_result_rows` and the two retained columns.
+Before staging, compare the count and its `__complete` column for each unit in
+clean materializations of both Models. Projecting columns does not require
+trimming history: rank-based anchors and predecessor lookups can depend on
+earlier rows, and uniqueness and dimension checks can reach outside the
+output dates. Do not declare coverage you no longer have. Preview never
+changes a source, filters it for you, or authorizes staging.
+
 ## Training data
 
 Select outcome labels and, optionally, a subset of declared features. The default
@@ -193,7 +231,7 @@ Current `arrow-v2` publication checksums normalize timestamp instants to UTC and
 
 ## Definition-backed refresh
 
-`plan_refresh` reconstructs the saved view and produces a metadata-only runtime plan. `refresh` captures current inputs once, reopens that retained snapshot for every runtime task, and publishes a new pinned generation through the built-in executor. It never changes the old reference or a reader already consuming it.
+`plan_refresh` reconstructs the saved view and lists the built-in jobs without reading sources. `refresh` captures current inputs once, then runs the jobs against one verified input image when supported. Proven no-change refreshes do not copy or scan inputs. A refresh never changes the old reference or a reader already consuming it.
 
 ```python
 from terrine.runtime.changes import Change, ChangeSet

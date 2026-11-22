@@ -4,14 +4,14 @@ import hashlib
 import json
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from terrine.compile.provenance import EXECUTION_REVISION
 from terrine.data import Budget
 from terrine.errors import RefusalSpec, TerrineError
 from terrine.runtime.changes import ChangeSet
 from terrine.runtime.cost import ScanEvidence, estimate_task_cost, evaluate_costs
-from terrine.runtime.graph import DependencyGraph
+from terrine.runtime.graph import DependencyGraph, _design_jobs
 from terrine.runtime.state import LayerNode
 
 if TYPE_CHECKING:
@@ -30,6 +30,8 @@ _UNVERIFIABLE = RefusalSpec(
     "terrine.runtime.saved_plan_mismatch",
     "Saved plan reconstruction failed verification ({reason}).",
 )
+
+type ExecutionMode = Literal["custom", "design"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,6 +67,7 @@ class PlanDefinition:
     execution_revision: int = 0
     reuse_base_generation: str | None = None
     reuse_base_revision: int | None = None
+    execution_mode: ExecutionMode = "custom"
     _legacy_fields: frozenset[str] | None = field(default=None, repr=False, compare=False)
 
     def to_json(self) -> str:
@@ -91,6 +94,8 @@ class PlanDefinition:
                 reuse_base_generation=self.reuse_base_generation,
                 reuse_base_revision=self.reuse_base_revision,
             )
+        if self.schema_version == 4:
+            payload["execution_mode"] = self.execution_mode
         if self._legacy_fields is not None:
             payload = {key: value for key, value in payload.items() if key in self._legacy_fields}
         return json.dumps(payload, sort_keys=True, separators=(",", ":"))
@@ -189,7 +194,7 @@ class RefreshPlan:
             fingerprint = data["fingerprint"]
             if (
                 type(schema_version) is not int
-                or schema_version not in {2, 3}
+                or schema_version not in {2, 3, 4}
                 or not isinstance(raw_tasks, list)
             ):
                 raise _UNVERIFIABLE.error(reason="unsupported_plan_version")
@@ -229,7 +234,8 @@ class RefreshPlan:
             execution_revision = data.get("execution_revision", 0)
             reuse_base_generation = data.get("reuse_base_generation")
             reuse_base_revision = data.get("reuse_base_revision")
-            if schema_version == 3:
+            execution_mode: ExecutionMode = "custom"
+            if schema_version >= 3:
                 if (
                     type(execution_revision) is not int
                     or execution_revision <= 0
@@ -250,13 +256,19 @@ class RefreshPlan:
                     reuse_base_generation=reuse_base_generation,
                     reuse_base_revision=reuse_base_revision,
                 )
+            if schema_version == 4:
+                if data.get("execution_mode") != "design":
+                    raise _UNVERIFIABLE.error(reason="unsupported_execution_mode")
+                execution_mode = "design"
+                payload["execution_mode"] = execution_mode
+                _check_design_jobs(tasks)
             if reconstruction_hash is not None:
                 if not isinstance(reconstruction_hash, str) or len(reconstruction_hash) != 64:
                     raise _UNVERIFIABLE.error(reason="invalid_reconstruction_binding")
                 payload["reconstruction_hash"] = reconstruction_hash
             known_fields = set(payload) | {"fingerprint", "reconstruction_hash"}
             if set(data) - known_fields or (
-                schema_version == 3 and set(data) != set(payload) | {"fingerprint"}
+                schema_version >= 3 and set(data) != set(payload) | {"fingerprint"}
             ):
                 raise _UNVERIFIABLE.error(reason="noncanonical_plan_fields")
             if schema_version == 2:
@@ -293,6 +305,7 @@ class RefreshPlan:
             execution_revision,
             reuse_base_generation,
             reuse_base_revision,
+            execution_mode,
             _legacy_fields=frozenset(data) if schema_version == 2 else None,
         )
         return cls(
@@ -357,12 +370,15 @@ def plan_refresh(
     cost_provider: CostProvider | None = None,
     reuse_base_generation: str | None = None,
     reuse_base_revision: int | None = None,
+    execution_mode: ExecutionMode = "custom",
 ) -> RefreshPlan:
-    """Create a deterministic metadata-only plan with explicit unknown costs."""
+    """Plan either logical callbacks (custom) or physical compiler jobs (design)."""
     if not all((namespace, dataset, definition_hash, snapshot_id)):
         raise ValueError("namespace, dataset, definition_hash, and snapshot_id are required")
     if isinstance(max_tasks, bool) or max_tasks < 1:
         raise ValueError("max_tasks must be positive")
+    if execution_mode not in ("custom", "design"):
+        raise _UNVERIFIABLE.error(reason="unsupported_execution_mode")
     ordered = graph.topological_order()
     has_state_panel = any(node.layer in {"state_point", "state_period"} for node in ordered)
     verified_base = (
@@ -411,7 +427,12 @@ def plan_refresh(
                         selected.add(parent)
                         pending.append(parent)
             ordered = tuple(node for node in ordered if node in selected)
-    if len(ordered) > max_tasks:
+    parents = (
+        _design_jobs(graph, ordered)
+        if execution_mode == "design"
+        else {node: graph.dependencies(node) for node in ordered}
+    )
+    if len(parents) > max_tasks:
         raise ValueError("planned task count exceeds max_tasks")
     if budget is not None and not isinstance(budget, Budget):
         raise TypeError("budget must be Budget or None")
@@ -428,22 +449,31 @@ def plan_refresh(
     )
     tasks: list[TaskSpec] = []
     ids: dict[LayerNode, str] = {}
-    for node in ordered:
+    for node, dependencies in parents.items():
         key = json.dumps(
             [node.layer, node.source, node.partition, node.definition_hash, node.generation],
             separators=(",", ":"),
         )
         task_id = hashlib.sha256(key.encode()).hexdigest()[:24]
         ids[node] = task_id
-        dependencies = tuple(ids[parent] for parent in graph.dependencies(node))
+        if any(parent not in ids or parent == node for parent in dependencies):
+            raise _UNVERIFIABLE.error(reason="invalid_job_dependencies")
         tasks.append(
             estimate_task_cost(
-                TaskSpec(task_id, node.layer, node.source, node.partition, dependencies),
+                TaskSpec(
+                    task_id,
+                    node.layer,
+                    node.source,
+                    node.partition,
+                    tuple(ids[parent] for parent in dependencies),
+                ),
                 provider=cost_provider,
                 definition_hash=definition_hash,
                 snapshot_id=snapshot_id,
             )
         )
+    if execution_mode == "design":
+        _check_design_jobs(tasks)
     bodies = tuple(task.to_dict() for task in tasks)
     scan_bytes, warnings = evaluate_costs(
         tasks, budget, definition_hash=definition_hash, snapshot_id=snapshot_id
@@ -458,8 +488,9 @@ def plan_refresh(
         if budget is not None
         else None
     )
+    schema_version = 4 if execution_mode == "design" else 3
     fingerprint_payload = {
-        "schema_version": 3,
+        "schema_version": schema_version,
         "namespace": namespace,
         "dataset": dataset,
         "definition_hash": definition_hash,
@@ -473,11 +504,13 @@ def plan_refresh(
         "reuse_base_generation": reuse_base_generation if verified_base else None,
         "reuse_base_revision": reuse_base_revision if verified_base else None,
     }
+    if schema_version == 4:
+        fingerprint_payload["execution_mode"] = execution_mode
     fingerprint = hashlib.sha256(
         json.dumps(fingerprint_payload, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
     definition = PlanDefinition(
-        3,
+        schema_version,
         namespace,
         dataset,
         definition_hash,
@@ -491,6 +524,7 @@ def plan_refresh(
         execution_revision=EXECUTION_REVISION,
         reuse_base_generation=reuse_base_generation if verified_base else None,
         reuse_base_revision=reuse_base_revision if verified_base else None,
+        execution_mode=execution_mode,
     )
     return RefreshPlan(
         namespace,
@@ -515,7 +549,7 @@ def admit_execution(
         raise _UNVERIFIABLE.error(reason="noncanonical_plan")
     if (
         plan.namespace != namespace
-        or plan.definition.schema_version != 3
+        or plan.definition.schema_version not in {3, 4}
         or plan.definition.execution_revision != EXECUTION_REVISION
         or (saved_plan_version is not None and saved_plan_version != 2)
     ):
@@ -534,6 +568,33 @@ def admit_execution(
         )
     ):
         raise _UNVERIFIABLE.error(reason="invalid_reuse_binding")
+
+
+def _check_design_jobs(tasks: tuple[TaskSpec, ...] | list[TaskSpec]) -> None:
+    """Only frame jobs are results; each anchor belongs to its partition's frame."""
+    ids: set[str] = set()
+    anchors: dict[str, str] = {}
+    frames: set[str] = set()
+    for task in tasks:
+        if task.task_id in ids:
+            raise _UNVERIFIABLE.error(reason="duplicate_design_job")
+        ids.add(task.task_id)
+        if (
+            task.layer == "anchor"
+            and task.partition not in anchors
+            and task.partition not in frames
+        ):
+            if not task.dependencies:
+                anchors[task.partition] = task.task_id
+                continue
+        if task.layer == "frame" and task.partition not in frames:
+            dependency = (anchors[task.partition],) if task.partition in anchors else ()
+            if task.dependencies == dependency:
+                frames.add(task.partition)
+                continue
+        raise _UNVERIFIABLE.error(reason="invalid_design_job")
+    if anchors.keys() - frames:
+        raise _UNVERIFIABLE.error(reason="missing_frame_job")
 
 
 def _change_dict(change: Any) -> dict[str, Any]:
