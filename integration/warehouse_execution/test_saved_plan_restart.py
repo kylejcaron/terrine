@@ -20,7 +20,7 @@ from terrine.data import Budget, Coverage
 from terrine.errors import TerrineError
 from terrine.model import Model
 from terrine.runtime.graph import dependency_graph
-from terrine.runtime.planner import plan_refresh
+from terrine.runtime.planner import _plan_refresh
 from terrine.runtime.saved_plan import DestinationRef, ModelReference, SavedPlan
 from terrine.runtime.state import RuntimeStore
 from terrine.semantic.models import Catalog
@@ -97,7 +97,7 @@ def test_saved_plan_materializes_retained_model_and_design_in_fresh_process(tmp_
     snapshot = SnapshotAuthority(owner).capture(
         model, design=design, con=con, namespace="runtime", run_id="planned", budget=Budget()
     )
-    plan = plan_refresh(
+    plan = _plan_refresh(
         namespace="runtime",
         dataset="study",
         definition_hash=design.spec_hash,
@@ -374,7 +374,6 @@ def test_saved_panel_publication_preserves_ordinary_provenance(column_model, tmp
     from terrine.runtime import open_published_frame, run_serialized_plan
     from terrine.runtime.graph import dependency_graph
     from terrine.runtime.owner import RuntimeOwner
-    from terrine.runtime.planner import plan_refresh
     from terrine.runtime.saved_plan import DestinationRef, ModelReference, SavedPlan
     from terrine.runtime.snapshot import SnapshotAuthority
     from terrine.spec import EventAnchor, EventPanel, Initiation, Schedule, Sequential
@@ -419,7 +418,7 @@ def test_saved_panel_publication_preserves_ordinary_provenance(column_model, tmp
         snapshot = authority.capture(
             model, design=design, con=con, namespace="owner", run_id=shape, budget=budget
         )
-        plan = plan_refresh(
+        plan = _plan_refresh(
             namespace="owner",
             dataset="panels",
             definition_hash=design.spec_hash,

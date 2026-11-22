@@ -211,7 +211,7 @@ def run_serialized_plan(
             raise _SAVED_PLAN_MISMATCH.error(
                 reason="physical_jobs_required",
                 route=(
-                    "Replan with execution_mode='design' to use the built-in executor, "
+                    "Replan with OwnerPlanner for built-in execution, "
                     "or supply the custom executor for the recorded task schedule."
                 ),
             )
