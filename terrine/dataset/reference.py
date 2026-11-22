@@ -36,7 +36,7 @@ from terrine.runtime.changes import ChangeSet
 from terrine.runtime.graph import dependency_graph
 from terrine.runtime.leases import LeaseStore
 from terrine.runtime.owner import RuntimeOwner
-from terrine.runtime.planner import RefreshPlan, admit_execution, plan_refresh
+from terrine.runtime.planner import RefreshPlan, _plan_refresh, admit_execution
 from terrine.runtime.planning import _plan_no_work
 from terrine.runtime.saved_plan import (
     DestinationRef,
@@ -585,7 +585,7 @@ def _plan_frame(
             ).generation_execution_revision(table, base_generation)
         except TerrineError:
             pass
-    return plan_refresh(
+    return _plan_refresh(
         namespace=namespace,
         dataset=table,
         definition_hash=design.spec_hash,

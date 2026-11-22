@@ -247,7 +247,7 @@ def test_saved_runtime_correction_matches_clean_rebuild_of_new_generation(
     from terrine.runtime.changes import Change, ChangeSet
     from terrine.runtime.graph import dependency_graph
     from terrine.runtime.owner import RuntimeOwner
-    from terrine.runtime.planner import plan_refresh
+    from terrine.runtime.planner import _plan_refresh
     from terrine.runtime.saved_plan import DestinationRef, ModelReference, SavedPlan
     from terrine.runtime.snapshot import SnapshotAuthority
     from terrine.runtime.state import RuntimeStore
@@ -316,7 +316,7 @@ def test_saved_runtime_correction_matches_clean_rebuild_of_new_generation(
             )
             snapshots[name] = snapshot
             graph = dependency_graph(model, design, sources=("events",), partitions=("all",))
-            plan = plan_refresh(
+            plan = _plan_refresh(
                 namespace=namespace,
                 dataset=destination.dataset,
                 definition_hash=design.spec_hash,

@@ -370,15 +370,43 @@ def plan_refresh(
     cost_provider: CostProvider | None = None,
     reuse_base_generation: str | None = None,
     reuse_base_revision: int | None = None,
-    execution_mode: ExecutionMode = "custom",
 ) -> RefreshPlan:
-    """Plan either logical callbacks (custom) or physical compiler jobs (design)."""
+    """Plan logical tasks for custom callbacks; use OwnerPlanner for built-in execution."""
+    return _plan_refresh(
+        namespace=namespace,
+        dataset=dataset,
+        definition_hash=definition_hash,
+        snapshot_id=snapshot_id,
+        graph=graph,
+        changes=changes,
+        budget=budget,
+        max_tasks=max_tasks,
+        cost_provider=cost_provider,
+        reuse_base_generation=reuse_base_generation,
+        reuse_base_revision=reuse_base_revision,
+        execution_mode="custom",
+    )
+
+
+def _plan_refresh(
+    *,
+    namespace: str,
+    dataset: str,
+    definition_hash: str,
+    snapshot_id: str,
+    graph: DependencyGraph,
+    execution_mode: ExecutionMode,
+    changes: ChangeSet | None = None,
+    budget: Budget | None = None,
+    max_tasks: int = 4096,
+    cost_provider: CostProvider | None = None,
+    reuse_base_generation: str | None = None,
+    reuse_base_revision: int | None = None,
+) -> RefreshPlan:
     if not all((namespace, dataset, definition_hash, snapshot_id)):
         raise ValueError("namespace, dataset, definition_hash, and snapshot_id are required")
     if isinstance(max_tasks, bool) or max_tasks < 1:
         raise ValueError("max_tasks must be positive")
-    if execution_mode not in ("custom", "design"):
-        raise _UNVERIFIABLE.error(reason="unsupported_execution_mode")
     ordered = graph.topological_order()
     has_state_panel = any(node.layer in {"state_point", "state_period"} for node in ordered)
     verified_base = (

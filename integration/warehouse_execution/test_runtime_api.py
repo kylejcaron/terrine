@@ -17,7 +17,7 @@ from terrine.execution.backend import backend_provider
 from terrine.model import Model
 from terrine.runtime.graph import dependency_graph
 from terrine.runtime.owner import RuntimeOwner
-from terrine.runtime.planner import RefreshPlan, plan_refresh
+from terrine.runtime.planner import RefreshPlan, _plan_refresh, plan_refresh
 from terrine.runtime.planning import OwnerPlanner, PlanInvocation, PlanRequest
 from terrine.runtime.saved_plan import DestinationRef, ModelReference, SavedPlan
 from terrine.runtime.snapshot import SnapshotAuthority
@@ -275,7 +275,7 @@ def test_saved_plan_execution_reopens_retained_snapshot_for_each_task(tmp_path):
         assert error.code == mode_error.value.code
         assert error.context == mode_error.value.context
 
-    physical_plan = plan_refresh(
+    physical_plan = _plan_refresh(
         namespace=plan.namespace,
         dataset=plan.dataset,
         definition_hash=plan.definition_hash,
@@ -374,7 +374,6 @@ def test_reopen_retained_snapshot_with_v2_catalog_json(tmp_path):
 
     from terrine.runtime.snapshot import ReopenableSnapshot
     from terrine.spec import from_json
-    from terrine.spec.validate import validate_design
 
     corpus = Path(__file__).parents[2] / "tests" / "artifacts" / "1"
     recorded = ReopenableSnapshot.from_json((corpus / "receipt.json").read_text(encoding="utf-8"))
@@ -405,41 +404,34 @@ def test_reopen_retained_snapshot_with_v2_catalog_json(tmp_path):
             recorded.catalog_json,
             recorded.model_hash,
         )
-        plan = plan_refresh(
-            namespace="runtime",
-            dataset="corpus",
-            definition_hash=design.spec_hash,
-            snapshot_id=snapshot.snapshot_id,
-            execution_mode="design",
-            graph=dependency_graph(
-                model,
-                design,
-                sources=validate_design(design, model).required_sources,
-                definition_hash=design.spec_hash,
-                partitions=("all",),
-            ),
+        request = PlanRequest(
+            "v2",
+            ModelReference.from_model(model, owner_key="model"),
+            design,
+            DestinationRef("output.duckdb", "analytics", "corpus"),
         )
-        saved = SavedPlan.create(
-            plan_json=plan.serialize(),
-            design=design,
-            model=ModelReference.from_model(model, owner_key="model"),
-            destination=DestinationRef("output.duckdb", "analytics", "corpus"),
-            namespace="runtime",
-            expected_base_manifest=None,
-        )
-        saved.pin_snapshot(store)
         con.raw_sql("DELETE FROM orders")
 
         class Resolver:
             def resolve(self, reference):
                 return model
 
+        resolver = Resolver()
+        planner = OwnerPlanner(resolver=resolver, snapshot_authority=authority)
+        invocation = planner.plan(request, con=con.con, namespace="runtime", snapshot=snapshot)
+        assert invocation.snapshot_id == snapshot.snapshot_id
+        replay = planner.plan(request, con=con.con, namespace="runtime", snapshot=snapshot)
+        assert replay == invocation
+        with pytest.raises(TerrineError) as conflict:
+            planner.plan(request, con=con.con, namespace="runtime")
+        assert conflict.value.code == "terrine.runtime.plan_invocation_conflict"
+
         result = runtime.run_serialized_plan(
-            saved.to_json(),
+            invocation.saved_plan_json,
             con=con.con,
             namespace="runtime",
-            request_key="v2",
-            resolver=Resolver(),
+            request_key=invocation.request_key,
+            resolver=resolver,
             snapshot_authority=authority,
         )
         published = runtime.open_published_frame(result, con=con.con, namespace="runtime")

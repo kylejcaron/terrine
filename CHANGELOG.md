@@ -2,10 +2,10 @@
 
 ## Unreleased
 
-- DuckDB staging uses separate anchor and Frame jobs. Low-level built-in
-  runners must pass `execution_mode="design"` to `plan_refresh`; drain queued
-  built-in work on its original version before upgrading. Custom callbacks
-  retain their existing task schedule.
+- Use `OwnerPlanner.plan()` for built-in DuckDB jobs. It captures and pins the
+  inputs or accepts an existing snapshot receipt. `plan_refresh()` keeps its
+  logical schedule for custom callbacks and no longer takes `execution_mode`.
+  Drain queued legacy built-in work on the version that saved it.
 - Save a bound Frame definition without staging, or reopen a trusted Parquet
   export with its typed schema and provenance, including older list columns.
 - Show static roster attribute assumptions separately from membership and

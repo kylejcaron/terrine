@@ -14,7 +14,7 @@ from terrine.runtime.backends.duckdb import DuckDBBackend
 from terrine.runtime.cost import ScanAuthorization, ScanEvidence, ScanPhase
 from terrine.runtime.execute import execute_plan
 from terrine.runtime.graph import DependencyGraph, dependency_graph
-from terrine.runtime.planner import ExecutionMode, RefreshPlan, plan_refresh
+from terrine.runtime.planner import ExecutionMode, RefreshPlan, _plan_refresh, plan_refresh
 from terrine.runtime.state import LayerNode
 from terrine.runtime.status import get_run
 from tests.runtime.test_execute import _publish
@@ -284,7 +284,7 @@ def test_design_job_estimates_charge_one_anchor_across_logical_paths(owner):
     )
 
     def plan(mode: ExecutionMode, *, max_tasks: int):
-        return plan_refresh(
+        return _plan_refresh(
             namespace="owner",
             dataset="study",
             definition_hash="definition",

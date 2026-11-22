@@ -13,15 +13,13 @@ from terrine.model import Model
 from terrine.runtime import (
     DestinationRef,
     ModelReference,
+    OwnerPlanner,
+    PlanRequest,
     RuntimeOwner,
-    SavedPlan,
     SnapshotAuthority,
-    dependency_graph,
     open_published_frame,
-    plan_refresh,
     run_serialized_plan,
 )
-from terrine.runtime.state import RuntimeStore
 from terrine.spec import Design, FixedDate, agg, asof
 
 
@@ -82,45 +80,6 @@ def _clean_rebuild_rows(model: Model, design: Design) -> list[dict[str, object]]
     )
 
 
-def _saved_plan(
-    *,
-    con,
-    model: Model,
-    design: Design,
-    authority: SnapshotAuthority,
-    store: RuntimeStore,
-    destination: DestinationRef,
-    request_name: str,
-    expected_manifest: str | None,
-) -> SavedPlan:
-    snapshot = authority.capture(
-        model,
-        design=design,
-        con=con,
-        namespace="analytics_owner",
-        run_id=request_name,
-        budget=Budget(),
-    )
-    plan = plan_refresh(
-        namespace="analytics_owner",
-        dataset=destination.dataset,
-        definition_hash=design.spec_hash,
-        snapshot_id=snapshot.snapshot_id,
-        graph=dependency_graph(model, design, partitions=("all",)),
-        execution_mode="design",
-    )
-    saved_plan = SavedPlan.create(
-        plan_json=plan.serialize(),
-        design=design,
-        model=ModelReference.from_model(model, owner_key="events-model"),
-        destination=destination,
-        namespace="analytics_owner",
-        expected_base_manifest=expected_manifest,
-    )
-    saved_plan.pin_snapshot(store)
-    return saved_plan
-
-
 def main() -> None:
     with tempfile.TemporaryDirectory(prefix="terrine-materialization-") as directory:
         state_path = Path(directory) / "owner.duckdb"
@@ -159,28 +118,24 @@ def main() -> None:
             )
             owner = RuntimeOwner(state_path=state_path, snapshot_root=Path(directory) / "snapshots")
             authority = SnapshotAuthority(owner)
-            store = RuntimeStore(con.con, namespace="analytics_owner")
-            store.initialize()
             destination = DestinationRef(str(state_path), "published", "orders")
             resolver = ModelResolver(model)
-
-            saved_plan = _saved_plan(
-                con=con,
-                model=model,
-                design=design,
-                authority=authority,
-                store=store,
-                destination=destination,
-                request_name="initial",
-                expected_manifest=None,
+            planner = OwnerPlanner(resolver=resolver, snapshot_authority=authority)
+            request = PlanRequest(
+                "initial",
+                ModelReference.from_model(model, owner_key="events-model"),
+                design,
+                destination,
             )
+
+            invocation = planner.plan(request, con=con.con, namespace="analytics_owner")
             saved_path = Path(directory) / "orders.plan.json"
-            saved_path.write_text(saved_plan.to_json(), encoding="utf-8")
+            saved_path.write_text(invocation.saved_plan_json, encoding="utf-8")
             receipt = run_serialized_plan(
                 saved_path.read_bytes(),
                 con=con.con,
                 namespace="analytics_owner",
-                request_key="orders:initial",
+                request_key=invocation.request_key,
                 resolver=resolver,
                 snapshot_authority=authority,
             )
@@ -205,25 +160,27 @@ def main() -> None:
                 )
             )
 
-            # Capture a new input receipt and bind it to a new saved plan for this correction.
+            # Plan again to capture the changed live inputs.
             con.raw_sql("INSERT INTO events VALUES ('2025-01-01 11:00:00', 1, 5)")
             con.raw_sql("UPDATE user_tier SET tier='silver'")
-            corrected_saved_plan = _saved_plan(
-                con=con,
-                model=model,
-                design=design,
-                authority=authority,
-                store=store,
-                destination=destination,
-                request_name="correction-1",
-                expected_manifest=receipt.published_generation,
+            refreshed = planner.plan(
+                PlanRequest(
+                    "refresh",
+                    request.model,
+                    design,
+                    destination,
+                    expected_base_manifest=receipt.published_generation,
+                    bind_base_manifest=True,
+                ),
+                con=con.con,
+                namespace="analytics_owner",
             )
-            saved_path.write_text(corrected_saved_plan.to_json(), encoding="utf-8")
+            saved_path.write_text(refreshed.saved_plan_json, encoding="utf-8")
             corrected = run_serialized_plan(
                 saved_path.read_bytes(),
                 con=con.con,
                 namespace="analytics_owner",
-                request_key="orders:correction-1",
+                request_key=refreshed.request_key,
                 resolver=resolver,
                 snapshot_authority=authority,
             )

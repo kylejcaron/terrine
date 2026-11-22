@@ -19,7 +19,7 @@ from terrine.model import Model
 from terrine.runtime.changes import Change, ChangeSet
 from terrine.runtime.graph import DependencyGraph, dependency_graph
 from terrine.runtime.materialize import ensure_runtime_expressions_supported
-from terrine.runtime.planner import ExecutionMode, RefreshPlan, plan_refresh
+from terrine.runtime.planner import ExecutionMode, RefreshPlan, _plan_refresh
 from terrine.runtime.saved_plan import _INVALID as _INVALID_BASE
 from terrine.runtime.saved_plan import (
     DestinationRef,
@@ -28,7 +28,12 @@ from terrine.runtime.saved_plan import (
     SavedPlan,
     _bind_saved_plan,
 )
-from terrine.runtime.snapshot import SnapshotAuthority, _assert_owner_connection, _design_root_names
+from terrine.runtime.snapshot import (
+    ReopenableSnapshot,
+    SnapshotAuthority,
+    _assert_owner_connection,
+    _design_root_names,
+)
 from terrine.runtime.state import RuntimeStore
 from terrine.spec.dataset import INVALID_DEFINITION, DatasetDefinition
 from terrine.spec.design import Design
@@ -347,7 +352,7 @@ def _plan_no_work(
         store, run_id=run_id, rows=rows, partitions=output_partitions, budget=budget
     ):
         return None
-    return plan_refresh(
+    return _plan_refresh(
         namespace=namespace,
         dataset=dataset,
         definition_hash=design.spec_hash,
@@ -447,14 +452,40 @@ class OwnerPlanner:
         self.snapshot_authority = snapshot_authority
         self._lock = threading.RLock()
 
-    def plan(self, request: PlanRequest, *, con: Any, namespace: str) -> PlanInvocation:
-        with self._lock:
-            return self._plan(request, con=con, namespace=namespace)
+    def plan(
+        self,
+        request: PlanRequest,
+        *,
+        con: Any,
+        namespace: str,
+        snapshot: ReopenableSnapshot | None = None,
+    ) -> PlanInvocation:
+        """Save a plan and pin its inputs before returning an invocation.
 
-    def _plan(self, request: PlanRequest, *, con: Any, namespace: str) -> PlanInvocation:
+        Omit `snapshot` to let the owner select inputs. Pass an existing receipt
+        from this owner to plan against exactly that snapshot without recapturing.
+        Repeat the same request and receipt to replay the saved invocation.
+        """
+        with self._lock:
+            return self._plan(request, con=con, namespace=namespace, snapshot=snapshot)
+
+    def _plan(
+        self,
+        request: PlanRequest,
+        *,
+        con: Any,
+        namespace: str,
+        snapshot: ReopenableSnapshot | None,
+    ) -> PlanInvocation:
+        request_json = _canonical(request.to_dict())
+        if snapshot is not None:
+            if not isinstance(snapshot, ReopenableSnapshot):
+                raise TypeError("snapshot must be ReopenableSnapshot")
+            _assert_owner_connection(self.snapshot_authority.owner, con)
+            # Preserve the request identity for plans without an explicit receipt.
+            request_json = _canonical([request_json, snapshot.to_json()])
         store = RuntimeStore(con, namespace=namespace)
         store.initialize()
-        request_json = _canonical(request.to_dict())
         request_hash = hashlib.sha256(request_json.encode()).hexdigest()
         prior = con.execute(
             f"SELECT request_hash, invocation_json FROM {store._schema}.runtime_plan_invocations "
@@ -482,7 +513,8 @@ class OwnerPlanner:
         ):
             raise _INVALID_REQUEST.error(reason="owner Model reference does not match")
         could_reuse = (
-            request.bind_base_manifest
+            snapshot is None
+            and request.bind_base_manifest
             and expected_manifest is not None
             and _claims_no_work(request.changes, request.design)
         )
@@ -516,7 +548,9 @@ class OwnerPlanner:
         if plan is None:
             if could_reuse:
                 _scan_policy(request.budget)
-            plan = self._plan_captured(request, store, model, design, definition, expected_manifest)
+            plan = self._plan_inputs(
+                request, store, model, design, definition, expected_manifest, snapshot
+            )
         saved_plan = SavedPlan.create(
             plan_json=plan.serialize(),
             design=design,
@@ -567,7 +601,7 @@ class OwnerPlanner:
             raise
         return invocation
 
-    def _plan_captured(
+    def _plan_inputs(
         self,
         request: PlanRequest,
         store: RuntimeStore,
@@ -575,6 +609,7 @@ class OwnerPlanner:
         design: Design,
         definition: DatasetDefinition | None,
         expected_manifest: str | None,
+        snapshot: ReopenableSnapshot | None,
     ) -> RefreshPlan:
         from terrine.compile.dispatch import compile_design
         from terrine.runtime.backends.duckdb import DuckDBBackend
@@ -615,14 +650,17 @@ class OwnerPlanner:
             partitions=(request.requested_scope or "all",),
             expression_timings=compiled.expression_timings,
         )
-        snapshot = self.snapshot_authority.capture(
-            model,
-            design=design,
-            con=con,
-            namespace=namespace,
-            run_id=request.invocation_id,
-            budget=budget,
-        )
+        if snapshot is None:
+            snapshot = self.snapshot_authority.capture(
+                model,
+                design=design,
+                con=con,
+                namespace=namespace,
+                run_id=request.invocation_id,
+                budget=budget,
+            )
+        elif snapshot.model_hash != model.model_hash:
+            raise _INVALID_BASE.error(reason="retained snapshot Model declaration differs")
         context = self.snapshot_authority.reopen(snapshot, con=con, namespace=namespace)
         try:
             execution_model = model._for_execution(
@@ -639,7 +677,7 @@ class OwnerPlanner:
             validate_compiled_output(snapshot_compiled, execution_model.con.to_pyarrow)
         finally:
             context.close()
-        return plan_refresh(
+        return _plan_refresh(
             namespace=namespace,
             dataset=request.destination.dataset,
             definition_hash=design.spec_hash,

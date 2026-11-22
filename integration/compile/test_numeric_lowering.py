@@ -309,7 +309,7 @@ def test_revision_one_replay_refuses_and_empty_change_refresh_recomputes(tmp_pat
     from terrine.runtime.backends.duckdb import DuckDBBackend
     from terrine.runtime.changes import ChangeSet
     from terrine.runtime.leases import LeaseStore
-    from terrine.runtime.planner import RefreshPlan
+    from terrine.runtime.planner import RefreshPlan, _plan_refresh
     from terrine.runtime.saved_plan import _bind_saved_plan
     from terrine.runtime.state import RuntimeStore
 
@@ -422,7 +422,7 @@ def test_revision_one_replay_refuses_and_empty_change_refresh_recomputes(tmp_pat
         assert error.value.context["execution_revision"] == 1
         assert error.value.context["required_revision"] == 2
         revision = backend.generation_execution_revision("study", "revision-one")
-        refreshed = plan_refresh(
+        refreshed = _plan_refresh(
             namespace="owner",
             dataset="study",
             definition_hash=design.spec_hash,

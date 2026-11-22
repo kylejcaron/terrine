@@ -12,7 +12,12 @@ proof that backend work stopped.
 
 ## Build and plan from a Model and Design
 
-The runnable [`examples/materialization_runtime.py`](../../examples/materialization_runtime.py) is the end-to-end workflow. It builds a real `Model` and immutable `Design`, captures a retained input snapshot, serializes and saves a `SavedPlan` bound to a destination, runs it through the owner resolver and snapshot authority, then queries the exact returned generation:
+Use `OwnerPlanner.plan(request, con=owner_connection, namespace=namespace)` to
+prepare a built-in run. The owner captures and pins the inputs and returns
+`invocation.saved_plan_json` and `invocation.request_key`. Pass both to
+`run_serialized_plan` with the same owner configuration. The runnable
+[`examples/materialization_runtime.py`](../../examples/materialization_runtime.py)
+shows the whole workflow:
 
 ```console
 uv run python examples/materialization_runtime.py
@@ -22,17 +27,28 @@ The example publishes per-user one-day event totals and an effective-dated tier 
 
 In the example Catalog, the `tier` property references the `history` dimension, whose `starts` and `ends` columns define validity intervals in `user_tier`. The Design requests `"tier": asof("tier", before="0s")`, so the attribute is taken strictly before the anchor from the effective-dated event history. Updating those dimension rows requires a new retained snapshot just as inserting an event does. The example reopens the first receipt after publishing the correction and checks that its original rows are unchanged.
 
-For lower-level planning, `dependency_graph(model, design, partitions=...)` describes logical dependencies for invalidation. `plan_refresh(...)` is metadata-only. Pass `execution_mode="design"` for the built-in executor: it schedules an anchor job and a Frame job per partition, not separate jobs for rosters, selectors or state dependencies. The default `execution_mode="custom"` retains one callback per selected logical node. Set `OwnerPlanner(execution_mode="custom", ...)` when its plans will run through a custom executor that needs that schedule. An explicitly supplied executor gets the tasks in the saved plan unchanged.
+If you captured inputs yourself with `SnapshotAuthority.capture`, pass the
+receipt as `snapshot=` to `OwnerPlanner.plan`. It verifies and pins that
+snapshot instead of recapturing. On retry, supply the same request and
+receipt. Saved plans contain no live connection, relation handle or credentials.
 
-**Upgrading a low-level built-in runner:** add `execution_mode="design"` to
-new `plan_refresh(...)` calls before submitting them with no custom executor.
-Finish queued or failed built-in requests on the version that saved them
-before upgrading. If you cannot drain a request, keep its old owner state and
-replan intentionally from the saved Design or dataset definition; the new
-request does not resume the previous schedule or promise the same input image.
-You can still reopen a completed publication by its pinned generation.
+**Migrating a built-in planner:** replace `plan_refresh(..., execution_mode="design")`
+and manual `SavedPlan` assembly with `OwnerPlanner.plan(...)`.
 
-A manually supplied `snapshot_id` is an identity label, not frozen input. Use `SnapshotAuthority.capture` to retain the inputs of a saved plan across retries or process restarts. Saved plans contain no live connection, relation handle or credentials.
+Finish queued or failed legacy built-in requests (runtime plan version 3) on
+the version that saved them before upgrading. If you cannot drain a request,
+keep its old owner state and replan intentionally from the saved Design or
+dataset definition. The new request does not resume the previous schedule or
+promise the same input image. You can still reopen a completed publication
+by its pinned generation.
+
+**Custom execution:** `dependency_graph(...)` describes logical dependencies;
+`plan_refresh(...)` turns them into one task per selected node without reading
+data. Use this path with your own callbacks. A manually supplied `snapshot_id`
+in that plan is a label, not a frozen copy of source rows. A custom owner
+service can keep automatic capture by configuring
+`OwnerPlanner(execution_mode="custom", ...)`; its executor receives the recorded
+tasks unchanged.
 
 `SavedPlan` lives in `terrine.runtime.saved_plan` and is also exported from
 `terrine.runtime`. Its serialized reconstruction binds `dataset_definition_json`
