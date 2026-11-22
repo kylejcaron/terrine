@@ -1,13 +1,22 @@
 # Changelog
 
-## Unreleased
+## 0.1.0a4
 
+- Terrine submits fewer training-label queries, bounds eligible fact reads,
+  and uses a more compact query for eligible LTV trajectories. Both LTV
+  paths now reject a period that disagrees with the metric declaration.
+- DuckDB stages anchor and Frame jobs separately, shows which inputs staging
+  retains, and can skip a refresh when the owner verifies unchanged inputs.
 - Use `OwnerPlanner.plan()` for built-in DuckDB jobs. It captures and pins the
   inputs or accepts an existing snapshot receipt. `plan_refresh()` keeps its
   logical schedule for custom callbacks and no longer takes `execution_mode`.
-  Drain queued legacy built-in work on the version that saved it.
+  Before upgrading, finish legacy built-in jobs saved with runtime plan
+  version 3 on their original version.
 - Save a bound Frame definition without staging, or reopen a trusted Parquet
   export with its typed schema and provenance, including older list columns.
+- Values-only training exports omit realized, post-anchor treatment initiation
+  timestamps to avoid leaking future information. Typed imports refuse
+  missing or incompatible fields required by their saved metadata.
 - Show static roster attribute assumptions separately from membership and
   observation bounds. Historical availability remains unknown.
 
