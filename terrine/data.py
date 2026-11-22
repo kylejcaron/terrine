@@ -8,12 +8,14 @@ from base64 import b64decode, b64encode
 from collections.abc import Callable, Iterable, Mapping, Sequence, Set
 from dataclasses import dataclass, fields, is_dataclass
 from dataclasses import field as dataclass_field
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
+from decimal import Decimal
 from importlib import import_module
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 import pyarrow as pa
+from pydantic import WrapSerializer
 
 from terrine.backends.registry import get_engine
 from terrine.errors import RefusalSpec, TerrineError, freeze, parameter_names, thaw
@@ -34,6 +36,7 @@ __all__ = [
     "BoundCoverage",
     "Budget",
     "CalendarComparisonMeta",
+    "CalendarSupportCell",
     "CohortOperationMeta",
     "ColumnMeta",
     "Coverage",
@@ -54,6 +57,8 @@ __all__ = [
     "SamplingMeta",
     "SequenceMeta",
     "StatePanelMeta",
+    "SurvivalFlow",
+    "SurvivalGroupFlow",
     "TreatmentHistoryMeta",
     "UnitSource",
 ]
@@ -118,7 +123,7 @@ _COVERAGE_UTC_OVERFLOW = RefusalSpec(
 _MISSING_COLUMNS = RefusalSpec(
     "terrine.metadata.missing_columns",
     "Arrow table is missing required columns {columns!r}; "
-    "use lossless Arrow with all observation columns.",
+    "use lossless Arrow with all role, value and support columns.",
 )
 _UNSUPPORTED_METADATA_VERSION = RefusalSpec(
     "terrine.metadata.unsupported_version",
@@ -1140,8 +1145,35 @@ class PanelMeta:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class CalendarSupportCell:
+    """Distinct emitted units by arm for one original focal cohort and period."""
+
+    cohort: datetime
+    period: int
+    kind: Literal["reference", "comparison", "anticipation"]
+    treated: int
+    control: int
+
+    def __post_init__(self) -> None:
+        _aware(self.cohort, "cohort")
+        object.__setattr__(self, "cohort", self.cohort.astimezone(UTC))
+        if type(self.period) is not int or self.kind not in (
+            "reference",
+            "comparison",
+            "anticipation",
+        ):
+            raise ValueError("invalid calendar support period")
+        if any(type(count) is not int or count < 0 for count in (self.treated, self.control)):
+            raise ValueError("calendar support counts must be nonnegative integers")
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class CalendarComparisonMeta:
-    """Portable control, cohort and period policy for stacked comparisons."""
+    """Stack policy and optional emitted support, not outcome-specific analysis counts.
+
+    ``support=None`` means no grid was observed; an empty tuple means no focal cohorts.
+    Each observed cohort includes all declared periods, even when neither arm emits rows.
+    """
 
     control: Literal["never_treated", "not_yet_treated"]
     cohort_source: str
@@ -1152,6 +1184,7 @@ class CalendarComparisonMeta:
     comparison_periods: tuple[int, ...]
     anticipation_periods: tuple[int, ...]
     period_seconds: int
+    support: tuple[CalendarSupportCell, ...] | None = None
 
     def __post_init__(self) -> None:
         if self.control not in ("never_treated", "not_yet_treated"):
@@ -1165,6 +1198,30 @@ class CalendarComparisonMeta:
             raise ValueError("period_seconds must be positive")
         for name in ("comparison_periods", "anticipation_periods"):
             object.__setattr__(self, name, tuple(getattr(self, name)))
+        if self.support is not None:
+            kinds = self._period_kinds()
+            observed: dict[datetime, set[int]] = {}
+            for cell in self.support:
+                if not isinstance(cell, CalendarSupportCell) or kinds.get(cell.period) != cell.kind:
+                    raise ValueError("invalid calendar support cell")
+                periods = observed.setdefault(cell.cohort, set())
+                if cell.period in periods:
+                    raise ValueError("duplicate calendar support cell")
+                periods.add(cell.period)
+            if any(periods != kinds.keys() for periods in observed.values()):
+                raise ValueError("incomplete calendar support grid")
+            object.__setattr__(
+                self,
+                "support",
+                tuple(sorted(self.support, key=lambda cell: (cell.cohort, cell.period))),
+            )
+
+    def _period_kinds(self) -> dict[int, Literal["reference", "comparison", "anticipation"]]:
+        return {
+            self.reference_period: "reference",
+            **dict.fromkeys(self.comparison_periods, "comparison"),
+            **dict.fromkeys(self.anticipation_periods, "anticipation"),
+        }
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -1213,6 +1270,92 @@ class EligibilitySummary:
                 unknown=self.unknown,
                 retained=self.retained,
             )
+
+
+type _SurvivalGroupValue = JsonScalar | bytes | date | time | Decimal
+
+
+def _check_survival_counts(eligible: int, excluded: int, retained: int) -> None:
+    if any(type(count) is not int or count < 0 for count in (eligible, excluded, retained)):
+        raise ValueError("survival counts must be nonnegative integers")
+    if excluded > eligible:
+        raise ValueError("prevalent exclusions cannot exceed eligible subjects")
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SurvivalGroupFlow:
+    """Population counts for one tuple of declared life-table group values."""
+
+    values: tuple[None | bool | int | float | str | bytes | date | time | Decimal, ...]
+    eligible_subjects: int
+    prevalent_exclusions: int
+    retained_records: int
+
+    def __post_init__(self) -> None:
+        _check_survival_counts(
+            self.eligible_subjects, self.prevalent_exclusions, self.retained_records
+        )
+        values = tuple(self.values)
+        if any(
+            value is not None
+            and not isinstance(value, (bool, int, float, str, bytes, date, time, Decimal))
+            for value in values
+        ):
+            raise TypeError("survival group values must be scalars")
+        object.__setattr__(
+            self,
+            "values",
+            tuple(
+                math.nan if isinstance(value, float) and math.isnan(value) else value
+                for value in values
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SurvivalFlow:
+    """Eligibility and prevalence counts before views or binning, plus final row count."""
+
+    eligible_subjects: int
+    prevalent_exclusions: int
+    retained_records: int
+    emitted_grain: Literal["person_records", "group_bins"]
+    emitted_rows: int
+    group_by: tuple[str, ...] = ()
+    groups: tuple[SurvivalGroupFlow, ...] = ()
+
+    def __post_init__(self) -> None:
+        _check_survival_counts(
+            self.eligible_subjects, self.prevalent_exclusions, self.retained_records
+        )
+        if type(self.emitted_rows) is not int or self.emitted_rows < 0:
+            raise ValueError("emitted_rows must be a nonnegative integer")
+        if self.emitted_grain not in ("person_records", "group_bins"):
+            raise ValueError("invalid survival output grain")
+        if self.emitted_grain == "person_records" and (
+            self.group_by or self.emitted_rows > self.retained_records
+        ):
+            raise ValueError("invalid survival person-record output")
+        names = tuple(self.group_by)
+        for name in names:
+            _nonempty(name, "survival group column")
+        groups = tuple(self.groups)
+        if len(set(names)) != len(names) or (groups and not names):
+            raise ValueError("invalid survival grouping columns")
+        if any(
+            not isinstance(group, SurvivalGroupFlow) or len(group.values) != len(names)
+            for group in groups
+        ) or len({group.values for group in groups}) != len(groups):
+            raise ValueError("invalid survival groups")
+        if names and any(
+            sum(getattr(group, name) for group in groups) != getattr(self, name)
+            for name in ("eligible_subjects", "prevalent_exclusions", "retained_records")
+        ):
+            raise ValueError("survival groups must reconcile to the population counts")
+        object.__setattr__(self, "group_by", names)
+        object.__setattr__(
+            self, "groups", tuple(sorted(groups, key=lambda group: repr(group.values)))
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1356,6 +1499,7 @@ class Provenance:
     ) = None
     dataset_view: DatasetViewMeta | None = None
     execution_revision: int | None = None
+    survival_flow: SurvivalFlow | None = None
 
     def __post_init__(self) -> None:
         if self.execution_revision is not None and (
@@ -1405,6 +1549,14 @@ class Provenance:
             self.eligibility_summary, EligibilitySummary
         ):
             raise TypeError("eligibility_summary must be EligibilitySummary or None")
+        if self.survival_flow is not None:
+            if not isinstance(self.survival_flow, SurvivalFlow):
+                raise TypeError("survival_flow must be SurvivalFlow or None")
+            if (self.shape, self.survival_flow.emitted_grain) not in (
+                ("time_to_event", "person_records"),
+                ("life_table", "group_bins"),
+            ):
+                raise ValueError("survival flow must match the output shape")
         if not isinstance(self.execution_snapshot, ExecutionSnapshot):
             raise TypeError("execution_snapshot must be ExecutionSnapshot")
         _check_engine_stamp(
@@ -1502,15 +1654,6 @@ class CoverageSummary:
 
 
 @dataclass(frozen=True, slots=True)
-class _SourceRead:
-    family: str
-    source: str
-    event_span: CoverageSummary | None
-    physical_key: str | None
-    reason: str | None
-
-
-@dataclass(frozen=True, slots=True)
 class RetainedUse:
     """A declaration or integrity-check use and its declared fact coverage, if any."""
 
@@ -1545,14 +1688,85 @@ class StagingFootprint:
     release: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class SourceAssumption:
+    """One logical use of a source, not evidence about the rows it returns."""
+
+    source: str
+    role: Literal["anchor", "feature", "outcome", "eligibility", "treatment", "shape"]
+    output: str
+    time_axis: Literal["event_time", "effective_time", "recorded_at", "static"]
+    knowledge: Literal["declared_recorded_at", "unknown"] = "unknown"
+    historical_versions: Literal["unknown"] = "unknown"
+    dimension: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class RosterAssumption:
+    """Membership and observation bounds are independent binding declarations."""
+
+    scope: Literal["bounded", "current_unbounded", "event_anchored_no_roster", "unknown"] = (
+        "unknown"
+    )
+    entered_at: bool = False
+    exited_at: bool = False
+    observed_from: bool = False
+    observed_until: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class RosterAttributeAssumption:
+    """One use of a static roster value, separate from membership and observation bounds."""
+
+    attribute: str
+    role: Literal["anchor", "feature", "outcome", "eligibility", "treatment", "shape"]
+    output: str
+    time_axis: Literal["static"] = "static"
+    knowledge: Literal["unknown"] = "unknown"
+    historical_versions: Literal["unknown"] = "unknown"
+
+
+@dataclass(frozen=True, slots=True)
+class NativeFloatDecision:
+    """A named hard comparison that depends on a native floating-point measure."""
+
+    role: Literal["eligibility", "outcome"]
+    output: str
+    metric: str
+    native_events: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class StudyAssumptions:
+    """Row-free advisory evidence; neither a historical guarantee nor a refusal."""
+
+    sources: tuple[SourceAssumption, ...] = ()
+    roster: RosterAssumption = RosterAssumption()
+    native_float_decisions: tuple[NativeFloatDecision, ...] = ()
+    roster_attributes: tuple[RosterAttributeAssumption, ...] = ()
+
+
+def _serialize_preview_mapping(value, handler):
+    return handler(dict(value))
+
+
+@dataclass(frozen=True, slots=True)
+class _SourceRead:
+    family: str
+    source: str
+    event_span: CoverageSummary | None
+    physical_key: str | None
+    reason: str | None
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Preview:
     planned_rows: int | None
     output_bytes: int | None
     scan_bytes: int | None
     scan_reason: str | None
-    coverage: Mapping[str, CoverageSummary]
-    strategy: Mapping[str, str]
+    coverage: Annotated[Mapping[str, CoverageSummary], WrapSerializer(_serialize_preview_mapping)]
+    strategy: Annotated[Mapping[str, str], WrapSerializer(_serialize_preview_mapping)]
     budget_warnings: tuple[str, ...]
     candidate_rows: int | None = None
     known_false_rows: int | None = None
@@ -1560,8 +1774,9 @@ class Preview:
     eligible_rows: int | None = None
     counted_rows: int | None = None
     count_capped: bool = False
-    source_reads: tuple[_SourceRead, ...] = ()
     staging_footprint: StagingFootprint | None = None
+    assumptions: StudyAssumptions = StudyAssumptions()
+    source_reads: tuple[_SourceRead, ...] = ()
 
     def __post_init__(self) -> None:
         for name in (
@@ -1595,6 +1810,41 @@ class Preview:
         object.__setattr__(self, "source_reads", tuple(self.source_reads))
 
 
+def _encode_survival_value(value: _SurvivalGroupValue) -> Any:
+    if isinstance(value, Decimal):
+        return {"$decimal": str(value)}
+    if isinstance(value, bytes):
+        return {"$bytes": b64encode(value).decode("ascii")}
+    if isinstance(value, time):
+        return {"$time": value.isoformat()}
+    if isinstance(value, float) and not math.isfinite(value):
+        return {"$float": str(value)}
+    if isinstance(value, datetime) and getattr(value, "nanosecond", 0):
+        return {"$timestamp_ns": value.isoformat(), "aware": value.utcoffset() is not None}
+    return _encode(value)
+
+
+def _decode_survival_value(value: Any) -> _SurvivalGroupValue:
+    if not isinstance(value, Mapping):
+        return value
+    if "$datetime" in value:
+        return datetime.fromisoformat(value["$datetime"])
+    if "$date" in value:
+        return date.fromisoformat(value["$date"])
+    if "$decimal" in value:
+        return Decimal(value["$decimal"])
+    if "$bytes" in value:
+        return b64decode(value["$bytes"], validate=True)
+    if "$time" in value:
+        return time.fromisoformat(value["$time"])
+    if "$float" in value:
+        return float(value["$float"])
+    if "$timestamp_ns" in value:
+        dtype = pa.timestamp("ns", tz="UTC" if value["aware"] else None)
+        return pa.scalar(value["$timestamp_ns"]).cast(dtype).as_py()
+    raise ValueError("unknown survival group value")
+
+
 def _encode(value: Any) -> Any:
     if isinstance(value, datetime):
         return {"$datetime": value.isoformat()}
@@ -1602,6 +1852,13 @@ def _encode(value: Any) -> Any:
         return {"$date": value.isoformat()}
     if isinstance(value, Window):
         return {"$window": [value.start.seconds, value.end.seconds]}
+    if isinstance(value, SurvivalGroupFlow):
+        return {
+            "values": [_encode_survival_value(item) for item in value.values],
+            "eligible_subjects": value.eligible_subjects,
+            "prevalent_exclusions": value.prevalent_exclusions,
+            "retained_records": value.retained_records,
+        }
     if is_dataclass(value) and not isinstance(value, type):
         return {field.name: _encode(getattr(value, field.name)) for field in fields(value)}
     if isinstance(value, Mapping):
@@ -1706,6 +1963,17 @@ def _decode(value: Any, cls: type) -> Any:
             kwargs[field.name] = {k: _decode(v, CoverageSummary) for k, v in item.items()}
         elif field.name == "execution_snapshot" and item is not None:
             kwargs[field.name] = _decode(item, ExecutionSnapshot)
+        elif field.name == "survival_flow" and item is not None:
+            version = item["version"]
+            if type(version) is not int or version != 1:
+                raise _UNSUPPORTED_METADATA_VERSION.error(version=version)
+            kwargs[field.name] = _decode(
+                {name: val for name, val in item.items() if name != "version"}, SurvivalFlow
+            )
+        elif cls is SurvivalFlow and field.name == "groups":
+            kwargs[field.name] = tuple(_decode(group, SurvivalGroupFlow) for group in item)
+        elif cls is SurvivalGroupFlow and field.name == "values":
+            kwargs[field.name] = tuple(_decode_survival_value(val) for val in item)
         elif field.name == "eligibility_summary" and item is not None:
             kwargs[field.name] = _decode(item, EligibilitySummary)
         elif field.name == "weight_cutoff" and item is not None:
@@ -1742,6 +2010,21 @@ def _decode(value: Any, cls: type) -> Any:
                 anticipation_seconds=item.get("anticipation_seconds", 0),
             )
         elif field.name == "calendar_comparison" and item is not None:
+            encoded_support = item.get("support")
+            support = None
+            if encoded_support is not None:
+                if type(encoded_support["version"]) is not int or encoded_support["version"] != 1:
+                    raise _UNSUPPORTED_METADATA_VERSION.error(version=encoded_support["version"])
+                support = tuple(
+                    CalendarSupportCell(
+                        cohort=datetime.fromisoformat(cell["cohort"]["$datetime"]),
+                        period=cell["period"],
+                        kind=cell["kind"],
+                        treated=cell["treated"],
+                        control=cell["control"],
+                    )
+                    for cell in encoded_support["cells"]
+                )
             kwargs[field.name] = CalendarComparisonMeta(
                 control=item["control"],
                 cohort_source=item["cohort_source"],
@@ -1752,6 +2035,7 @@ def _decode(value: Any, cls: type) -> Any:
                 comparison_periods=tuple(item["comparison_periods"]),
                 anticipation_periods=tuple(item["anticipation_periods"]),
                 period_seconds=item["period_seconds"],
+                support=support,
             )
         elif field.name == "sampling" and item is not None:
             kwargs[field.name] = SamplingMeta(
@@ -1790,8 +2074,17 @@ def _metadata_payload(
     roles: Roles, columns: Mapping[str, ColumnMeta], provenance: Provenance
 ) -> dict[str, Any]:
     encoded_provenance = _encode(provenance)
+    if provenance.survival_flow is None:
+        del encoded_provenance["survival_flow"]
+    else:
+        encoded_provenance["survival_flow"]["version"] = 1
     if provenance.execution_revision is None:
         del encoded_provenance["execution_revision"]
+    comparison = encoded_provenance["calendar_comparison"]
+    if comparison is not None:
+        support = comparison.pop("support")
+        if support is not None:
+            comparison["support"] = {"version": 1, "cells": support}
     return {
         "version": 1,
         "roles": _encode(roles),
@@ -1862,6 +2155,206 @@ def _ordered_columns(
                     ordered.append(field)
     ordered.extend(name for name in names if name not in ordered and name not in bookkeeping)
     return (*ordered, *bookkeeping)
+
+
+def _list_element(dtype: pa.DataType) -> pa.DataType | None:
+    if isinstance(dtype, (pa.ListType, pa.LargeListType, pa.FixedSizeListType)):
+        return dtype.value_type
+    return None
+
+
+def _is_text(dtype: pa.DataType) -> bool:
+    return pa.types.is_string(dtype) or pa.types.is_large_string(dtype)
+
+
+def _validate_physical_metadata(
+    schema: pa.Schema,
+    roles: Roles,
+    columns: Mapping[str, ColumnMeta],
+    provenance: Provenance,
+    bookkeeping: Sequence[str],
+) -> None:
+    if not isinstance(bookkeeping, (list, tuple)) or not all(
+        isinstance(name, str) and name for name in bookkeeping
+    ):
+        raise _INVALID_METADATA.error(reason="invalid_bookkeeping_columns")
+    if len(set(schema.names)) != len(schema):
+        raise _INVALID_METADATA.error(reason="duplicate_physical_names")
+    physical = {field.name: field.type for field in schema}
+    required = {*columns, *bookkeeping, *roles.features, *roles.outcomes}
+    required.update(
+        name
+        for role in fields(Roles)
+        if role.name not in ("features", "outcomes")
+        if (name := getattr(roles, role.name)) is not None
+    )
+    checks: list[tuple[str, Callable[[pa.DataType], bool]]] = []
+    nested: list[tuple[str, str, Callable[[pa.DataType], bool] | None]] = []
+
+    def reasons(dtype: pa.DataType) -> bool:
+        child = _list_element(dtype)
+        return _is_text(dtype) or (
+            provenance.shape == "life_table" and child is not None and _is_text(child)
+        )
+
+    def require(name: str | None, check: Callable[[pa.DataType], bool] | None = None) -> None:
+        if name is not None:
+            required.add(name)
+            if check is not None:
+                checks.append((name, check))
+
+    def list_struct(dtype: pa.DataType) -> bool:
+        return isinstance(_list_element(dtype), pa.StructType)
+
+    for meta in columns.values():
+        require(meta.complete_column, pa.types.is_boolean)
+        require(meta.reason_column, reasons)
+        require(meta.observed_from_column, pa.types.is_timestamp)
+        require(meta.observed_until_column, pa.types.is_timestamp)
+    for timing in provenance.expression_timings.values():
+        require(timing.point_time_column, pa.types.is_timestamp)
+        require(timing.start_bound_column, pa.types.is_timestamp)
+        require(timing.end_bound_column, pa.types.is_timestamp)
+    panel = provenance.state_panel
+    if panel is not None:
+        require(panel.period_column, pa.types.is_integer)
+        require(panel.from_time_column, pa.types.is_timestamp)
+        require(panel.to_time_column, pa.types.is_timestamp)
+        require(panel.scheduled_to_column, pa.types.is_timestamp)
+        require(panel.gap_column, pa.types.is_duration)
+        require(panel.terminal_column, pa.types.is_boolean)
+    comparison = provenance.calendar_comparison
+    if comparison is not None and comparison.support is not None:
+        require("cohort", pa.types.is_timestamp)
+        require("event_period", pa.types.is_integer)
+        require("treatment", pa.types.is_boolean)
+        require("control_eligible", pa.types.is_boolean)
+    view = provenance.dataset_view
+    if view is not None:
+        selected = (*view.selected_features, *view.selected_labels)
+        required.update(selected)
+        if view.split_policy is not None:
+            require("__terrine_split", _is_text)
+            require("__terrine_split_reason", _is_text)
+
+    sequence = provenance.sequence_meta
+    if sequence is not None:
+        array = sequence.representation == "arrays"
+        required.update(sequence.event_fields)
+        if array:
+            require("event_values", list_struct)
+        require(sequence.event_id_column)
+        require(sequence.event_time_column, pa.types.is_timestamp)
+        require(sequence.position_column, pa.types.is_integer)
+        require(sequence.event_count_column, pa.types.is_integer)
+        require(sequence.complete_column, pa.types.is_boolean)
+        require(sequence.reason_column, _is_text)
+        require(sequence.sessions_column, list_struct)
+        require(sequence.sessions_complete_column, pa.types.is_boolean)
+        require(sequence.sessions_reason_column, _is_text)
+        require(sequence.funnel_attempts_column, list_struct)
+        require(sequence.funnel_attempts_complete_column, pa.types.is_boolean)
+        require(sequence.funnel_attempts_reason_column, _is_text)
+
+        for name in sequence.session_fields:
+            if array and name not in (
+                sequence.sessions_column,
+                sequence.sessions_complete_column,
+                sequence.sessions_reason_column,
+            ):
+                nested.append(("event_values", name, None))
+            else:
+                require(name)
+        for name in sequence.funnel_fields:
+            if sequence.funnel_attempts_column is not None:
+                nested.append((sequence.funnel_attempts_column, name, None))
+
+        def sequence_reference(
+            name: str | None, check: Callable[[pa.DataType], bool] | None = None
+        ) -> None:
+            if name is not None and array and name.startswith("event_values."):
+                nested.append(("event_values", name.removeprefix("event_values."), check))
+            else:
+                require(name, check)
+
+        sequence_reference(sequence.transition_from_column)
+        sequence_reference(sequence.transition_to_column)
+        for name, reason in sequence.property_reason_columns.items():
+            if array:
+                nested.append(("event_values", name, None))
+            sequence_reference(reason, _is_text)
+
+    missing = required - physical.keys()
+    invalid_types = set()
+    for parent, name, check in nested:
+        dtype = physical.get(parent)
+        child = None if dtype is None else _list_element(dtype)
+        path = f"{parent}.{name}"
+        if not isinstance(child, pa.StructType):
+            if dtype is not None:
+                invalid_types.add(parent)
+        elif child.get_field_index(name) == -1:
+            missing.add(path)
+        elif check is not None and not check(child.field(name).type):
+            invalid_types.add(path)
+    if missing:
+        raise _MISSING_COLUMNS.error(columns=tuple(sorted(missing)))
+    if view is not None:
+        features_match = view.selected_features == roles.features
+        if not features_match and view.kind == "scoring":
+            # Older scoring exports stored features in Design's canonical order.
+            features_match = sorted(view.selected_features) == sorted(roles.features)
+        if (
+            not features_match
+            or view.selected_labels != roles.outcomes
+            or any(name not in columns for name in (*roles.features, *roles.outcomes))
+        ):
+            raise _INVALID_METADATA.error(reason="invalid_view_columns")
+    if invalid_types or any(not check(physical[name]) for name, check in checks):
+        raise _INVALID_METADATA.error(reason="invalid_support_type")
+
+
+def _check_nested_names(dtype: pa.DataType) -> None:
+    if isinstance(dtype, pa.StructType):
+        if len({field.name for field in dtype}) != dtype.num_fields:
+            raise _INVALID_METADATA.error(reason="duplicate_physical_names")
+        for field in dtype:
+            _check_nested_names(field.type)
+    elif isinstance(dtype, pa.MapType):
+        _check_nested_names(dtype.key_type)
+        _check_nested_names(dtype.item_type)
+    elif (child := _list_element(dtype)) is not None:
+        _check_nested_names(child)
+
+
+def _decode_table_metadata(
+    schema: pa.Schema, payload: Mapping[str, Any], *, bookkeeping: Sequence[str] = ()
+) -> tuple[Roles, dict[str, ColumnMeta], Provenance]:
+    roles = _decode(payload["roles"], Roles)
+    columns = {key: _decode(item, ColumnMeta) for key, item in payload["columns"].items()}
+    provenance = _decode(payload["provenance"], Provenance)
+    for field in schema:
+        _check_nested_names(field.type)
+    _validate_physical_metadata(schema, roles, columns, provenance, bookkeeping)
+    return roles, columns, provenance
+
+
+def _decode_arrow_metadata(schema: pa.Schema) -> tuple[Roles, dict[str, ColumnMeta], Provenance]:
+    metadata = schema.metadata or {}
+    raw = metadata.get(_ARROW_METADATA_KEY)
+    if raw is None and _LEGACY_ARROW_METADATA_KEY in metadata:
+        raise _UNSUPPORTED_METADATA_VERSION.error(version=1)
+    if raw is None:
+        raise ValueError("Arrow schema has no Terrine metadata")
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+        if payload.get("version") != 2:
+            raise _UNSUPPORTED_METADATA_VERSION.error(version=payload.get("version"))
+        return _decode_table_metadata(schema, payload, bookkeeping=payload["bookkeeping_columns"])
+    except TerrineError:
+        raise
+    except Exception as error:
+        raise _INVALID_METADATA.error(reason="invalid_arrow_metadata") from error
 
 
 def output_sort_keys(schema: pa.Schema, roles: Roles, *, shape: str) -> tuple[str, ...]:
@@ -1989,40 +2482,36 @@ class MaterializedFrame:
 
     @classmethod
     def _from_table_metadata(cls, table: pa.Table, payload: Mapping[str, Any]) -> MaterializedFrame:
-        roles = _decode(payload["roles"], Roles)
-        columns = {key: _decode(item, ColumnMeta) for key, item in payload["columns"].items()}
-        provenance = _decode(payload["provenance"], Provenance)
+        roles, columns, provenance = _decode_table_metadata(
+            table.schema, payload, bookkeeping=payload.get("bookkeeping_columns", ())
+        )
         return cls(table=table, roles=roles, columns=columns, provenance=provenance)
 
     @classmethod
+    def _from_decoded_arrow(
+        cls,
+        table: pa.Table,
+        roles: Roles,
+        columns: Mapping[str, ColumnMeta],
+        provenance: Provenance,
+    ) -> MaterializedFrame:
+        clean = dict(table.schema.metadata or {})
+        del clean[_ARROW_METADATA_KEY]
+        return cls(
+            table=table.replace_schema_metadata(clean or None),
+            roles=roles,
+            columns=columns,
+            provenance=provenance,
+        )
+
+    @classmethod
     def from_arrow(cls, table: pa.Table) -> MaterializedFrame:
+        """Read a physically consistent Arrow v2 envelope, without authenticating its origin."""
         if not isinstance(table, pa.Table):
             raise TypeError("table must be a pyarrow.Table")
-        raw = (table.schema.metadata or {}).get(_ARROW_METADATA_KEY)
-        if raw is None and _LEGACY_ARROW_METADATA_KEY in (table.schema.metadata or {}):
-            raise _UNSUPPORTED_METADATA_VERSION.error(version=1)
-        if raw is None:
-            raise ValueError("Arrow schema has no Terrine metadata")
+        decoded = _decode_arrow_metadata(table.schema)
         try:
-            payload = json.loads(raw.decode("utf-8"))
-            if payload.get("version") != 2:
-                raise _UNSUPPORTED_METADATA_VERSION.error(version=payload.get("version"))
-            roles = _decode(payload["roles"], Roles)
-            columns = {key: _decode(item, ColumnMeta) for key, item in payload["columns"].items()}
-            provenance = _decode(payload["provenance"], Provenance)
-            missing = tuple(
-                name for name in payload["bookkeeping_columns"] if name not in table.column_names
-            )
-            if missing:
-                raise _MISSING_COLUMNS.error(columns=missing)
-            clean = dict(table.schema.metadata or {})
-            del clean[_ARROW_METADATA_KEY]
-            return cls(
-                table=table.replace_schema_metadata(clean or None),
-                roles=roles,
-                columns=columns,
-                provenance=provenance,
-            )
+            return cls._from_decoded_arrow(table, *decoded)
         except TerrineError:
             raise
         except Exception as error:
@@ -2046,10 +2535,7 @@ class MaterializedFrame:
                 raise _UNSUPPORTED_METADATA_VERSION.error(version=version)
             raw = b64decode(payload.pop("arrow_ipc"), validate=True)
             table = pa.ipc.open_stream(pa.py_buffer(raw)).read_all()
-            roles = _decode(payload["roles"], Roles)
-            columns = {key: _decode(item, ColumnMeta) for key, item in payload["columns"].items()}
-            provenance = _decode(payload["provenance"], Provenance)
-            return cls(table=table, roles=roles, columns=columns, provenance=provenance)
+            return cls._from_table_metadata(table, payload)
         except TerrineError:
             raise
         except json.JSONDecodeError as error:

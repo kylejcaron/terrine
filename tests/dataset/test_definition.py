@@ -85,6 +85,19 @@ def test_dataset_definition_round_trip_reconstructs_base_design_and_view() -> No
     assert decoded.digest == definition.digest
 
 
+def test_documented_v4_plain_definition_keeps_its_recorded_digest() -> None:
+    from hashlib import sha256
+
+    stored = (
+        b'{"base_design":{"anchor":{"date":{"type":"date","value":"2025-01-01"},'
+        b'"type":"FixedDate"},"unit":"unit"},"schema_version":4}'
+    )
+    decoded = DatasetDefinition.from_json(stored)
+    assert decoded.base_design == design()
+    assert decoded.canonical_json() == stored
+    assert decoded.digest == sha256(stored).hexdigest()
+
+
 def test_definition_nested_records_omit_default_fields() -> None:
     from terrine.dataset.splits import GroupSplit, TimeSplit, policy_from_record
     from terrine.spec.transforms import Winsorization

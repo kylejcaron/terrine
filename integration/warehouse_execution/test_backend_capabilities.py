@@ -417,12 +417,35 @@ def test_calendar_comparison_compiles_quantile_outcome_horizon(native_inputs):
         model,
         cohort=Initiation("session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
         control="never_treated",
-        reference_period=-1,
+        reference_period=-2,
         comparison_periods=(0,),
-    ).materialize(budget=Budget(max_rows=200, max_output_bytes=1_000_000))
-
-    assert frame.table.num_rows > 0
-    assert "p50" in frame.roles.outcomes
+        anticipation_periods=(-1,),
+    )
+    budget = Budget(max_rows=200, max_output_bytes=1_000_000)
+    materialized = frame.materialize(budget=budget)
+    selected = frame.training_set(label="p50").materialize(budget=budget)
+    assert "p50" in selected.roles.outcomes
+    assert set(selected.table["event_period"].to_pylist()) == {0}
+    cohort = datetime(2025, 1, 3, tzinfo=UTC)
+    for result, treated in ((materialized, (2, 2, 2)), (selected, (0, 0, 2))):
+        comparison = result.provenance.calendar_comparison
+        assert comparison is not None and comparison.support is not None
+        assert [
+            (cell.cohort, cell.period, cell.kind, cell.treated, cell.control)
+            for cell in comparison.support
+        ] == [
+            (cohort, -2, "reference", treated[0], 0),
+            (cohort, -1, "anticipation", treated[1], 0),
+            (cohort, 0, "comparison", treated[2], 0),
+        ]
+        assert (
+            MaterializedFrame.from_arrow(result.to_pyarrow()).provenance.calendar_comparison
+            == comparison
+        )
+        assert (
+            MaterializedFrame.from_json(result.to_json()).provenance.calendar_comparison
+            == comparison
+        )
 
 
 def test_all_shapes_build_materialize_and_arrow_round_trip(native_inputs):

@@ -11,7 +11,7 @@ import warnings
 from collections.abc import Generator
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
@@ -50,6 +50,9 @@ from terrine.runtime.snapshot import SnapshotAuthority
 from terrine.runtime.state import RuntimeStore
 from terrine.spec.dataset import DatasetDefinition
 from terrine.spec.design import _output_shape_name
+
+if TYPE_CHECKING:
+    from terrine.dataset.export import ExportManifest
 
 __all__ = ["Dataset", "stage_frame", "dataset_from_run"]
 
@@ -99,35 +102,6 @@ def _column_role(name: str, roles: Any) -> str:
     if name in roles.outcomes:
         return "outcome"
     return "support"
-
-
-def _definition_for(frame: Any, *, include_transforms: bool = True) -> DatasetDefinition:
-    view = None
-    if frame._training_view is not None:
-        training = frame._training_view
-        view = {
-            "kind": "training",
-            "features": list(training.features),
-            "labels": list(training.labels),
-            "incomplete_labels": training.incomplete_labels,
-            "split": None if training.split is None else training.split.to_record(),
-        }
-    elif frame._scoring_view is not None:
-        from terrine.spec.io import _encode
-
-        scoring = frame._scoring_view
-        view = {
-            "kind": "scoring",
-            "features": list(scoring.features),
-            "as_of": scoring.resolved_as_of.isoformat(),
-            "eligibility": _encode(frame._design.eligibility),
-            "parent_design_hash": scoring.parent_design_hash,
-        }
-    return DatasetDefinition(
-        base_design=frame._design,
-        view=view,
-        transforms=frame._winsorizations if include_transforms else (),
-    )
 
 
 class _ModelResolver:
@@ -498,7 +472,18 @@ class Dataset:
         partition_by: tuple[str, ...] = (),
         target_file_bytes: int = 134_217_728,
         budget: Budget | None = None,
-    ):
+    ) -> ExportManifest:
+        """Export this pinned generation and return its shard manifest.
+
+        Args:
+            destination: New local export directory; its parent must exist.
+            partition_by: Output columns used to group rows into shard directories.
+            target_file_bytes: Estimated Arrow byte target for each shard.
+            budget: Optional limits on rows, output bytes and scan policy.
+
+        Returns:
+            A manifest for the complete export. Retain it to reassemble a lossless frame.
+        """
         from terrine.dataset.export import export_dataset
 
         return export_dataset(
@@ -546,8 +531,10 @@ class Dataset:
             return plan
         if model.model_hash != self.manifest.model_hash:
             changes = ChangeSet((), "conservative_rebuild")
+        frame = definition.build(model)
         return _plan_frame(
-            definition.build(model),
+            model,
+            frame.to_definition(),
             namespace=self._namespace,
             table=generation.dataset_id,
             snapshot_id=self.manifest.source_snapshots["snapshot_id"],
@@ -600,26 +587,32 @@ class Dataset:
 
 
 def _plan_frame(
-    frame, *, namespace, table, snapshot_id, budget, changes=None, base_generation=None
+    model,
+    definition: DatasetDefinition,
+    *,
+    namespace,
+    table,
+    snapshot_id,
+    budget,
+    changes=None,
+    base_generation=None,
 ):
     from terrine.spec.validate import validate_design
 
-    definition = _definition_for(frame)
-    definition_hash = hashlib.sha256(
-        (definition.digest + frame._model.model_hash).encode()
-    ).hexdigest()
+    design = definition.base_design
+    definition_hash = hashlib.sha256((definition.digest + model.model_hash).encode()).hexdigest()
     base_revision = None
     if base_generation is not None and (changes is None or changes.changes):
         try:
             base_revision = DuckDBBackend(
-                frame._model.con.con, namespace=namespace
+                model.con.con, namespace=namespace
             ).generation_execution_revision(table, base_generation)
         except TerrineError:
             pass
     return plan_refresh(
         namespace=namespace,
         dataset=table,
-        definition_hash=frame._design.spec_hash,
+        definition_hash=design.spec_hash,
         snapshot_id=snapshot_id,
         budget=budget,
         changes=changes,
@@ -627,9 +620,9 @@ def _plan_frame(
         reuse_base_generation=base_generation,
         reuse_base_revision=base_revision,
         graph=dependency_graph(
-            frame._model,
-            frame._design,
-            sources=validate_design(frame._design, frame._model).required_sources,
+            model,
+            design,
+            sources=validate_design(design, model).required_sources,
             definition_hash=definition_hash,
         ),
     )
@@ -687,9 +680,10 @@ def stage_frame(
     raw = model.con.con
     store = RuntimeStore(raw, namespace=namespace)
     store.initialize()
-    definition = _definition_for(frame)
+    definition = frame.to_definition()
     plan = _plan_frame(
-        frame,
+        model,
+        definition,
         namespace=namespace,
         table=table,
         snapshot_id=snapshot.snapshot_id,
@@ -699,7 +693,7 @@ def stage_frame(
     )
     saved = SavedPlan.create(
         plan_json=plan.serialize(),
-        design=frame._design,
+        design=definition.base_design,
         model=ModelReference.from_model(model, owner_key=owner.reference),
         destination=DestinationRef(str(owner.state_path), namespace, table),
         namespace=namespace,

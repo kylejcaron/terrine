@@ -64,6 +64,7 @@ training = frame.training_set(
     features=("past_sessions", "plan_tier"),
     incomplete_labels="drop",
 )
+print(training.assumptions)
 dataset = training.stage("training", budget=budget)
 
 for batch in dataset.to_arrow_batches(batch_size=65_536):
@@ -74,6 +75,38 @@ export = dataset.export_parquet(
     budget=budget,
 )
 ```
+
+Check `training.assumptions` before staging or exporting. It describes the
+selected features and labels, the eligibility rules, and inputs that define
+the rows. Use `terrine.preview(design, model).assumptions` to inspect the whole
+Design. Neither report reads rows or certifies historical availability.
+
+The report includes sampling strata even when you omit them from the training
+columns, because they still determine which rows are retained. For an event
+sequence, preview includes the dimensions used by projected properties,
+transition labels, and funnels.
+
+- **Source time.** `event_time` and `effective_time` tell you where a record
+  belongs, not when it became available. A recorded-at declaration applies
+  only to the use that names it, and does not prove that earlier versions
+  survive. With unknown history, bind an upstream relation that supplies the
+  data as known at each prediction time, or replay a snapshot actually
+  captured then. A snapshot taken now cannot reconstruct what you knew then.
+- **Roster.** Check whether `entered_at` and `exited_at` are bound. Without
+  an entry bound, a current roster can admit people who joined after `t0`.
+  Bind authoritative membership dates. `observed_from` and `observed_until`
+  are follow-up bounds, not membership dates. Event anchors without a
+  roster provide occurrences, not historical membership.
+- **Roster values.** `roster_attributes` lists only the static attributes used
+  by the study, with their role and output name. Membership and observation
+  bounds do not establish that those values were available at `t0`.
+- **Hard comparisons.** `native_float_decisions` names the eligibility rules
+  and thresholded labels that depend on native float measures, plus the
+  implicated value events. Reordering a cancellation-prone sum can move it
+  across a cutoff. Use integer minor units or declared decimals for amounts
+  that must decide membership consistently; `exact=True` quantizes float
+  inputs, which can itself move a value across a cutoff. The report does not
+  change any decision.
 
 `training.to_pandas(values_only=True)` (or `to_polars`) is the in-memory feature and label table: the selected features and labels beside `unit`, `anchor_id` and `t0`, with the `__complete`/`__reason` support columns and bookkeeping dropped and the incomplete-label rows already excluded by the policy above. Staged datasets keep the support columns so a generation stays reconstructible.
 
@@ -93,6 +126,7 @@ metadata-only apart from verifying the existing files.
 ## Scoring snapshots
 
 `Design.snapshot` re-anchors a cross-sectional Design to an explicit scoring instant and requires explicit eligibility. It drops outcomes and treatment, uses the configured unit roster rather than a historical event cohort, and validates only the selected feature and eligibility dependencies. Date values resolve at the Model's Catalog-local day boundary; aware timestamps are normalized to UTC. The literal `"today"` is resolved once per call and stored as an absolute instant.
+The output feature columns follow the order in `features`.
 
 ```python
 scoring_frame = design.snapshot(
@@ -184,6 +218,28 @@ values. Use guarded materialization, staging, or Dataset exports. Imported
 adapter transform declarations are not automatically translated into this
 stage; unsupported declarations still refuse instead of being stripped.
 
+## Saving a Frame definition without staging
+
+Use `Frame.to_definition()` to save how a Frame was built without reading rows
+or publishing a dataset. It keeps the selected feature and label order,
+incomplete-label policy and bound split, or the absolute scoring time and
+eligibility. It also keeps any frozen winsorization limits.
+
+```python
+from pathlib import Path
+
+from terrine.spec import DatasetDefinition
+
+path = Path("training.json")
+path.write_bytes(training.to_definition().canonical_json())
+rebuilt = DatasetDefinition.from_json(path.read_bytes()).build(model)
+```
+
+Rebuild on compatible model bindings. Rebuilding does not refit transforms or
+resolve `"today"` again, but later materialization reads from the supplied
+model. The definition contains no credentials, connections, SQL, or rows. Keep
+the published manifest instead if you need to reopen a specific generation.
+
 ## Reopening a pinned dataset
 
 Keep the `DatasetManifest` with the consumer-owned export, or persist `DatasetManifest.to_json()` separately from the immutable `DatasetDefinition` stored by the runtime. Reopen the exact committed generation rather than consulting a moving destination:
@@ -198,7 +254,7 @@ For an in-memory dataframe instead of incremental batches, use
 `reopened.to_pandas()` or `reopened.to_polars()`; `values_only=True` removes
 completeness/reason support columns as well as observation bookkeeping.
 
-The manifest binds the canonical construction definition, selected view, generation, schema, and output checksums. Reopening verifies the committed publication, partition checksums, physical schema, and row count before returning the reference. `DatasetDefinitionStore` stores a `DatasetDefinition`, not the manifest; restore a serialized manifest with `DatasetManifest.from_json()` and pass it to `Dataset.from_manifest()`. Credentials, live connections, SQL, and row payloads are not stored in the definition.
+The manifest binds the canonical construction definition, selected view, generation, schema, and output checksums. Reopening verifies the committed publication, partition checksums, physical schema, and row count before returning the reference. `DatasetDefinitionStore` stores a `DatasetDefinition`, not the manifest; restore a serialized manifest with `DatasetManifest.from_json()` and pass it to `Dataset.from_manifest()`.
 
 Serialized manifests carry `definition` or an owner-bound `definition_reference`,
 plus `definition_hash`. `DatasetDefinitionReference` identifies the configured
@@ -228,6 +284,13 @@ as a frozen transform. Refit from the original declared training population and
 save a new definition.
 
 Current `arrow-v2` publication checksums normalize timestamp instants to UTC and canonicalize nullable Arrow buffers before hashing, independently of the connection's display timezone or unused null-slot bytes. Recorded earlier checksums retain their original verification format; the original logical timezone remains in the Arrow schema. When consuming only part of a batch iterator, call its `close()` method or use `contextlib.closing`. Parquet export closes its iterator on both success and failure, while retaining only verified completed shards for retry.
+
+Use `export.read_frame(directory)` with the trusted manifest returned by
+`dataset.export_parquet(...)` to recover the complete generation's training
+or scoring frame. It verifies the listed shards before assembling them and
+retains the eligibility and label/split reason counts once, for the original
+population. A filtered export or a union of exports does not have those counts
+or that identity. See [Arrow and Parquet interoperability](common-stack-interop.md#pinned-datasets-and-parquet).
 
 ## Definition-backed refresh
 

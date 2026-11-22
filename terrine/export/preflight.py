@@ -6,6 +6,7 @@ from collections import defaultdict
 from collections.abc import Generator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal, cast
 
@@ -20,7 +21,14 @@ if TYPE_CHECKING:
     import ibis.expr.types as ir
     from ibis.backends.duckdb import Backend
 
-__all__ = ["ExportPreflight", "WarehousePreflight", "preflight_export", "preflight_warehouse"]
+__all__ = [
+    "CalendarContrast",
+    "CalendarContrastSupport",
+    "ExportPreflight",
+    "WarehousePreflight",
+    "preflight_export",
+    "preflight_warehouse",
+]
 
 _INCOMPLETE_OUTCOME = RefusalSpec(
     "terrine.export.incomplete_outcome",
@@ -57,6 +65,106 @@ _INVALID_INPUT = RefusalSpec(
 _CHOICE = RefusalSpec(
     "terrine.export.invalid_input", "Export input {field} must be one of {choices}."
 )
+_CALENDAR_CONTRAST_UNSUPPORTED = RefusalSpec(
+    "terrine.export.calendar_contrast_unsupported",
+    "Calendar contrast for {outcome!r} in cohort {cohort}, reference {reference_period}, "
+    "comparison {comparison_period}, lacks {arm} support ({reason}); {route}.",
+)
+_DESCRIPTIVE_ROUTE = "omit calendar_contrast for descriptive output"
+_ARMS = ("treated", "control")
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class CalendarContrast:
+    """Request support for one outcome and focal cohort against a declared reference period.
+
+    Set ``paired=True`` only for same-unit panel contrasts. The default checks the
+    margins, as for repeated cross sections.
+
+    Args:
+        outcome: Name of the outcome column to check.
+        cohort: Timezone-aware timestamp identifying the focal adopter cohort.
+        reference_period: Relative period used as the baseline.
+        comparison_periods: Nonempty, distinct relative periods other than the baseline.
+        paired: Also require the same units in both periods within each arm.
+
+    Attributes:
+        outcome: Outcome checked for support.
+        cohort: Focal adopter cohort, normalized to UTC.
+        reference_period: Baseline relative period.
+        comparison_periods: Relative periods checked against the baseline.
+        paired: Whether to require same-unit support.
+
+    Example:
+        from datetime import UTC, datetime
+
+        tr.export.CalendarContrast(
+            outcome="spend",
+            cohort=datetime(2025, 3, 1, tzinfo=UTC),
+            reference_period=-1,
+            comparison_periods=(0, 1),
+        )
+    """
+
+    outcome: str
+    cohort: datetime
+    reference_period: int
+    comparison_periods: tuple[int, ...]
+    paired: bool = False
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.outcome, str) or not self.outcome:
+            raise _INVALID_INPUT.error(field="outcome", reason="requires_nonempty_name")
+        if not isinstance(self.cohort, datetime) or self.cohort.utcoffset() is None:
+            raise _INVALID_INPUT.error(field="cohort", reason="requires_aware_datetime")
+        object.__setattr__(self, "cohort", self.cohort.astimezone(UTC))
+        periods = self.comparison_periods
+        if (
+            type(self.reference_period) is not int
+            or not isinstance(periods, tuple)
+            or not periods
+            or any(type(period) is not int for period in periods)
+            or self.reference_period in periods
+            or len(periods) != len(set(periods))
+        ):
+            raise _INVALID_INPUT.error(field="calendar_contrast", reason="invalid_periods")
+        if type(self.paired) is not bool:
+            raise _INVALID_INPUT.error(field="paired", reason="requires_boolean")
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class CalendarContrastSupport:
+    """Usable distinct-unit margins (reference, comparison) and pair counts by arm.
+
+    Args:
+        comparison_period: Period compared with the reference.
+        treated: Treated-unit counts in the reference and comparison periods.
+        control: Control-unit counts in the reference and comparison periods.
+        treated_pairs: Treated units usable in both periods.
+        control_pairs: Control units usable in both periods.
+
+    Attributes:
+        comparison_period: Period compared with the reference.
+        treated: Treated-unit margins, reference first.
+        control: Control-unit margins, reference first.
+        treated_pairs: Treated units usable in both periods.
+        control_pairs: Control units usable in both periods.
+
+    Example:
+        tr.export.CalendarContrastSupport(
+            comparison_period=0,
+            treated=(10, 9),
+            control=(20, 18),
+            treated_pairs=8,
+            control_pairs=17,
+        )
+    """
+
+    comparison_period: int
+    treated: tuple[int, int]
+    control: tuple[int, int]
+    treated_pairs: int
+    control_pairs: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,10 +174,12 @@ class ExportPreflight:
     Args:
         table: PyArrow Table containing the admitted complete rows.
         excluded_counts: Mapping of missing-value reason codes to excluded row counts.
+        calendar_support: Outcome-specific counts per requested comparison, or None.
 
     Attributes:
         table: PyArrow Table containing the admitted complete rows.
         excluded_counts: Mapping of missing-value reason codes to excluded row counts.
+        calendar_support: Outcome-specific counts per requested comparison, or None.
 
     Example:
         tr.export.preflight_export(
@@ -79,6 +189,7 @@ class ExportPreflight:
 
     table: pa.Table
     excluded_counts: Mapping[str, int]
+    calendar_support: tuple[CalendarContrastSupport, ...] | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "excluded_counts", MappingProxyType(dict(self.excluded_counts)))
@@ -91,10 +202,12 @@ class WarehousePreflight:
     Args:
         table: Ibis Table of admitted rows, valid only inside the export context.
         excluded_counts: Mapping of missing-value reason codes to excluded row counts.
+        calendar_support: Outcome-specific counts per requested comparison, or None.
 
     Attributes:
         table: Ibis Table of admitted rows, valid only inside the export context.
         excluded_counts: Mapping of missing-value reason codes to excluded row counts.
+        calendar_support: Outcome-specific counts per requested comparison, or None.
 
     Example:
         with tr.export.preflight_warehouse(
@@ -108,6 +221,7 @@ class WarehousePreflight:
 
     table: ir.Table
     excluded_counts: Mapping[str, int]
+    calendar_support: tuple[CalendarContrastSupport, ...] | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "excluded_counts", MappingProxyType(dict(self.excluded_counts)))
@@ -180,11 +294,198 @@ def _complete_outcomes(
     return ExportPreflight(table, excluded)
 
 
+def _contrast_error(
+    request: CalendarContrast,
+    *,
+    comparison_period: int,
+    period: int,
+    arm: str,
+    reason: str,
+    **counts,
+):
+    return _CALENDAR_CONTRAST_UNSUPPORTED.error(
+        outcome=request.outcome,
+        cohort=request.cohort.isoformat(),
+        reference_period=request.reference_period,
+        comparison_periods=request.comparison_periods,
+        comparison_period=comparison_period,
+        period=period,
+        paired=request.paired,
+        arm=arm,
+        reason=reason,
+        route=_DESCRIPTIVE_ROUTE,
+        **counts,
+    )
+
+
+def _contrast_evidence(
+    request: CalendarContrast,
+    roles: Roles,
+    columns: Mapping[str, ColumnMeta],
+    provenance: Provenance,
+    names: Sequence[str],
+) -> str:
+    """Identify the requested outcome's completeness column and observed grid."""
+    if not isinstance(request, CalendarContrast):
+        raise _INVALID_INPUT.error(field="calendar_contrast", reason="wrong_type")
+    comparison = provenance.calendar_comparison
+    outcome = columns.get(request.outcome)
+    complete = outcome.complete_column if outcome is not None else None
+    observed = (
+        {cell.period for cell in comparison.support if cell.cohort == request.cohort}
+        if comparison is not None and comparison.support is not None
+        else set()
+    )
+    required = {
+        roles.unit,
+        "cohort",
+        "event_period",
+        "treatment",
+        "control_eligible",
+        request.outcome,
+    }
+    ready = (
+        provenance.shape == "calendar_comparison"
+        and comparison is not None
+        and request.reference_period == comparison.reference_period
+        and request.outcome in roles.outcomes
+        and required <= set(names)
+        and complete is not None
+        and complete in names
+    )
+    for period in request.comparison_periods:
+        if (
+            not ready
+            or comparison is None
+            or period not in comparison.comparison_periods
+            or request.reference_period not in observed
+            or period not in observed
+        ):
+            raise _contrast_error(
+                request,
+                comparison_period=period,
+                period=(
+                    request.reference_period if request.reference_period not in observed else period
+                ),
+                arm="both",
+                reason="unobservable",
+            )
+    assert complete is not None
+    return complete
+
+
+def _require_contrast(
+    request: CalendarContrast, support: tuple[CalendarContrastSupport, ...]
+) -> tuple[CalendarContrastSupport, ...]:
+    for cell in support:
+        for arm, margins, pairs in (
+            ("treated", cell.treated, cell.treated_pairs),
+            ("control", cell.control, cell.control_pairs),
+        ):
+            if 0 not in margins and (not request.paired or pairs):
+                continue
+            empty_margin = 0 in margins
+            raise _contrast_error(
+                request,
+                comparison_period=cell.comparison_period,
+                period=request.reference_period if not margins[0] else cell.comparison_period,
+                arm=arm,
+                reason="empty_margin" if empty_margin else "empty_pair",
+                treated=cell.treated,
+                control=cell.control,
+                treated_pairs=cell.treated_pairs,
+                control_pairs=cell.control_pairs,
+            )
+    return support
+
+
+def _arrow_contrast(
+    table: pa.Table, request: CalendarContrast, complete: str, unit: str
+) -> tuple[CalendarContrastSupport, ...]:
+    selected = {request.reference_period, *request.comparison_periods}
+    units: dict[tuple[bool, int], set[pa.Scalar]] = defaultdict(set)
+    for cohort, period, treated, control, key, known, y in zip(
+        table["cohort"].to_pylist(),
+        table["event_period"].to_pylist(),
+        table["treatment"].to_pylist(),
+        table["control_eligible"].to_pylist(),
+        table[unit],
+        table[complete].to_pylist(),
+        table[request.outcome],
+        strict=True,
+    ):
+        if (
+            cohort == request.cohort
+            and period in selected
+            and key.is_valid
+            and known is True
+            and y.is_valid
+            and (treated is True or (treated is False and control is True))
+        ):
+            units[treated, period].add(key)
+    treated_ref, control_ref = (units[arm, request.reference_period] for arm in (True, False))
+    support = []
+    for period in request.comparison_periods:
+        treated, control = units[True, period], units[False, period]
+        support.append(
+            CalendarContrastSupport(
+                comparison_period=period,
+                treated=(len(treated_ref), len(treated)),
+                control=(len(control_ref), len(control)),
+                treated_pairs=len(treated_ref & treated),
+                control_pairs=len(control_ref & control),
+            )
+        )
+    return _require_contrast(request, tuple(support))
+
+
+def _warehouse_contrast(
+    table: ir.Table, request: CalendarContrast, complete: str, unit: str
+) -> tuple[CalendarContrastSupport, ...]:
+    periods = (request.reference_period, *request.comparison_periods)
+    usable = table.filter(
+        table.cohort == request.cohort,
+        table.event_period.isin(periods),
+        table[unit].notnull(),
+        table[complete].fill_null(False),
+        table[request.outcome].notnull(),
+    )
+    arms = {"treated": usable.treatment, "control": ~usable.treatment & usable.control_eligible}
+    # Reduce to presence flags per unit before counting; never transfer the unit IDs.
+    flags = {
+        f"{arm}_{i}": (eligible & (usable.event_period == period)).any()
+        for arm, eligible in arms.items()
+        for i, period in enumerate(periods)
+    }
+    per_unit = usable.group_by(usable[unit].name("__terrine_contrast_unit")).aggregate(**flags)
+    counts = {name: per_unit[name].cast("int64").sum().fill_null(0) for name in flags}
+    for arm in _ARMS:
+        ref = per_unit[f"{arm}_0"]
+        for i in range(1, len(periods)):
+            pair = ref & per_unit[f"{arm}_{i}"]
+            counts[f"{arm}_pair_{i}"] = pair.cast("int64").sum().fill_null(0)
+    totals = per_unit.aggregate(**counts).to_pyarrow().to_pylist()[0]
+    return _require_contrast(
+        request,
+        tuple(
+            CalendarContrastSupport(
+                comparison_period=period,
+                treated=(totals["treated_0"], totals[f"treated_{i}"]),
+                control=(totals["control_0"], totals[f"control_{i}"]),
+                treated_pairs=totals[f"treated_pair_{i}"],
+                control_pairs=totals[f"control_pair_{i}"],
+            )
+            for i, period in enumerate(request.comparison_periods, 1)
+        ),
+    )
+
+
 def preflight_export(
     data: MaterializedFrame,
     *,
     drop_incomplete: bool = False,
     consumer: Literal["dowhy"] | None = None,
+    calendar_contrast: CalendarContrast | None = None,
 ) -> ExportPreflight:
     """Check eligibility, unit identity and outcome completeness before export.
 
@@ -196,6 +497,8 @@ def preflight_export(
         drop_incomplete: Whether to drop incomplete outcomes explicitly; False refuses them.
         consumer: "dowhy" applies its additional hand-off restrictions; None applies shared checks
             only.
+        calendar_contrast: Check outcome-specific margins and, if paired, usable same-unit pairs.
+            None returns descriptive rows without claiming contrast support.
 
     Returns:
         An ExportPreflight containing admitted rows and excluded counts.
@@ -222,6 +525,15 @@ def preflight_export(
             getattr(roles, name) is not None for name in ("weight", "target_weight", "trial_weight")
         ):
             raise _UNSUPPORTED_WEIGHTS.error(consumer=consumer)
+    if calendar_contrast is not None:
+        complete = _contrast_evidence(
+            calendar_contrast, roles, data.columns, data.provenance, checked.table.column_names
+        )
+        return ExportPreflight(
+            checked.table,
+            checked.excluded_counts,
+            _arrow_contrast(checked.table, calendar_contrast, complete, roles.unit),
+        )
     return checked
 
 
@@ -233,6 +545,7 @@ def preflight_warehouse(
     columns: Mapping[str, ColumnMeta],
     provenance: Provenance,
     drop_incomplete: bool = False,
+    calendar_contrast: CalendarContrast | None = None,
 ) -> Generator[WarehousePreflight]:
     """Check export hazards for a verified dataset relation inside one DuckDB transaction.
 
@@ -245,6 +558,8 @@ def preflight_warehouse(
         columns: Mapping of column names to ColumnMeta for this relation.
         provenance: Provenance belonging to this relation and its admitted snapshot.
         drop_incomplete: Whether to drop incomplete outcomes explicitly; False refuses them.
+        calendar_contrast: Check outcome-specific margins and, if paired, usable same-unit pairs
+            inside this transaction. None returns descriptive rows without checking a contrast.
 
     Yields:
         WarehousePreflight: Checked relation and exclusion counts inside the pinned transaction.
@@ -316,6 +631,13 @@ def preflight_warehouse(
             counts = evidence.group_by("reason").aggregate(n=ibis._.count()).to_pyarrow()
             excluded = {row["reason"]: row["n"] for row in counts.to_pylist()}
         _check_exclusions(excluded, drop=drop_incomplete)
-        yield WarehousePreflight(table.filter(keep) if keep else table, excluded)
+        checked = table.filter(keep) if keep else table
+        support = None
+        if calendar_contrast is not None:
+            complete = _contrast_evidence(
+                calendar_contrast, roles, columns, provenance, checked.columns
+            )
+            support = _warehouse_contrast(checked, calendar_contrast, complete, roles.unit)
+        yield WarehousePreflight(checked, excluded, support)
     finally:
         con.raw_sql("ROLLBACK")

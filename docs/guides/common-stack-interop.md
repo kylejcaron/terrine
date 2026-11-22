@@ -77,8 +77,10 @@ incomplete value left null rather than imputed; it cannot be combined with
 `include_observation_metadata=True` (`terrine.dataset.invalid_view`,
 `reason="values_only_excludes_observation_metadata"`). A compact view is not a
 reconstructable MaterializedFrame.
-`MaterializedFrame.from_arrow()` refuses missing required observation columns with
-`terrine.metadata.missing_columns` rather than guessing or reattaching rows.
+Typed Arrow and JSON imports refuse missing role, value, support or recorded
+bookkeeping columns with `terrine.metadata.missing_columns`. They also reject
+ambiguous names and incompatible support types. A surrogate Arrow projection
+has its own envelope and is not a lossless frame.
 
 Arrow stores roles, design/model identities, temporal cutoffs,
 completeness/null-reason references, numeric policies, the engine stamp and
@@ -88,6 +90,13 @@ required bookkeeping column names under `terrine.materialized_frame.v2`
 current Terrine version rather than editing saved metadata. Unrelated schema
 metadata is retained. Neither pandas nor Polars promises to retain Terrine
 schema metadata.
+
+`MaterializedFrame.from_arrow()` checks consistency, not authorship or row
+membership. Arrow can keep the first input's metadata when concatenating
+tables, even if later inputs use a different Design or input revision.
+Filtering can likewise leave population counts unchanged. Do not treat either
+result as the original generation: use plain Arrow without the Terrine envelope,
+or build a new Design or view with its own identity and counts.
 
 The engine stamp (`Provenance.engine_name`, `dialect`, `engine_status`) names
 the backend that executed, the admitted expression policy and whether that
@@ -118,6 +127,7 @@ dataset = frame.stage("training_dataset", budget=budget)
 for batch in dataset.to_arrow_batches(batch_size=65_536):
     print(batch.num_rows)
 export = dataset.export_parquet(destination="exports/training", budget=budget)
+restored = export.read_frame("exports/training")
 ```
 
 The export's parent directory must already exist. Dataset batch reads do not
@@ -126,6 +136,13 @@ batches through PyArrow and keeps schema metadata in every shard, including an
 empty export's schema-only shard. Native warehouse unload is not required or
 claimed. Output export limits apply to the exported generation, not to original
 source scan work.
+
+`read_frame()` collects one complete export in memory. Pass the manifest
+returned by `export_parquet()` or a trusted copy restored with
+`ExportManifest.from_json()`. The reader uses only its listed files, checks
+their bytes and row counts, and verifies their schemas and common input
+identity before combining them. It does not infer partition values from
+directory names or trust a manifest found in an arbitrary directory.
 
 Retain the Dataset manifest and export manifest alongside Parquet shards. The
 Dataset manifest records the pinned output generation, column roles/metadata,

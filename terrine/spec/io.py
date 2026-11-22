@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Set
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
@@ -14,6 +14,14 @@ from yaml.resolver import BaseResolver
 
 from terrine._time import utc_instant
 from terrine.errors import RefusalSpec, TerrineError
+from terrine.spec._design_structure import (
+    _COMPARISON_TAGS,
+    _COMPARISONS,
+    _DEFAULTS,
+    OUTPUT_NODES,
+    RECORD_FIELDS,
+    TAGGED_RECORDS,
+)
 from terrine.spec.anchors import AnchorRange, EventAnchor, FixedDate, Schedule
 from terrine.spec.design import Design, Treatment
 from terrine.spec.expressions import (
@@ -78,66 +86,6 @@ SCHEMA_VERSION = 4
 _INVALID = RefusalSpec("terrine.design.invalid", "Design document is invalid: {reason}.")
 _INVALID_INPUT = RefusalSpec("terrine.design.invalid", "Design input {field} is invalid: {reason}.")
 
-# Encoded default of every optional document field, by node tag. Encoders omit a field equal to
-# its default and decoders supply it, so an optional field added later leaves existing documents
-# and digests unchanged. A default never changes within a document version.
-_DEFAULTS: Mapping[str, Mapping[str, Any]] = {
-    "Design": {
-        "features": {},
-        "outcomes": {},
-        "eligibility": {},
-        "treatment": None,
-        "gap": "0s",
-        "shape": "cross_section",
-        "anchor_range": None,
-        "sample": None,
-        "administrative_cutoff": None,
-    },
-    "EventAnchor": {"occurrence": "first", "n": None, "offset": "0s"},
-    "AnchorRange": {"start": None, "end": None},
-    "StateObservations": {"ordered": True, "absorbing": []},
-    "EventSequence": {
-        "representation": "positions",
-        "properties": [],
-        "label_property": None,
-        "sessions": None,
-        "funnel": None,
-    },
-    "FunnelSpec": {"within": None},
-    "StatePanel": {"baseline_features": {}},
-    "Initiation": {"knowledge": "recorded_at"},
-    "PersistentAdoption": {"persistence": "absorbing", "knowledge": "recorded_at"},
-    "TrialWeight": {"values": None},
-    "SequentialSpec": {"trial_weight": None, "anticipation": "0s", "reference_period": "-1d"},
-    "CalendarComparisonSpec": {"anticipation_periods": []},
-    "Trajectory": {"cumulative": False},
-    "TimeToEvent": {"exit_event": None, "entry_event": None, "delayed_entry": False},
-    "LifeTable": {"group_by": []},
-    "MetricQuantile": {"interpolation": "linear_type7"},
-    "MetricAgg": {"relative_to": None},
-    "AttributeAsOf": {"relative_to": None},
-    "EventTime": {
-        "label_property": None,
-        "equals": None,
-        "occurrence": "first",
-        "n": None,
-        "relative_to": None,
-        "measure": "time",
-    },
-    "IsNull": {"negate": False},
-    "Treatment": {"at": "0s", "known_at_t0": False},
-}
-# Single-literal comparisons share one node shape, {"type", "expr", "value"}.
-_COMPARISONS: Mapping[str, type[Eq | Ne | Gt | Gte | Lt | Lte]] = {
-    "Eq": Eq,
-    "Ne": Ne,
-    "Gt": Gt,
-    "Gte": Gte,
-    "Lt": Lt,
-    "Lte": Lte,
-}
-_COMPARISON_TAGS = {kind: tag for tag, kind in _COMPARISONS.items()}
-
 
 def _canonical_bytes(payload: Any) -> bytes:
     return json.dumps(
@@ -186,9 +134,11 @@ def _omit_defaults(name: str, node: dict[str, Any]) -> dict[str, Any]:
     return _drop_defaults(node, _DEFAULTS.get(name, {}))
 
 
-def _fields(value: Any, name: str, required: set[str]) -> dict[str, Any]:
-    defaults = _DEFAULTS[name]
-    return {**defaults, **_object(value, required | set(defaults), required)}
+def _fields(value: Any, name: str) -> dict[str, Any]:
+    allowed, required = RECORD_FIELDS[name]
+    item = _object(value, allowed, required)
+    defaults = _DEFAULTS.get(name)
+    return item if defaults is None else {**defaults, **item}
 
 
 class _UniqueSafeLoader(yaml.SafeLoader):
@@ -596,7 +546,7 @@ def to_yaml(design: Design) -> str:
     return yaml.safe_dump(payload, allow_unicode=True, sort_keys=True, default_flow_style=False)
 
 
-def _object(value: Any, allowed: set[str], required: set[str] | None = None) -> dict[str, Any]:
+def _object(value: Any, allowed: Set[str], required: Set[str] | None = None) -> dict[str, Any]:
     if not isinstance(value, dict) or any(not isinstance(k, str) for k in value):
         raise ValueError("expected a mapping")
     required = allowed if required is None else required
@@ -607,7 +557,7 @@ def _object(value: Any, allowed: set[str], required: set[str] | None = None) -> 
 
 
 def _read_date(value: Any) -> date | datetime:
-    item = _object(value, {"type", "value"})
+    item = _fields(value, "Temporal")
     if not isinstance(item["value"], str):
         raise ValueError("date value must be text")
     if item["type"] == "date":
@@ -644,12 +594,13 @@ def _node(value: Any) -> Any:
     if not isinstance(value, dict) or not isinstance(value.get("type"), str):
         raise ValueError("expected a tagged specification node")
     tag = value["type"]
+    if tag not in TAGGED_RECORDS:
+        raise ValueError(f"unknown specification node: {tag}")
+    item = _fields(value, tag)
     if tag == "FixedDate":
-        item = _object(value, {"type", "date"})
         bound = _read_date(item["date"])
         return FixedDate(bound)
     if tag == "EventSequence":
-        item = _fields(value, "EventSequence", {"type", "event", "window", "max_events"})
         return EventSequence(
             item["event"],
             _node(item["window"]),
@@ -661,61 +612,49 @@ def _node(value: Any) -> Any:
             funnel=None if item["funnel"] is None else _node(item["funnel"]),
         )
     if tag == "SessionSpec":
-        item = _object(value, {"type", "gap"})
         return SessionSpec(_duration_text(item["gap"]))
     if tag == "FunnelSpec":
-        item = _fields(value, "FunnelSpec", {"type", "event_property", "steps"})
         return FunnelSpec(
             item["event_property"],
             tuple(item["steps"]),
             None if item["within"] is None else _duration_text(item["within"]),
         )
     if tag == "EventAnchor":
-        item = _fields(value, "EventAnchor", {"type", "event"})
         return EventAnchor(
             item["event"], item["occurrence"], item["n"], _duration_text(item["offset"])
         )
     if tag == "Schedule":
-        item = _object(value, {"type", "every", "start", "end"})
         start, end = _read_date(item["start"]), _read_date(item["end"])
         if isinstance(start, datetime) or isinstance(end, datetime):
             raise ValueError("Schedule bounds require dates")
         return Schedule(_step_text(item["every"]), start, end)
     if tag == "AnchorRange":
-        item = _fields(value, "AnchorRange", {"type"})
         start = None if item["start"] is None else _read_date(item["start"])
         end = None if item["end"] is None else _read_date(item["end"])
         return AnchorRange(start, end)
     if tag == "StateObservations":
-        item = _fields(value, "StateObservations", {"type", "property", "levels"})
         return StateObservations(
             item["property"], tuple(item["levels"]), item["ordered"], tuple(item["absorbing"])
         )
     if tag == "BinnedMetricState":
-        item = _object(value, {"type", "metric", "cutpoints", "levels"})
         return BinnedMetricState(
             item["metric"],
             tuple(decode_cutpoint(v) for v in item["cutpoints"]),
             tuple(item["levels"]),
         )
     if tag == "StatePanel":
-        item = _fields(value, "StatePanel", {"type", "state", "periods"})
         raw = item["baseline_features"]
         if not isinstance(raw, dict):
             raise ValueError("baseline_features must be a mapping")
         baseline = {key: _node(node) for key, node in raw.items()}
         return StatePanel(_node(item["state"]), periods=item["periods"], baseline_features=baseline)
     if tag == "Initiation":
-        item = _fields(value, "Initiation", {"type", "event", "history_start"})
         return Initiation(
             item["event"],
             history_start=datetime.fromisoformat(item["history_start"]),
             knowledge=item["knowledge"],
         )
     if tag == "PersistentAdoption":
-        item = _fields(
-            value, "PersistentAdoption", {"type", "event", "adopted_value", "history_start"}
-        )
         return PersistentAdoption(
             item["event"],
             adopted_value=item["adopted_value"],
@@ -724,13 +663,10 @@ def _node(value: Any) -> Any:
             knowledge=item["knowledge"],
         )
     if tag == "MatchedT0Sample":
-        item = _object(value, {"type", "strata", "controls_per_treated", "seed"})
         return MatchedT0Sample(tuple(item["strata"]), item["controls_per_treated"], item["seed"])
     if tag == "TrialWeight":
-        item = _fields(value, "TrialWeight", {"type", "kind"})
         return TrialWeight(item["kind"], item["values"])
     if tag == "SequentialSpec":
-        item = _fields(value, "SequentialSpec", {"type", "treatment"})
         weight = None if item["trial_weight"] is None else _node(item["trial_weight"])
         return SequentialSpec(
             _node(item["treatment"]),
@@ -739,16 +675,10 @@ def _node(value: Any) -> Any:
             _duration_text(item["reference_period"]),
         )
     if tag == "EventPanelSpec":
-        item = _object(value, {"type", "periods", "period", "reference_period"})
         return EventPanelSpec(
             tuple(item["periods"]), _duration_text(item["period"]), item["reference_period"]
         )
     if tag == "CalendarComparisonSpec":
-        item = _fields(
-            value,
-            "CalendarComparisonSpec",
-            {"type", "cohort", "control", "reference_period", "comparison_periods"},
-        )
         return CalendarComparisonSpec(
             _node(item["cohort"]),
             item["control"],
@@ -757,15 +687,12 @@ def _node(value: Any) -> Any:
             tuple(item["anticipation_periods"]),
         )
     if tag == "Trajectory":
-        item = _fields(value, "Trajectory", {"type", "metric", "period", "periods"})
         return Trajectory(
             item["metric"], _duration_text(item["period"]), item["periods"], item["cumulative"]
         )
     if tag == "CohortSpec":
-        item = _object(value, {"type", "origin", "trajectory"})
         return CohortSpec(item["origin"], _node(item["trajectory"]))
     if tag == "TimeToEvent":
-        item = _fields(value, "TimeToEvent", {"type", "end_event"})
         return TimeToEvent(
             item["end_event"],
             exit_event=item["exit_event"],
@@ -773,16 +700,13 @@ def _node(value: Any) -> Any:
             delayed_entry=item["delayed_entry"],
         )
     if tag == "LifeTable":
-        item = _fields(value, "LifeTable", {"type", "time_to_event", "bin"})
         groups = item["group_by"]
         if not isinstance(groups, list) or any(not isinstance(name, str) for name in groups):
             raise ValueError("LifeTable group_by must be a list of feature names")
         return LifeTable(_node(item["time_to_event"]), _duration_text(item["bin"]), tuple(groups))
     if tag == "Window":
-        item = _object(value, {"type", "start", "end"})
         return Window(_duration_text(item["start"]), _duration_text(item["end"]))
     if tag == "MetricQuantile":
-        item = _fields(value, "MetricQuantile", {"type", "metric", "probability", "window"})
         return MetricQuantile(
             item["metric"],
             _decimal_string(item["probability"]),
@@ -790,27 +714,14 @@ def _node(value: Any) -> Any:
             item["interpolation"],
         )
     if tag == "ApproxMetricQuantile":
-        item = _object(value, {"type", "metric", "probability", "window"})
         return ApproxMetricQuantile(
             item["metric"],
             _decimal_string(item["probability"]),
             _node(item["window"]),
         )
     if tag == "ApproxMetricDistinct":
-        item = _object(value, {"type", "metric", "window"})
         return ApproxMetricDistinct(item["metric"], _node(item["window"]))
     if tag == "RetentionMetric":
-        item = _object(
-            value,
-            {
-                "type",
-                "event",
-                "label_property",
-                "target_event",
-                "count_thresholds",
-                "horizon",
-            },
-        )
         return RetentionMetric(
             item["event"],
             item["label_property"],
@@ -819,21 +730,18 @@ def _node(value: Any) -> Any:
             None if item["horizon"] is None else _duration_text(item["horizon"]),
         )
     if tag == "MetricAgg":
-        item = _fields(value, "MetricAgg", {"type", "metric", "window"})
         return MetricAgg(
             item["metric"],
             _node(item["window"]),
             None if item["relative_to"] is None else _node(item["relative_to"]),
         )
     if tag == "AttributeAsOf":
-        item = _fields(value, "AttributeAsOf", {"type", "attribute", "before"})
         return AttributeAsOf(
             item["attribute"],
             _duration_text(item["before"]),
             None if item["relative_to"] is None else _node(item["relative_to"]),
         )
     if tag == "EventTime":
-        item = _fields(value, "EventTime", {"type", "event", "window"})
         return EventTime(
             item["event"],
             _node(item["window"]),
@@ -845,36 +753,29 @@ def _node(value: Any) -> Any:
             measure=item["measure"],
         )
     if tag in _COMPARISONS:
-        item = _object(value, {"type", "expr", "value"})
         return _COMPARISONS[tag](_node(item["expr"]), item["value"])
     if tag == "IsIn":
-        item = _object(value, {"type", "expr", "values"})
         if not isinstance(item["values"], list):
             raise ValueError("IsIn values must be a list")
         return IsIn(_node(item["expr"]), item["values"])
     if tag == "Between":
-        item = _object(value, {"type", "expr", "low", "high"})
         return Between(_node(item["expr"]), item["low"], item["high"])
     if tag == "IsNull":
-        item = _fields(value, "IsNull", {"type", "expr"})
         return IsNull(_node(item["expr"]), item["negate"])
     if tag in ("And", "Or"):
-        item = _object(value, {"type", "terms"})
         if not isinstance(item["terms"], list):
             raise ValueError(f"{tag} terms must be a list")
         terms = tuple(_node(term) for term in item["terms"])
         return And(terms) if tag == "And" else Or(terms)
     if tag == "Not":
-        item = _object(value, {"type", "term"})
         return Not(_node(item["term"]))
     if tag == "Treatment":
-        item = _fields(value, "Treatment", {"type", "attribute"})
         return Treatment(item["attribute"], _duration_text(item["at"]), item["known_at_t0"])
     raise ValueError(f"unknown specification node: {tag}")
 
 
 def _design(value: Any) -> Design:
-    item = _fields(value, "Design", {"unit", "anchor"})
+    item = _fields(value, "Design")
 
     def named(raw: Any, allowed: tuple[type, ...]) -> dict[str, Any]:
         if not isinstance(raw, dict):
@@ -902,21 +803,11 @@ def _design(value: Any) -> Design:
     unit = item["unit"]
     if unit is not None and not isinstance(unit, str):
         raise TypeError("unit must be a string or null")
-    outputs = (
-        MetricAgg,
-        MetricQuantile,
-        ApproxMetricQuantile,
-        ApproxMetricDistinct,
-        RetentionMetric,
-        AttributeAsOf,
-        EventTime,
-        *_PREDICATE_NODES,
-    )
     return Design(
         unit,
         anchor,
-        features=named(item["features"], outputs),
-        outcomes=named(item["outcomes"], outputs),
+        features=named(item["features"], OUTPUT_NODES),
+        outcomes=named(item["outcomes"], OUTPUT_NODES),
         eligibility=named(item["eligibility"], _PREDICATE_NODES),
         treatment=treatment,
         gap=_duration_text(item["gap"]),

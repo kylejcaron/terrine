@@ -28,6 +28,9 @@ from terrine.data import (
     Provenance,
     Roles,
     SamplingMeta,
+    StudyAssumptions,
+    SurvivalFlow,
+    SurvivalGroupFlow,
     dataframe_view_preflight,
 )
 from terrine.errors import RefusalSpec, TerrineError
@@ -41,7 +44,9 @@ from terrine.execution.gates import (
 )
 from terrine.semantic.models import BoundDimension, BoundMetric, BoundSource
 from terrine.spec.anchors import FixedDate
+from terrine.spec.dataset import DatasetDefinition
 from terrine.spec.design import _output_shape_name
+from terrine.spec.io import _encode
 from terrine.spec.sequence import EventSequence
 from terrine.spec.state_panel import BinnedMetricState, StatePanel
 from terrine.spec.trajectory import CohortGrouping, CohortSpec, LifeTable, TimeToEvent
@@ -97,6 +102,66 @@ def _add_life_table_timing(table: pa.Table, synthesized: list[tuple[str, int]]) 
             ),
         )
     return table
+
+
+def _survival_flow(
+    counts: pa.Table,
+    life_table: LifeTable | None,
+    emitted_rows: int,
+    *,
+    input_schema: pa.Schema,
+    winsorizations: tuple[Winsorization, ...],
+) -> SurvivalFlow:
+    group_by = () if life_table is None else life_table.group_by
+    for name in group_by:
+        column = counts[name]
+        dtype = input_schema.field(name).type
+        if column.type != dtype:
+            index = counts.schema.get_field_index(name)
+            counts = counts.set_column(index, name, column.cast(dtype))
+    group_transforms = tuple(item for item in winsorizations if item.column in group_by)
+    if group_transforms:
+        # Clamp only the compact group keys, using the same Arrow transform as the bins.
+        counts = import_module("terrine.dataset.transforms").apply_winsorization(
+            counts, group_transforms
+        )
+    eligible = excluded = retained = 0
+    groups: dict[tuple[Any, ...], tuple[int, int, int]] = {}
+    for row in counts.to_pylist():
+        subjects = row["__terrine_eligible_subjects"]
+        prevalent = row["__terrine_prevalent_exclusions"]
+        records = row["__terrine_retained_records"]
+        eligible += subjects
+        excluded += prevalent
+        retained += records
+        if group_by:
+            key = tuple(row[name] for name in group_by)
+            previous = groups.get(key)
+            # Survival admits one anchor per unit (first/nth event or one fixed
+            # date with a checked unique roster). Feature and first-event joins
+            # preserve that grain, so original groups have disjoint subjects.
+            groups[key] = (
+                (subjects, prevalent, records)
+                if previous is None
+                else (previous[0] + subjects, previous[1] + prevalent, previous[2] + records)
+            )
+    return SurvivalFlow(
+        eligible_subjects=eligible,
+        prevalent_exclusions=excluded,
+        retained_records=retained,
+        emitted_grain="person_records" if life_table is None else "group_bins",
+        emitted_rows=emitted_rows,
+        group_by=group_by,
+        groups=tuple(
+            SurvivalGroupFlow(
+                values=key,
+                eligible_subjects=subjects,
+                prevalent_exclusions=prevalent,
+                retained_records=records,
+            )
+            for key, (subjects, prevalent, records) in groups.items()
+        ),
+    )
 
 
 _INVALID_SPLIT = RefusalSpec(
@@ -179,8 +244,10 @@ def _definition_record(value: object) -> object:
             field.name: _definition_record(getattr(value, field.name)) for field in fields(value)
         }
         # Preserve existing feature identities when shared-only fields are unused.
-        if isinstance(value, BoundSource) and value.row_key is None:
-            del record["row_key"]
+        if isinstance(value, BoundSource):
+            del record["event_types"]  # Derived metadata, not part of the definition.
+            if value.row_key is None:
+                del record["row_key"]
         if isinstance(value, BoundDimension) and value.foreign_key is None:
             del record["foreign_key"]
         if isinstance(value, BoundMetric):
@@ -381,6 +448,10 @@ def _apply_training_view(compiled: CompiledStudy, view: _TrainingView) -> Compil
         "gap",
         "terminal",
     )
+    if roles.trial == "cohort":
+        from terrine.spec._columns import CALENDAR_COMPARISON
+
+        structural = (*structural, *CALENDAR_COMPARISON)
     names = list(dict.fromkeys((roles.unit, roles.anchor, roles.t0, *view.features, *view.labels)))
     for name in (*role_columns, *structural):
         if name is not None and name in compiled.table.columns and name not in names:
@@ -512,9 +583,22 @@ class Frame:
 
     def _active_compiled(self, compiled: CompiledStudy | None = None) -> CompiledStudy:
         active = self._compiled if compiled is None else compiled
+        return self._with_winsorization_metadata(self._project_view(active))
+
+    def _project_view(self, compiled: CompiledStudy) -> CompiledStudy:
         if self._training_view is not None:
-            active = _apply_training_view(active, self._training_view)
-        return self._with_winsorization_metadata(active)
+            return _apply_training_view(compiled, self._training_view)
+        view = self._scoring_view
+        if view is None or view.features == compiled.roles.features:
+            return compiled
+        selected = set(view.features)
+        requested = iter(view.features)
+        names = [next(requested) if name in selected else name for name in compiled.table.columns]
+        return replace(
+            compiled,
+            table=compiled.table.select(*names),
+            roles=replace(compiled.roles, features=view.features),
+        )
 
     def _with_winsorization_metadata(self, compiled: CompiledStudy) -> CompiledStudy:
         if not self._winsorizations:
@@ -560,6 +644,54 @@ class Frame:
     @property
     def columns(self):
         return self._active_compiled().columns
+
+    @property
+    def assumptions(self) -> StudyAssumptions:
+        """Report historical input assumptions and native float decisions without reading rows."""
+        from terrine.compile._assumptions import study_assumptions
+
+        view = self._training_view
+        return study_assumptions(
+            self._design,
+            self._model,
+            features=None if view is None else view.features,
+            labels=None if view is None else view.labels,
+        )
+
+    def to_definition(self) -> DatasetDefinition:
+        """Return the resolved design, selected view and frozen transforms without reading data.
+
+        The definition records the bound split or absolute scoring time, but not a
+        connection, source snapshot or published generation.
+
+        Returns:
+            A portable definition that can rebuild this Frame on compatible model bindings.
+        """
+        return self._project_definition(self._winsorizations)
+
+    def _project_definition(self, transforms: tuple[Winsorization, ...]) -> DatasetDefinition:
+        view = None
+        if self._training_view is not None:
+            training = self._training_view
+            view = {
+                "kind": "training",
+                "features": list(training.features),
+                "labels": list(training.labels),
+                "incomplete_labels": training.incomplete_labels,
+                "split": None
+                if training.split is None
+                else cast(_SplitPolicy, training.split).to_record(),
+            }
+        elif self._scoring_view is not None:
+            scoring = self._scoring_view
+            view = {
+                "kind": "scoring",
+                "features": list(scoring.features),
+                "as_of": scoring.resolved_as_of.isoformat(),
+                "eligibility": _encode(self._design.eligibility),
+                "parent_design_hash": scoring.parent_design_hash,
+            }
+        return DatasetDefinition(base_design=self._design, view=view, transforms=transforms)
 
     def training_set(
         self,
@@ -714,7 +846,7 @@ class Frame:
         transforms.require_numeric_type(
             self._active_compiled().table.schema()[column].to_pyarrow(), column
         )
-        definition = import_module("terrine.dataset.reference")._definition_for(self)
+        definition = self._project_definition(())
         return transforms.fit_winsorization(
             self.materialize(budget=budget),
             column=column,
@@ -741,9 +873,7 @@ class Frame:
         if bound.fit is not None:
             fit = bound.fit
             if self._training_view is not None:
-                definition = import_module("terrine.dataset.reference")._definition_for(
-                    self, include_transforms=False
-                )
+                definition = self._project_definition(())
                 compatible = definition.digest == fit.definition_hash
             else:
                 compatible = (
@@ -825,8 +955,7 @@ class Frame:
             # so an unsupported primitive refuses before the first source read.
             context.admit(*compiled.reads())
             study = compiled
-            if self._training_view is not None:
-                compiled = _apply_training_view(compiled, self._training_view)
+            compiled = self._project_view(compiled)
             if transform is not None:
                 compiled = transform(compiled)
                 context.admit(*compiled.reads())
@@ -949,6 +1078,19 @@ class Frame:
             table, split_counts = self._split_output(table, compiled)
             for reason, count in split_counts.items():
                 excluded_counts[reason] = excluded_counts.get(reason, 0) + count
+            # Count from the admitted, eligible population in the same view. Run only
+            # after the checked output reader closes, including its empty-result gate.
+            survival_flow = (
+                _survival_flow(
+                    context.execute(study._survival_counts),
+                    life_table,
+                    table.num_rows,
+                    input_schema=schema,
+                    winsorizations=self._winsorizations,
+                )
+                if study._survival_counts is not None
+                else None
+            )
             treatment = self._design.treatment
             treatment_column = compiled.roles.treatment
             baseline_binary = (
@@ -961,6 +1103,11 @@ class Frame:
                 and pa.types.is_boolean(table.schema.field(treatment_column).type)
             )
             calendar_comparison = _provenance.calendar_comparison_metadata(self._design, model)
+            if calendar_comparison is not None and compiled.calendar_cohorts is not None:
+                cohorts = context.execute(compiled.calendar_cohorts)["cohort"]
+                calendar_comparison = _provenance.with_calendar_support(
+                    calendar_comparison, cohorts, table
+                )
             panel = _provenance.panel_metadata(self._design, model)
 
             feature_cutoffs = compiled.feature_cutoffs
@@ -997,6 +1144,7 @@ class Frame:
                 dialect=expression_policy(model),
                 engine_status=model._engine.status,
                 eligibility_summary=summary,
+                survival_flow=survival_flow,
                 treatment_knowledge="retrospective_effective_time"
                 if treatment is not None
                 else None,

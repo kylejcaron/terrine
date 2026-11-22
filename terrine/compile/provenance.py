@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from collections import defaultdict
+from dataclasses import replace
 from datetime import UTC
 from typing import TYPE_CHECKING
 
 from terrine.data import (
     CalendarComparisonMeta,
+    CalendarSupportCell,
     PanelMeta,
     StatePanelMeta,
     TreatmentHistoryMeta,
@@ -16,6 +19,10 @@ from terrine.windows import Duration
 EXECUTION_REVISION = 2
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
+    import pyarrow as pa
+
     from terrine.model import Model
     from terrine.spec.design import Design
 
@@ -129,4 +136,36 @@ def calendar_comparison_metadata(design: Design, model: Model) -> CalendarCompar
         comparison_periods=design.shape.comparison_periods,
         anticipation_periods=design.shape.anticipation_periods,
         period_seconds=design.anchor.every.seconds,
+    )
+
+
+def with_calendar_support(
+    metadata: CalendarComparisonMeta, cohorts: pa.ChunkedArray, rows: pa.Table
+) -> CalendarComparisonMeta:
+    """Count distinct emitted units over the original, independently observed cohort grid."""
+    units: dict[tuple[datetime, int, bool], set[pa.Scalar]] = defaultdict(set)
+    for cohort, period, unit, treated, control in zip(
+        rows["cohort"].to_pylist(),
+        rows["event_period"].to_pylist(),
+        rows["unit"],
+        rows["treatment"].to_pylist(),
+        rows["control_eligible"].to_pylist(),
+        strict=True,
+    ):
+        if unit.is_valid and (treated is True or (treated is False and control is True)):
+            units[cohort, period, treated].add(unit)
+    periods = metadata._period_kinds()
+    return replace(
+        metadata,
+        support=tuple(
+            CalendarSupportCell(
+                cohort=cohort,
+                period=period,
+                kind=kind,
+                treated=len(units.get((cohort, period, True), ())),
+                control=len(units.get((cohort, period, False), ())),
+            )
+            for cohort in cohorts.to_pylist()
+            for period, kind in periods.items()
+        ),
     )

@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import TYPE_CHECKING
 
+from terrine.data import _ARROW_METADATA_KEY, _LEGACY_ARROW_METADATA_KEY
 from terrine.errors import RefusalSpec
 
 if TYPE_CHECKING:
@@ -22,6 +23,15 @@ _INVALID = RefusalSpec(
     "Surrogate export input is invalid ({reason}).",
 )
 _SURROGATE_METADATA_KEY = b"terrine.surrogate_arrow.v1"
+
+
+def _without_frame_envelope(table: pa.Table) -> pa.Table:
+    metadata = table.schema.metadata
+    if metadata and (_ARROW_METADATA_KEY in metadata or _LEGACY_ARROW_METADATA_KEY in metadata):
+        metadata.pop(_ARROW_METADATA_KEY, None)
+        metadata.pop(_LEGACY_ARROW_METADATA_KEY, None)
+        return table.replace_schema_metadata(metadata or None)
+    return table
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +62,7 @@ class ArrowSurrogate:
             raise _INVALID.error(reason="wrong_type", field="data")
         if not isinstance(self.metadata, Mapping):
             raise _INVALID.error(reason="wrong_type", field="metadata")
+        object.__setattr__(self, "data", _without_frame_envelope(self.data))
         object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))
 
     @classmethod
@@ -86,6 +97,8 @@ def to_surrogate_arrow(
     data: MaterializedFrame, *, features: tuple[str, ...], outcomes: tuple[str, ...]
 ) -> ArrowSurrogate:
     """Select Arrow training values while retaining unit identity and completeness evidence.
+
+    The projection has its own envelope; it cannot reconstruct a lossless frame.
 
     Args:
         data: MaterializedFrame carrying checked roles, column metadata, completeness and

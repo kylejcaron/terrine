@@ -68,6 +68,7 @@ CODES: frozenset[str] = frozenset(
         "terrine.execution.arrow_timestamp_range",
         "terrine.execution.invalid_input_binding",
         "terrine.execution.snapshot_unavailable",
+        "terrine.export.calendar_contrast_unsupported",
         "terrine.export.cluster_required",
         "terrine.export.grace_baseline_treatment",
         "terrine.export.incomplete_outcome",

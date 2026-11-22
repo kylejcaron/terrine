@@ -13,7 +13,7 @@ import pytest
 
 from examples.ml_staging import create_model, training_design
 from integration.warehouse_execution.ml_staging_fixtures import run_script, training_view
-from terrine import Budget, agg
+from terrine import Budget, Model, UnitSource, agg, asof
 from terrine.compile.provenance import EXECUTION_REVISION
 from terrine.data import Coverage
 from terrine.dataset.export import ExportManifest
@@ -40,7 +40,6 @@ import json, sys
 from pathlib import Path
 import ibis
 import pyarrow as pa
-import pyarrow.parquet as pq
 from examples.ml_staging import bind_model
 from integration.warehouse_execution.ml_staging_fixtures import training_view
 from terrine import Budget
@@ -80,16 +79,17 @@ try:
     reason = actual.columns["following_amount"].reason_column
     assert actual.table[reason].to_pylist() == ["incomplete_coverage"] * 2
     assert manifest.definition.digest == refreshed.manifest.definition.digest
-    exported = refreshed.export_parquet(destination=str(root / "parquet"), budget=budget)
-    tables = []
-    for shard in exported.shards:
-        parquet = pq.ParquetFile(root / "parquet" / shard.path)
-        tables.extend(
-            pa.Table.from_batches([batch]) for batch in parquet.iter_batches(batch_size=1)
-        )
-    restored = MaterializedFrame.from_arrow(pa.concat_tables(tables))
-    assert restored.table.sort_by("unit").equals(actual.table.sort_by("unit"))
+    destination = root / "parquet"
+    exported = refreshed.export_parquet(
+        destination=str(destination), partition_by=("unit",), budget=budget
+    )
+    assert len(exported.shards) == 2
+    restored = exported.read_frame(destination)
+    assert restored.table.equals(actual.table)
     assert restored.to_metadata() == actual.to_metadata()
+    assert restored.provenance.execution_snapshot.replay_equivalence == "verified"
+    assert restored.provenance.eligibility_summary.retained == 2
+    assert restored.provenance.dataset_view.counts_by_reason == {"incomplete_coverage": 2}
     saved, key = con.con.execute(
         "SELECT recipe_json,request_key FROM terrine_runtime.runtime_dataset_recipes "
         "WHERE dataset='training' AND generation=?", [refreshed.manifest.generation.generation_id]
@@ -365,6 +365,75 @@ def test_parquet_export_preserves_pinned_arrow_schema_and_refuses_overwrite(
     assert limit_error.value.code == "terrine.budget.rows_exceeded"
 
 
+def test_parquet_read_frame_preserves_list_valued_roster_attribute(tmp_path):
+    model = create_model(tmp_path / "owner.duckdb")
+    con = model.con
+    destination = tmp_path / "export"
+    try:
+        con.raw_sql("ALTER TABLE users ADD COLUMN tags VARCHAR[]")
+        con.raw_sql("UPDATE users SET tags = ['active', NULL] WHERE user_id = 1")
+        con.raw_sql("UPDATE users SET tags = [] WHERE user_id = 2")
+        con.raw_sql("INSERT INTO users (user_id) VALUES (3)")
+        model = Model.from_catalog(
+            model.catalog,
+            con=con,
+            units={"user": UnitSource("users", "user_id", attributes=("tags",))},
+            readiness=model.readiness,
+        )
+        dataset = (
+            Design("user", FixedDate("2025-01-02"), features={"tags": asof("tags")})
+            .build(model)
+            .stage("roster_tags", budget=Budget(strict_scan=False))
+        )
+        exported = dataset.export_parquet(destination=str(destination))
+    finally:
+        con.disconnect()
+
+    restored = exported.read_frame(destination).table
+    dtype = restored.schema.field("tags").type
+    assert isinstance(dtype, pa.ListType)
+    assert dtype.value_field.equals(pa.field("item", pa.string()), check_metadata=True)
+    assert restored.select(["unit", "tags"]).to_pylist() == [
+        {"unit": 1, "tags": ["active", None]},
+        {"unit": 2, "tags": []},
+        {"unit": 3, "tags": None},
+    ]
+
+
+def test_read_frame_refuses_shards_with_different_snapshot_provenance(events_dataset, tmp_path):
+    from hashlib import sha256
+
+    from terrine.dataset.export import ExportShard
+
+    directory = tmp_path / "original"
+    original = events_dataset.export_parquet(destination=str(directory)).read_frame(directory)
+    first, second = original.table.slice(0, 1), original.table.slice(1, 1)
+    altered = replace(original.provenance.execution_snapshot, snapshot_id="0" * 32)
+    provenance = replace(original.provenance, execution_snapshot=altered)
+    frames = (
+        replace(original, table=first),
+        replace(original, table=second, provenance=provenance),
+    )
+    shards = []
+    for index, frame in enumerate(frames):
+        path = tmp_path / f"mixed-{index}.parquet"
+        pq.write_table(frame.to_pyarrow(), path)
+        data = path.read_bytes()
+        shards.append(ExportShard(path.name, sha256(data).hexdigest(), 1, len(data)))
+    manifest = ExportManifest(
+        "events",
+        "mixed",
+        tuple(shards),
+        2,
+        sum(shard.byte_count for shard in shards),
+        tuple((field.name, str(field.type)) for field in first.schema),
+    )
+    with pytest.raises(TerrineError) as error:
+        manifest.read_frame(tmp_path)
+    assert error.value.code == "terrine.dataset.invalid_export"
+    assert error.value.context["reason"] == "mixed_shard_schema"
+
+
 def test_export_discards_unfinished_shard_and_rewrites_on_retry(
     events_dataset, tmp_path, monkeypatch
 ):
@@ -563,8 +632,6 @@ def test_export_retry_resyncs_parent_after_interrupted_publication(
 def test_empty_training_export_preserves_complete_arrow_metadata(
     empty_training_dataset, tmp_path, partition_by
 ):
-    from terrine.data import MaterializedFrame
-
     dataset = empty_training_dataset
     assert dataset.manifest.generation.row_count == 0
     schema = dataset._arrow_schema()
@@ -577,11 +644,9 @@ def test_empty_training_export_preserves_complete_arrow_metadata(
     )
     assert export.row_count == 0
     assert len(export.shards) == 1
-    shard = destination / export.shards[0].path
-    restored = pq.read_table(shard)
-    assert restored.num_rows == 0
-    assert restored.schema.equals(schema, check_metadata=True)
-    frame = MaterializedFrame.from_arrow(restored)
+    frame = export.read_frame(destination)
+    assert frame.table.num_rows == 0
+    assert frame.to_pyarrow().schema.equals(schema, check_metadata=True)
     assert frame.roles.features == ("sessions",)
     assert frame.roles.outcomes == ("churn",)
     assert frame.provenance.dataset_view is not None

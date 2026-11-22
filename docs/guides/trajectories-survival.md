@@ -131,6 +131,15 @@ When a design declares a treatment, each retained survival row includes the
 `treatment` value and its support metadata. The `treatment` role refers to that
 output column; event and censoring rules are unchanged.
 
+Inspect `frame.materialize().provenance.survival_flow` to see how many distinct
+eligible subjects entered the survival step, how many were excluded for having
+the event before entry, and how many person records remained. Retained records
+include incomplete follow-up. `emitted_rows` counts the final rows after view
+filters; for survival records, `emitted_grain` is `"person_records"`.
+The separate `eligibility_summary` still reports the original eligibility
+decisions, not prevalence exclusions. Counts are unknown (`survival_flow` is
+`None`) on statement-scoped backends and in older results without this metadata.
+
 ### Landmark survival
 
 To begin follow-up after a baseline period, use an offset event anchor with the
@@ -154,8 +163,7 @@ Here `t0 = purchase + 1d`, and the half-open feature window covers
 measured from the landmark, not from purchase. A churn event strictly before
 the landmark excludes that unit as prevalent; an event exactly at the
 landmark remains eligible. This conditions the dataset on being at risk at
-the landmark; it is not survival from purchase. Prevalent exclusions are not
-currently reported as a separate count.
+the landmark; it is not survival from purchase.
 
 Offsets are non-negative elapsed durations, not calendar-day shifts.
 `anchor_range` filters original purchase instants after first/nth selection,
@@ -179,6 +187,14 @@ Neither `treatment` nor `outcomes` is accepted.
 `group_by` maps each grouping column's name to its expression or predicate; those
 names are the design's features and the life table's groups, so nothing can be
 declared as a feature without grouping by it. With no groups, omit it.
+
+For a life table, `provenance.survival_flow.emitted_rows` counts group-bins
+(`emitted_grain="group_bins"`), not people. If you declare `group_by`, the
+flow also reports the subject and person-record counts for each tuple of group
+values in the declared column order, after any winsorization of those values.
+Groups with only prevalent subjects remain in the flow even though they emit
+no bins. If all eligible subjects are prevalent, the result has no rows but
+still reports the exclusions.
 
 Grouping features may be expressions or Boolean predicates. Their timing support
 is the conservative interval from the earliest contributing start to the latest

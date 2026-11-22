@@ -12,10 +12,10 @@ import pytest
 
 from terrine import Budget, agg
 from terrine.data import Coverage, MaterializedFrame, UnitSource
-from terrine.dataset.reference import _definition_for
 from terrine.dataset.splits import GroupSplit, TimeSplit, group_bucket
 from terrine.errors import TerrineError, thaw
 from terrine.model import Model
+from terrine.runtime.saved_plan import SavedPlan
 from terrine.spec import Design, EventAnchor, gt
 from terrine.spec.dataset import DatasetDefinition
 from tests import _worlds
@@ -72,6 +72,51 @@ def test_training_drop_counts_labels_before_assigning_split_overlap(events_world
     assert view_metadata["counts_by_reason"] == counts
 
 
+def test_training_split_assigns_support_without_reassigning_overlap(events_world, tmp_path):
+    initial, con = _durable_frame(events_world, tmp_path)
+    base = Design(
+        "user",
+        EventAnchor("session"),
+        features={"sessions": agg("sessions", window=("-1d", "0s"))},
+        outcomes={
+            "churn": agg("churned", window=("0s", "1d")),
+            "repeat_churn": agg("churned", window=("0s", "1d")),
+        },
+    ).build(initial._model)
+    training = base.training_set(
+        label=("repeat_churn", "churn"),
+        incomplete_labels="keep",
+        split=TimeSplit(train_until="2025-01-03T12:00:00Z"),
+    )
+    ordinary = training.materialize(budget=Budget(strict_scan=False))
+    assert ordinary.table["__terrine_split"].to_pylist() == ["unassigned"] * 2
+    assert ordinary.table["__terrine_split_reason"].to_pylist() == ["label_overlap"] * 2
+    assert ordinary.provenance.dataset_view is not None
+    assert ordinary.provenance.dataset_view.counts_by_reason == {"label_overlap": 2}
+    definition = training.to_definition()
+    stored = definition.canonical_json()
+    rebuilt = DatasetDefinition.from_json(stored).build(initial._model).materialize()
+    assert rebuilt.roles.outcomes == ("repeat_churn", "churn")
+    assert rebuilt.provenance.dataset_view == ordinary.provenance.dataset_view
+    assert rebuilt.table.sort_by("unit").equals(ordinary.table.sort_by("unit"))
+    staged = training.stage("training", budget=Budget(strict_scan=False))
+    assert staged.manifest.definition.canonical_json() == stored
+    assert staged.manifest.definition_hash == definition.digest
+    (request,) = con.con.execute(
+        f'SELECT recipe_json FROM "{staged._namespace}".runtime_dataset_requests'
+    ).fetchone()
+    assert SavedPlan.from_json(request).dataset_definition_json == stored.decode()
+    actual = MaterializedFrame.from_arrow(
+        pa.Table.from_batches(list(staged.to_arrow_batches(batch_size=1)))
+    )
+    assert actual.provenance.dataset_view == ordinary.provenance.dataset_view
+    assert actual.table.sort_by("unit").equals(ordinary.table.sort_by("unit"))
+    assert staged.manifest.frame_metadata["provenance"]["dataset_view"]["counts_by_reason"] == {
+        "label_overlap": 2
+    }
+    con.disconnect()
+
+
 def test_group_split_view_matches_typed_reference_and_reconstruction(events_world, tmp_path):
     initial, con = _durable_frame(events_world, tmp_path)
     policy = GroupSplit(seed=17)
@@ -80,10 +125,10 @@ def test_group_split_view_matches_typed_reference_and_reconstruction(events_worl
     assert result.table["__terrine_split"].to_pylist() == [
         group_bucket(key, policy) for key in result.table["unit"].to_pylist()
     ]
+    definition = DatasetDefinition.from_json(training.to_definition().canonical_json())
+    rebuilt = definition.build(initial._model).materialize(budget=Budget(strict_scan=False))
     staged = training.stage("groups", budget=Budget(strict_scan=False))
-    rebuilt = staged.manifest.definition.build(initial._model).materialize(
-        budget=Budget(strict_scan=False)
-    )
+    assert staged.manifest.definition == definition
     assert rebuilt.table.sort_by("unit").equals(result.table.sort_by("unit"))
     con.disconnect()
 
@@ -104,7 +149,10 @@ def test_scoring_today_is_resolved_once_at_catalog_day_boundary(
     design = Design(
         "user",
         EventAnchor("session"),
-        features={"past_sessions": agg("sessions", window=("-1d", "0d"))},
+        features={
+            "past_sessions": agg("sessions", window=("-1d", "0d")),
+            "recent_sessions": agg("sessions", window=("-2d", "0d")),
+        },
         outcomes={"churn": agg("churned", window=("0d", "1d"))},
     )
     from terrine.errors import TerrineError
@@ -130,12 +178,13 @@ def test_scoring_today_is_resolved_once_at_catalog_day_boundary(
 
     monkeypatch.setattr("terrine.spec.design.datetime", FrozenDateTime)
     eligibility = {"active": gt(agg("sessions", window=("-1d", "0d")), 0)}
+    selected = ("recent_sessions", "past_sessions")
 
     scoring = design.snapshot(
         model,
         as_of="today",
         eligibility=eligibility,
-        features=("past_sessions",),
+        features=selected,
     )
     from terrine.frame import _feature_definition_hash
 
@@ -145,24 +194,39 @@ def test_scoring_today_is_resolved_once_at_catalog_day_boundary(
     assert FrozenDateTime.calls == 1
 
     assert scoring.roles.outcomes == ()
-    assert scoring.roles.features == ("past_sessions",)
+    from terrine.data import MaterializedFrame
+
     result = scoring.materialize()
+    for restored in (
+        MaterializedFrame.from_arrow(result.to_pyarrow()),
+        MaterializedFrame.from_json(result.to_json()),
+    ):
+        assert restored.roles.features == selected
+        assert restored.table.equals(result.table)
+    assert scoring.roles.features == selected
+    assert tuple(name for name in result.table.column_names if name in selected) == selected
     view = result.provenance.dataset_view
     assert view is not None
     assert view.kind == "scoring"
-    assert view.selected_features == ("past_sessions",)
+    assert view.selected_features == selected
     assert view.selected_labels == ()
     assert view.resolved_as_of is not None
     assert view.resolved_as_of.isoformat() == "2025-01-05T00:00:00+00:00"
     assert result.roles.outcomes == ()
     assert isinstance(design.anchor, EventAnchor)
     assert "churn" in design.outcomes
+    definition = scoring.to_definition()
+    rebuilt = DatasetDefinition.from_json(definition.canonical_json()).build(model).materialize()
+    assert rebuilt.table.equals(result.table)
+    assert rebuilt.provenance.dataset_view == view
     staged = scoring.stage("scoring", budget=Budget(strict_scan=False))
     assert staged.manifest.definition.view["kind"] == "scoring"
-    assert staged.manifest.definition.view["features"] == ("past_sessions",)
+    assert staged.manifest.definition.view["features"] == selected
     assert staged.manifest.definition.view["as_of"] == view.resolved_as_of.isoformat()
     assert staged.manifest.definition.view["eligibility"]["active"]
     assert staged.manifest.definition.view["parent_design_hash"] == design.spec_hash
+    assert staged.manifest.definition == definition
+    assert FrozenDateTime.calls == 1
     pandas_snapshot = staged.to_pandas()
     polars_snapshot = staged.to_polars()
     assert "unit" in pandas_snapshot.columns
@@ -177,12 +241,10 @@ def test_owner_prepares_scoring_view_before_preflight_without_label_inputs(
     import json
 
     import terrine.compile.dispatch as dispatch
-    from terrine.dataset.reference import _definition_for
     from terrine.runtime.owner import RuntimeOwner
     from terrine.runtime.planning import OwnerPlanner, PlanRequest
-    from terrine.runtime.saved_plan import DestinationRef, ModelReference, SavedPlan
+    from terrine.runtime.saved_plan import DestinationRef, ModelReference
     from terrine.runtime.snapshot import SnapshotAuthority
-    from terrine.spec.dataset import DatasetDefinition
 
     catalog, source = native_inputs
     database = tmp_path / "scoring-owner.duckdb"
@@ -202,7 +264,7 @@ def test_owner_prepares_scoring_view_before_preflight_without_label_inputs(
             features={"past_sessions": agg("sessions", window=("-1d", "0s"))},
             outcomes={"churn": agg("churned", window=("0s", "1d"))},
         )
-        definition = _definition_for(parent.snapshot(model, as_of="2025-01-05", eligibility={}))
+        definition = parent.snapshot(model, as_of="2025-01-05", eligibility={}).to_definition()
         owner = RuntimeOwner.from_connection(con)
         reference = ModelReference.from_model(model, owner_key=owner.reference)
         con.drop_table("labels")
@@ -280,7 +342,7 @@ def test_percentile_threshold_fits_training_rows_only_and_freezes_definition(mod
     fitted = frame.fit_winsorization("value", lower="0.25", upper="0.75")
     assert fitted.lower == Decimal(5) and fitted.upper == Decimal(15)
     assert fitted.fit.row_count == fitted.fit.non_null_count == 3
-    assert fitted.fit.definition_hash == _definition_for(frame).digest
+    assert fitted.fit.definition_hash == frame.to_definition().digest
     raw = frame.materialize()
     assert fitted.fit.view_hash == raw.provenance.dataset_view.view_hash
     reference = raw.table.to_pandas()
@@ -306,8 +368,8 @@ def test_percentile_threshold_fits_training_rows_only_and_freezes_definition(mod
         Decimal(15),
         Decimal(15),
     ]
-    definition = _definition_for(transformed)
-    assert definition.digest != _definition_for(frame).digest
+    definition = transformed.to_definition()
+    assert definition.digest != frame.to_definition().digest
     restored = DatasetDefinition.from_json(definition.canonical_json())
     actual = restored.build(model).materialize()
     assert actual.table.equals(result.table)
@@ -352,17 +414,21 @@ def test_fitting_requires_declared_training_split_and_exact_numeric_feature(mode
     assert labels.value.code == "terrine.export.incomplete_outcome"
 
 
-def test_fitted_transform_refuses_different_feature_definition(model):
+def test_rebuilt_definition_refuses_an_incompatible_fitted_transform(model):
     from dataclasses import replace
 
     from terrine.spec import agg
 
     fitted = training(model).fit_winsorization("value", lower="0.25", upper="0.75")
     changed = replace(design(), features={"value": agg("total", window=("-2d", "0s"))})
+    scoring = changed.snapshot(model, as_of="2025-01-08", features=("value",), eligibility={})
+    exported = scoring.to_definition()
+    definition = DatasetDefinition(
+        base_design=exported.base_design, view=thaw(exported.view), transforms=(fitted,)
+    )
+    restored = DatasetDefinition.from_json(definition.canonical_json())
     with pytest.raises(TerrineError) as error:
-        changed.snapshot(model, as_of="2025-01-08", features=("value",), eligibility={}).winsorize(
-            fitted
-        )
+        restored.build(model)
     assert error.value.code == "terrine.transform.winsorization_identity_mismatch"
 
 
@@ -378,9 +444,9 @@ def test_inferred_unit_snapshot_shares_identity_with_the_explicit_design(model):
     assert inferred_view is not None and explicit_view is not None
     assert inferred_view.view_hash == explicit_view.view_hash
     assert inferred_scored.table.equals(explicit_scored.table)
-    definition = _definition_for(inferred.snapshot(model, **kwargs))
+    definition = inferred.snapshot(model, **kwargs).to_definition()
     assert definition.view["parent_design_hash"] == explicit.spec_hash
-    assert definition.digest == _definition_for(explicit.snapshot(model, **kwargs)).digest
+    assert definition.digest == explicit.snapshot(model, **kwargs).to_definition().digest
 
 
 def test_staged_definition_records_the_resolved_unit(events_world, tmp_path):
@@ -399,7 +465,7 @@ def test_staged_definition_records_the_resolved_unit(events_world, tmp_path):
         definition = dataset.manifest.definition
         assert definition.base_design.unit == "user"
         assert definition.base_design == explicit
-        assert definition.digest == _definition_for(explicit.build(bound)).digest
+        assert definition.digest == explicit.build(bound).to_definition().digest
         assert dataset.manifest.design_hash == explicit.spec_hash
     finally:
         bound.con.disconnect()
@@ -425,14 +491,15 @@ def test_independently_fitted_features_compose_and_reopen(model):
     first = frame.fit_winsorization("value", lower="0.25", upper="0.75")
     second = frame.fit_winsorization("other", lower="0.25", upper="0.75")
     transformed = frame.winsorize(first).winsorize(second)
-    definition = DatasetDefinition.from_json(_definition_for(transformed).canonical_json())
+    definition = DatasetDefinition.from_json(transformed.to_definition().canonical_json())
     result = definition.build(model).materialize()
     assert definition.transforms == (first, second)
+    assert result.roles.features == ("value", "other")
     assert result.table.sort_by("t0")["value"].to_pylist() == [
         Decimal(value) for value in (5, 10, 15, 15, 15)
     ]
     assert result.table["other"].equals(result.table["value"])
-    assert first.fit.definition_hash == second.fit.definition_hash == _definition_for(frame).digest
+    assert first.fit.definition_hash == second.fit.definition_hash == frame.to_definition().digest
 
 
 @pytest.mark.parametrize("kind", ("quantile", "approximate_distinct"))
