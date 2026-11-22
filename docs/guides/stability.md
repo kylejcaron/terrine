@@ -215,7 +215,7 @@ administrative compatibility does not permit obsolete execution or replay
   the exact release notes, verified before PyPI publication and published
   verbatim. A waiver is not verification. See the
   [dated backend results](backend-compatibility.md#backend-verification-status)
-  and the [release checklist](../../CONTRIBUTING.md#cloud-evidence-and-waivers).
+  and the [release checklist](https://github.com/kylejcaron/terrine/blob/main/CONTRIBUTING.md#cloud-evidence-and-waivers).
 - An [upgrade test](../../integration/test_release_upgrade.py) installs each
   published release listed in `tests/artifacts/RELEASES`, starting with
   `0.1.0a1`, into an isolated interpreter, stages a dataset with it and reopens
