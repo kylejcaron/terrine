@@ -45,6 +45,51 @@ Local examples explicitly collect the checked rows into pandas. Retain the origi
 `MaterializedFrame` alongside the downstream object for role/provenance inspection;
 consumer dataframes are not portable Terrine metadata containers.
 
+## Calendar contrasts: check the requested outcome
+
+To audit a calendar comparison, call `frame.materialize(include_population=True)`.
+This adds one read in the same verified view to record distinct **emitted**
+treated and eligible control units in `materialized.provenance.calendar_comparison.support`.
+The grid includes every original focal cohort and its reference, comparison and
+anticipation periods, even if eligibility or a training selection leaves a cell
+empty. These counts describe rows, not outcome availability.
+
+To check a contrast, pass a `CalendarContrast` to `preflight_export`, or pass the
+same request to `preflight_warehouse` when the verified table is already in DuckDB:
+
+```python
+from datetime import UTC, datetime
+from terrine.export import CalendarContrast, preflight_export
+
+materialized = frame.materialize(include_population=True)
+contrast = CalendarContrast(
+    outcome="y", cohort=datetime(2025, 1, 3, tzinfo=UTC),
+    reference_period=-1, comparison_periods=(0, 1),
+)
+checked = preflight_export(materialized, calendar_contrast=contrast)
+for cell in checked.calendar_support or ():
+    print(cell.comparison_period, cell.treated, cell.control)
+```
+
+Each margin is `(reference, comparison)` and counts distinct units with a
+complete, non-null `y` after the ordinary hand-off filters. A complete null does
+not count; a complete zero with `below_resolution` does. `treated_pairs` and
+`control_pairs` count same-unit overlap separately for each comparison. Set
+`paired=True` to require overlap in both arms for a paired panel. Repeated cross
+sections need nonempty margins, not pairs.
+
+Use the checked route before presenting a contrast as supported. The returned
+rows still include the rest of the admitted dataset; select the requested cohort,
+periods and usable rows for the downstream analysis. A support check does not
+establish estimability, identification or parallel trends.
+
+`terrine.export.calendar_contrast_unsupported` identifies the outcome, cohort,
+period and arm that lacks evidence or usable units. Omit `calendar_contrast` to
+keep descriptive output. By default, on statement-scoped reads, and in older
+metadata, `support=None` means unknown. Neither zeros nor contrast support are
+inferred. The support record is versioned separately from Arrow/JSON
+metadata; earlier records without it still decode.
+
 ## DoubleML: retain repeated-unit clusters
 
 ```python
@@ -343,6 +388,8 @@ never-treated encoding). This is not a lifetime never-treated claim. Validate
 sufficient history for your study. An initiation indicator that turns back off is
 not persistent adoption; treatment reversals, nonbinary/null treatment and duplicate
 unit-period rows are refused rather than repaired.
+Calendar-comparison stacks are also refused: focal membership is not observed
+persistent adoption, even if a single stack has unique unit-period keys.
 
 The generated `__terrine_period` is positive so treatment in original period zero
 does not collide with the never-treated sentinel. Integer periods shift by a

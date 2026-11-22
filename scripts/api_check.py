@@ -62,6 +62,7 @@ PROVISIONAL_NAMES: frozenset[str] = frozenset(
         "terrine.windows.duration",
         "terrine.data.ApproximationMeta",
         "terrine.data.CalendarComparisonMeta",
+        "terrine.data.CalendarSupportCell",
         "terrine.data.CohortOperationMeta",
         "terrine.data.ColumnMeta",
         "terrine.data.DatasetViewMeta",

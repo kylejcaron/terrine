@@ -419,5 +419,11 @@ def compile_calendar_comparison(design: Design, model: Model) -> CompiledStudy:
         ),
         expression_timings=compiled.expression_timings,
         range_plans=compiled.range_plans,
+        # Statement-scoped providers cannot certify this independent read against the output.
+        calendar_cohorts=(
+            cohort_units.select(cohort=cohort_units.cohort_time).distinct()
+            if model._engine.status == "verified"
+            else None
+        ),
         source_reads=compiled.source_reads,
     )

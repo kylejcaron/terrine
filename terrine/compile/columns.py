@@ -206,9 +206,11 @@ class CompiledStudy:
     _anchors: AnchorTable
     _checks: tuple[_DeferredCheck | RowCheckGroup, ...]
     expression_timings: Mapping[str, ExpressionTiming] = field(default_factory=dict)
+    _survival_counts: ibis.Table | None = None
     sequence_meta: SequenceMeta | None = None
     sketches: tuple[SketchSidecar, ...] = ()
     range_plans: Mapping[str, RangePlan] = field(default_factory=dict)
+    calendar_cohorts: ibis.Table | None = None
     source_reads: tuple[_SourceRead, ...] = ()
 
     def _publish(self) -> None:
@@ -344,9 +346,9 @@ class CompiledStudy:
 
     def reads(self) -> tuple[ibis.Table, ...]:
         """Every relation materialization may execute: the output, its audit, the
-        anchor checks, each gate statement of the check schedule, each check
-        that runs on its own and each sketch sidecar, so admission can inspect
-        them before the first source row is read."""
+        anchor checks, each gate statement of the check schedule, each check that runs on its
+        own, and required sketch sidecars, so admission can inspect them before the first
+        source row is read. Optional population reads are admitted by the caller."""
         relations = [self.table, self.audit_table, *self._anchors.reads()]
         *earlier, final = fold(self._checks)
         for item in earlier:

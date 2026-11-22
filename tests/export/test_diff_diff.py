@@ -105,6 +105,19 @@ def test_diff_diff_preflight_precedes_mapping_validation(panel):
     assert error.value.code == "terrine.export.cluster_required"
 
 
+def test_diff_diff_does_not_encode_stacked_membership_as_adoption(panel):
+    # A single stack has no duplicate (unit, period) keys to catch the misinterpretation.
+    frame = replace(
+        panel,
+        table=panel.table.set_column(3, "a", pa.array([1, 1, 1, 0, 0, 0])),
+        provenance=replace(panel.provenance, shape="calendar_comparison"),
+    )
+    with pytest.raises(TerrineError) as caught:
+        exports.to_diff_diff(frame, period_col="t0")
+    assert caught.value.code == "terrine.diff_diff.invalid_panel"
+    assert caught.value.context["reason"] == "stacked_focal_membership"
+
+
 def test_nanosecond_periods_without_pandas_receive_coded_dependency_refusal(panel, tmp_path):
     import subprocess
     import sys

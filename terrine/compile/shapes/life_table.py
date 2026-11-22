@@ -11,6 +11,7 @@ from typing import Any
 import pyarrow as pa
 
 import terrine.reasons as reason_codes
+from terrine.data import _survival_group_key
 from terrine.errors import RefusalSpec
 from terrine.spec._columns import IDENTITY, LIFE_TABLE_VALUES
 
@@ -83,6 +84,7 @@ class _LifeTableAccumulator:
             raise ValueError("unsupported life-table grouping support policy")
         self._schema = schema
         self._group_by = tuple(group_by)
+        self._float_group = any(pa.types.is_floating(schema.field(name).type) for name in group_by)
         self._group_supports = group_supports
         self._has_complete = "duration__complete" in names
         self._has_reason = "duration__reason" in names
@@ -121,6 +123,8 @@ class _LifeTableAccumulator:
         for index, (key, origin, duration, entry, valid, record_reason) in enumerate(
             zip(keys, origins, durations, entries, complete, record_reasons, strict=True)
         ):
+            if self._float_group:
+                key = _survival_group_key(key)
             is_complete = valid is True
             if not is_complete:
                 self._groups[key].incomplete.add(record_reason or reason_codes.REASON_UNAVAILABLE)

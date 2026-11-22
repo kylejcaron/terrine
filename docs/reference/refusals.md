@@ -248,6 +248,7 @@ Satisfy shared preflight and the library shape contract.
 
 | Code | Tier | Message template | Interpolation fields | Declaration |
 | --- | --- | --- | --- | --- |
+| `terrine.export.calendar_contrast_unsupported` | Provisional | <code>Calendar contrast for {outcome!r} in cohort {cohort}, reference {reference_period}, comparison {comparison_period}, lacks {arm} support ({reason}); {route}.</code> | `arm`, `cohort`, `comparison_period`, `outcome`, `reason`, `reference_period`, `route` | [terrine/export/preflight.py](../../terrine/export/preflight.py) |
 | `terrine.export.cluster_required` | Provisional | <code>Repeated rows per independent unit require a valid cluster column; declare the unit cluster.</code> | None | [terrine/export/preflight.py](../../terrine/export/preflight.py) |
 | `terrine.export.grace_baseline_treatment` | Provisional | <code>Grace-defined treatment cannot be exported as a baseline treatment; use a baseline design.</code> | None | [terrine/export/preflight.py](../../terrine/export/preflight.py) |
 | `terrine.export.incomplete_outcome` | Provisional | <code>Outcome windows are incomplete; provide complete data or explicitly drop incomplete rows.</code> | None | [terrine/export/preflight.py](../../terrine/export/preflight.py) |
