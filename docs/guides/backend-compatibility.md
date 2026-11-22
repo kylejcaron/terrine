@@ -33,7 +33,7 @@ orchestration or modeling libraries support that interpreter.
 | `airflow` | Airflow 3.3.2 / standard provider 1.20.1; [adapter tests](../../tests/adapters/test_airflow.py) |
 | `dagster` | Dagster 1.13.26; [adapter tests](../../tests/adapters/test_dagster.py) |
 | `dbt` | Core 1.10.13 / dbt-duckdb 1.9.6; [adapter tests](../../tests/adapters/test_dbt_core_after_build.py) |
-| `increment` | 0.1.0a2; [independent optional compatibility contract][increment] |
+| `increment` | Pins `increment==0.1.0a2`; [optional compatibility contract][increment] |
 | `sketches` | DataSketches 5.2 or later below 6; [sketch support/refusals][sketches] |
 | `doubleml`, `duckreg`, `lifelines`, `diff-diff` | Pinned downstream versions in `pyproject.toml`; [real library hand-offs][libraries] |
 | `dowhy` | 0.14 on Python **below 3.14 only**; dependency marker omits it on 3.14, not a promise of adapter availability |

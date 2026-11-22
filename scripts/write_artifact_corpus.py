@@ -214,17 +214,13 @@ def _recipe_documents(data: Path) -> dict[str, dict[str, str]]:
         for name, design in recipe_designs().items():
             definition = DatasetDefinition(base_design=design)
             definition_text = definition.canonical_json().decode()
-            frames = {
-                "design.json": design.build(model),
-                "design.yaml": design.build(model),
-                "definition.json": DatasetDefinition.from_json(definition_text).build(model),
-            }
+            schema = output_schema(DatasetDefinition.from_json(definition_text).build(model))
             documents[name] = {
                 "design.json": to_json(design),
                 "design.yaml": to_yaml(design),
                 "definition.json": definition_text,
                 "expected_schema.json": json.dumps(
-                    {document: output_schema(frame) for document, frame in frames.items()},
+                    dict.fromkeys(("design.json", "design.yaml", "definition.json"), schema),
                     indent=2,
                 )
                 + "\n",

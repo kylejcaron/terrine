@@ -29,18 +29,31 @@ def test_generation_designs_compile_to_recorded_schema(design_path):
     def read(name: str) -> str:
         return (directory / name).read_text(encoding="utf-8")
 
+    definitions = {
+        "design.json": DatasetDefinition(base_design=from_json(read("design.json"))),
+        "design.yaml": DatasetDefinition(base_design=from_yaml(read("design.yaml"))),
+        "definition.json": DatasetDefinition.from_json(read("definition.json")),
+    }
+    recipe = directory != CORPUS
+    if recipe:
+        canonical = definitions["definition.json"].canonical_json()
+        for name in ("design.json", "design.yaml"):
+            assert definitions[name].canonical_json() == canonical, (
+                f"{name} differs from definition.json"
+            )
+
     with _reproducible_staging():
         con = ibis.duckdb.connect()
         try:
             model = bind_model(con, CORPUS / "data")
-            frames = {
-                "design.json": from_json(read("design.json")).build(model),
-                "design.yaml": from_yaml(read("design.yaml")).build(model),
-                "definition.json": DatasetDefinition.from_json(read("definition.json")).build(
-                    model
-                ),
-            }
-            schemas = {name: output_schema(frame) for name, frame in frames.items()}
+            if recipe:
+                schema = output_schema(definitions["definition.json"].build(model))
+                schemas = dict.fromkeys(definitions, schema)
+            else:
+                schemas = {
+                    name: output_schema(definition.build(model))
+                    for name, definition in definitions.items()
+                }
         finally:
             con.disconnect()
     expected_schema = json.loads(read("expected_schema.json"))

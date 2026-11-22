@@ -51,6 +51,15 @@ def check_artifacts(wheel: Path, sdist: Path) -> None:
         wheel_notices = archive.read(notices[0]).decode()
         metadata_name = next(name for name in wheel_names if name.endswith(".dist-info/METADATA"))
         metadata = BytesParser().parsebytes(archive.read(metadata_name))
+        increment_requirements = [
+            requirement
+            for requirement in metadata.get_all("Requires-Dist", [])
+            if re.match(r"increment(?![\w.-])", requirement, flags=re.IGNORECASE)
+        ]
+        assert len(increment_requirements) == 1 and re.fullmatch(
+            r"""increment\s*==\s*0\.1\.0a2\s*;\s*extra\s*==\s*(['"])increment\1""",
+            increment_requirements[0],
+        ), f"Expected increment==0.1.0a2 only for the increment extra: {increment_requirements}"
     with tarfile.open(sdist) as archive:
         members = archive.getmembers()
         assert all(

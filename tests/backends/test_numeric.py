@@ -1,5 +1,6 @@
 import math
 from decimal import Decimal
+from fractions import Fraction
 
 import duckdb
 import ibis
@@ -12,6 +13,7 @@ from terrine.backends.numeric import (
     exact_to_float,
     exact_type,
 )
+from tests._float_bound import window_sum_bound
 
 
 @pytest.fixture
@@ -137,30 +139,36 @@ def test_duckdb_counts_are_native_integers_that_narrow_without_text(connection):
 def test_quantized_float_rounds_to_nine_places(connection):
     from terrine.backends.numeric import quantized_float
 
+    expected = {
+        0.1: Decimal("0.100000000"),
+        4e-10: Decimal("0"),
+        -4e-10: Decimal("0"),
+        6e-10: Decimal("0.000000001"),
+        -6e-10: Decimal("-0.000000001"),
+        1 / 1024: Decimal("0.000976563"),
+        -1 / 1024: Decimal("-0.000976563"),
+    }
     values = [
-        0.1,
-        6e-10,
-        -6e-10,
-        1 / 1024,
-        -1 / 1024,
+        *expected,
         math.nan,
         1e29,
         -1e29,
         math.nextafter(1e29, math.inf),
         -math.nextafter(1e29, math.inf),
     ]
-    table = _floats(connection, "quantization", value=values)
+    table = _floats(connection, "quantization", case=range(len(values)), value=values)
     value, nonfinite, out_of_range = quantized_float(table.value)
     rows = _rows(
-        connection, table.select(value=value, nonfinite=nonfinite, out_of_range=out_of_range)
+        connection,
+        table.select("case", value=value, nonfinite=nonfinite, out_of_range=out_of_range)
+        .order_by("case")
+        .drop("case"),
     )
-    assert [row["value"] for row in rows[:5]] == [
-        Decimal("0.100000000"),
-        Decimal("0.000000001"),
-        Decimal("-0.000000001"),
-        Decimal("0.000976563"),
-        Decimal("-0.000976563"),
-    ]
-    assert rows[5] == {"value": None, "nonfinite": True, "out_of_range": False}
-    assert all(not row["out_of_range"] and row["value"] is not None for row in rows[6:8])
-    assert all(row == {"value": None, "nonfinite": False, "out_of_range": True} for row in rows[8:])
+    end = len(expected)
+    for (original, want), row in zip(expected.items(), rows[:end], strict=True):
+        assert row == {"value": want, "nonfinite": False, "out_of_range": False}, original
+        error = abs(Fraction(row["value"]) - Fraction(original))
+        assert error <= window_sum_bound([original]), original
+    assert rows[end] == {"value": None, "nonfinite": True, "out_of_range": False}
+    assert all(not row["out_of_range"] and row["value"] is not None for row in rows[end + 1 : -2])
+    assert rows[-2:] == [{"value": None, "nonfinite": False, "out_of_range": True}] * 2
