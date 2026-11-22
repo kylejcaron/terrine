@@ -65,6 +65,116 @@ for end-to-end ratios. Prototype timings are not a public-Frame baseline.
 Integrated results and the pathway/compatibility ledger:
 [local window aggregation](https://github.com/kylejcaron/terrine/blob/771e9d55ba62bca5b6d512f9109e598a32a0e9cd/docs/research/2026-11-09-local-window-aggregation.md).
 
+## Cross-study reuse on local DuckDB
+
+Use this experiment to compare ways of serving a trace of ordinary `Design`
+objects. It adds no cache, provider, or public API.
+
+```sh
+for scenario in unchanged correction-heavy sparse; do
+  uv run python -m benchmarks.study_reuse --scenario "$scenario" > "$scenario.json" || exit 1
+done
+```
+
+- **Independent:** build and materialize each Frame against its own half-open
+  fact limit. **Batched:** combine compatible Designs at the same anchor in
+  one Frame over the union's bounding interval, then split its Arrow output.
+- **Daily:** build and write exact counts and nullable integer sums per
+  unit/UTC day. Reuse the same batched calculation on the saved rows. Charge
+  read-back verification, file hashing, and a full rebuild for each approved
+  correction; the benchmark does not implement incremental maintenance.
+- The group shares one source and unit mapping, with unfiltered exact metrics
+  and fixed UTC days. The partial-day study reads raw facts on all paths.
+  An unknown or mismatched revision or summary also uses raw facts. The
+  correction trace revisits the original revision after processing later ones.
+
+The independent oracle scans original occurrences and accumulates Python
+integers. Every invocation checks every study's ordered Arrow fields and
+values, including identifiers, counts, sums, null reasons, completeness and
+observation bounds. It also checks logical Arrow metadata against the
+independent Frames. The benchmark remaps bookkeeping column names when
+splitting a batch, safely converts summed counts back to `int64`, and records
+each native design/model identity; it does not substitute the baseline's
+provenance. A mismatch exits nonzero. A measured slowdown does not.
+
+Use `median_cumulative_seconds` to compare all-in elapsed time at each observed
+invocation count. The read phases include binding, compilation, integrity
+gates, and Arrow materialization/splitting. The statement counters and times
+separate the preceding checks from the final gated query plus transfer; they
+are not physical scan counts. The report includes summary storage, file bytes
+revalidated, and Arrow buffer bytes, not billable or wire bytes. Fixture
+publication costs are common to all paths and reported separately; the
+independent correctness oracle is outside the timed paths. First use starts
+with no summary, not a flushed OS page cache. The default is three passes
+with rotated strategy order, two DuckDB threads and a host-local lock.
+
+### Observed result
+
+Median total seconds across three passes on an Apple M3 Pro with DuckDB 1.5.6:
+
+| Trace | Units / invocations | Independent | Batched raw | Daily |
+| --- | ---: | ---: | ---: | ---: |
+| Unchanged | 2,500 / 8 | 15.680 | 7.800 | 7.499 |
+| Correction-heavy | 5,000 / 7 | 13.617 | 6.747 | 7.044 |
+| Sparse | 20,000 / 4 | 10.029 | 5.654 | 6.203 |
+
+Daily state compressed 719,712 occurrences to 59,976 rows in the unchanged
+trace and saved 0.301 s versus batched raw, including the first build. It
+never beat batched raw at any observed prefix of either counterexample.
+Sparse state had exactly as many rows as raw facts; the correction trace
+retained four summaries and paid for three rebuilds.
+
+These are synthetic local measurements, with no representative deployment
+trace or warehouse scan/spend figures. Keep reads on raw data; this evidence
+does not justify shipping reusable daily state or assuming a production
+break-even. A deployment decision needs the actual reuse and correction rates
+of compatible studies, plus storage, verification, and update costs on the
+target backend.
+
+## Exact count endpoint comparator
+
+Compare three reductions inside the same `Design.build(model).materialize()`
+call: the current scoped daily reduction, forced raw membership, and a
+benchmark-only exact count prefix at selected endpoints. The comparison keeps
+the source bounds, checks, statement admission and Arrow output path intact.
+On irregular event anchors the current plan already uses raw membership;
+the daily path requires day-aligned endpoints and is not timed there.
+
+```sh
+uv run --locked python -m benchmarks.query_strategy_spike --endpoint-comparator \
+  --units 1000 --events-per-unit 300 --anchors 20 --repeats 5 \
+  --output /path/to/new-endpoint-dense
+uv run --locked python -m benchmarks.query_strategy_spike --endpoint-comparator \
+  --units 1000 --events-per-unit 30 --anchors 20 --repeats 5 --poor-compression \
+  --output /path/to/new-endpoint-sparse
+uv run --locked python -m benchmarks.query_strategy_spike --endpoint-comparator \
+  --units 1000 --events-per-unit 30 --anchors 20 --repeats 5 --poor-compression --irregular \
+  --output /path/to/new-endpoint-irregular
+```
+
+Runs use one DuckDB thread and a host-local profile lock. Each sample checks
+all scheduled or event-derived origins, counts, conversion values and
+coverage with an independent Python oracle. The JSON reports public samples
+and separate diagnostic phase timings. The replay plans are for the
+statements actually submitted, including the final guarded output: inspect
+them for joined rows, state construction and repeated work rather than
+inferring those costs from SQL length.
+
+Observed on DuckDB 1.5.6, Apple M3 Pro, five samples per strategy. The
+fixture has ten 3–30 day windows for each of event count and conversion.
+Times are median seconds for build and materialize together.
+
+| Fixture | Current | Forced raw | Count endpoints |
+| --- | ---: | ---: | ---: |
+| Dense schedule, 300,000 facts | 1.439 | 1.933 | 1.419 |
+| Sparse schedule, 30,000 facts | 1.297 | 1.260 | 1.322 |
+| Irregular event anchors, 30,000 facts | 1.626 (raw) | — | 1.344 |
+
+The dense schedule was only 1.4% faster, and the same schedule with sparse
+facts slowed by 1.9%. Keep the current strategy. The irregular result is
+diagnostic for this fixture, not evidence for selecting endpoints in
+production. No value sums use prefix subtraction.
+
 ## Inputs, references and bounds
 
 Generator version 2 uses typed keyed unit/event positions. Batch size and unit
@@ -153,6 +263,14 @@ overlap and must not be summed. Expression construction includes validation at
 the compiler's dispatch boundary; deferred execution and Arrow conversion are
 not separable within stream reads. Other unseparated work is explicitly listed.
 Matching SQL digests alone are not proof of duplicate database work.
+
+For each captured study statement, diagnostics replay the exact submitted SQL
+through DuckDB `EXPLAIN (ANALYZE, FORMAT JSON)`. `diagnostics.json` indexes the
+plans and lists their table-scan counts and cardinalities. Stream entries give
+the raw Arrow rows, fields and logical buffer bytes before gate stripping;
+`retained_arrow` gives the final public payload. These local measures are not
+network transfer or billed warehouse bytes. Plan replays are excluded from the
+public timing samples.
 
 Captured study statements exclude metadata/admission probes, transaction
 control and catalog introspection. Diagnostic metadata-probe and native

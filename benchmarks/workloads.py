@@ -689,3 +689,76 @@ def recipe_cases(config: ScaleConfig) -> dict[str, RecipeCase]:
             sequence,
         ),
     }
+
+
+# Offline cross-study reuse: one declared group (orders/unit_id, unfiltered
+# occurrence count and signed cents, exact arithmetic, fixed UTC days).
+REUSE_ANCHOR = datetime(2025, 1, 21, tzinfo=UTC)
+REUSE_COVERAGE = (datetime(2025, 1, 2, tzinfo=UTC), datetime(2025, 1, 23, tzinfo=UTC))
+
+
+@dataclass(frozen=True, slots=True)
+class ReuseStudy:
+    name: str
+    design: Design
+    start: datetime
+    end: datetime
+
+    @property
+    def day_aligned(self) -> bool:
+        return all(
+            t == datetime.combine(t.date(), datetime.min.time(), UTC)
+            for t in (self.start, self.end)
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ReuseWorkload:
+    units: int
+    days_per_unit: int
+    events_per_unit_day: int
+    studies: tuple[ReuseStudy, ...]
+    # (synthetic revision number, whether this invocation has an approved identity)
+    trace: tuple[tuple[int, bool], ...]
+
+
+def _reuse_study(name: str, lower_hours: int, upper_hours: int) -> ReuseStudy:
+    metrics = {
+        f"{name}_{metric}": agg(metric, window=(f"{lower_hours}h", f"{upper_hours}h"))
+        for metric in ("orders", "spend")
+    }
+    design = Design(
+        "user",
+        FixedDate(REUSE_ANCHOR),
+        features=metrics if upper_hours <= 0 else None,
+        outcomes=metrics if lower_hours >= 0 else None,
+    )
+    return ReuseStudy(
+        name,
+        design,
+        REUSE_ANCHOR + timedelta(hours=lower_hours),
+        REUSE_ANCHOR + timedelta(hours=upper_hours),
+    )
+
+
+def reuse_workload(scenario: str) -> ReuseWorkload:
+    """Return ordinary Designs and an ordered invocation trace, not a multi-Frame API."""
+    aligned = (
+        _reuse_study("recent", -48, 0),
+        _reuse_study("history", -192, 0),
+        _reuse_study("followup", 0, 48),
+        _reuse_study("unready", 0, 96),
+    )
+    return {
+        "unchanged": ReuseWorkload(2500, 24, 12, aligned, ((0, True),) * 8),
+        "correction-heavy": ReuseWorkload(
+            5000,
+            24,
+            4,
+            aligned,
+            ((0, True), (0, True), (1, True), (2, True), (3, False), (3, True), (0, True)),
+        ),
+        "sparse": ReuseWorkload(
+            20000, 4, 1, (*aligned, _reuse_study("partial", -36, 0)), ((0, True),) * 4
+        ),
+    }[scenario]

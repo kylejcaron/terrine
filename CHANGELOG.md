@@ -1,14 +1,29 @@
 # Changelog
 
+## Unreleased
+
+- Bound compatible event reads to the study's proven temporal support. BigQuery
+  submits compact admitted SQL and reports verified event-time partition keys.
+  Roster integrity and training label counts use fewer statements.
+- Compile supported DuckDB lifetime-value trajectories at age grain and reduce
+  eligible life tables in Arrow batches. Survival provenance distinguishes
+  prevalence exclusions from emitted rows.
+- Skip a retained rebuild when an unchanged request is verified. Run physical
+  study jobs on captured inputs, preview what staging retains, and back up or
+  restore a DuckDB owner at a new root. Changes still trigger a full rebuild.
+- Save a bound Frame as a reusable definition without reading rows. Validate
+  typed Arrow and Parquet handoffs and check support for a requested cohort
+  comparison separately from descriptive row counts.
+- Report uses of static roster attributes in dataset previews and training
+  assumptions separately from membership and observation bounds. Historical
+  availability remains unknown.
+
 ## 0.1.0a3
 
 - Install `terrine[metric-definitions]` and call `Model.from_metric_definitions(...)`
   to reuse metric YAML from Increment Metrics in a Terrine Design. Formulas
   evaluate over the selected window; roster and data completeness stay explicit.
   Existing catalogs and the `Model.from_increment(...)` bridge are unchanged.
-- Report uses of static roster attributes in dataset previews and training
-  assumptions, separately from membership and observation bounds. Historical
-  availability remains unknown.
 
 ## 0.1.0a2
 

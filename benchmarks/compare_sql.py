@@ -293,6 +293,12 @@ def _phases():
                             else "unclassified"
                         ),
                     )
+                if phase in {"study_execute", "stream_next", "stream_read_all"}:
+                    record.update(
+                        arrow_rows=result.num_rows,
+                        arrow_fields=result.num_columns,
+                        arrow_bytes=result.nbytes,
+                    )
                 return result
             except StopIteration:
                 record["status"] = "exhausted"
@@ -403,6 +409,32 @@ def _diagnostic_pass(design: Any, model: Any, out: Path, *, profile: bool):
         "profile": "diagnostic.pstats" if profile else None,
     }
     return report, result
+
+
+def _physical_plans(con: Any, statements: list[str], out: Path) -> list[dict[str, Any]]:
+    """Profile the exact submitted SQL, separately from public timings."""
+    summaries: list[dict[str, Any]] = []
+    for index, sql in enumerate(statements):
+        _, payload = con.con.sql("EXPLAIN (ANALYZE, FORMAT JSON) " + sql).fetchone()
+        plan = json.loads(payload)
+        name = f"public-study-statement-{index}.plan.json"
+        (out / name).write_text(json.dumps(plan, indent=2) + "\n")
+        scans = []
+        nodes = [plan]
+        while nodes:
+            node = nodes.pop()
+            if "Table" in node["extra_info"]:
+                scans.append(
+                    {
+                        "table": node["extra_info"]["Table"],
+                        "operator": node["operator_type"],
+                        "rows_scanned": node["operator_rows_scanned"],
+                        "cardinality": node["operator_cardinality"],
+                    }
+                )
+            nodes.extend(reversed(node["children"]))
+        summaries.append({"file": name, "scans": scans})
+    return summaries
 
 
 def run(
@@ -517,7 +549,16 @@ def run(
             _assert_rows(diagnosed, expected)
             _assert_rows(diagnosed, materialized.to_pylist())
             diagnostic.update(
-                case=case, input_tables=source_tables, schema_parity=True, result_parity=True
+                case=case,
+                input_tables=source_tables,
+                schema_parity=True,
+                result_parity=True,
+                physical_plans=_physical_plans(con, statements, out),
+                retained_arrow={
+                    "rows": diagnosed.num_rows,
+                    "fields": diagnosed.num_columns,
+                    "bytes": diagnosed.nbytes,
+                },
             )
             (out / "diagnostics.json").write_text(json.dumps(diagnostic, indent=2) + "\n")
         times: dict[str, list[float]] = {

@@ -3,7 +3,8 @@
 Run with python -m benchmarks.query_strategy_spike. Only the five cost metrics,
 UTC day windows and one event source are implemented in the prototype. The
 ``--frame-only`` path instead measures validated public Frame materialization,
-optionally retained stage/correction/refresh. No wall-clock gates.
+optionally retained stage/correction/refresh. ``--endpoint-comparator`` instead
+compares exact count reducers inside the same public call. No wall-clock gates.
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ import argparse
 import contextlib
 import json
 import math
+import os
 import platform
 import statistics
 import tempfile
@@ -21,6 +23,7 @@ from collections import Counter
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import ibis
 import pyarrow as pa
@@ -585,9 +588,265 @@ def measure_frame_case(
     return row
 
 
+def _endpoint_counts(builder, events, source, primitives, *, day, origin_bounds):
+    """Benchmark-only exact state at a unit's instants; never selected by Terrine."""
+    from terrine.backends.joins import asof_join
+    from terrine.backends.numeric import exact_literal, exact_subtract, exact_sum
+    from terrine.backends.timestamps import local_day
+    from terrine.temporal import aggregate as reducer
+    from terrine.temporal.daily import _batch_projections, contributions
+
+    assert source.day_boundary == "UTC" and all(key.counting for key in primitives)
+    memberships = reducer._membership_keys(source, primitives)
+    contexts = {ctx.available: ctx for group in primitives.values() for ctx in group}
+    endpoints = {}
+    for key in memberships.values():
+        ctx = contexts[key.available[0]]
+        endpoints[key.window.start.seconds] = ctx.start
+        endpoints[key.window.end.seconds] = ctx.end
+
+    timestamp = "_timestamp"
+    if day:
+        bounds = (
+            origin_bounds[0] + timedelta(seconds=min(endpoints)),
+            origin_bounds[1] + timedelta(seconds=max(endpoints)),
+        )
+        events, timestamp = reducer._masked_day_events(
+            builder, events, contexts.values(), endpoint_bounds=bounds
+        )
+    events = events.filter(events[timestamp].notnull())
+    state_unit, tick = builder.name("state_unit"), builder.name("state_tick")
+    clock = local_day(events[timestamp], 0)[1] if day else events[timestamp]
+    events = events.mutate(**{state_unit: events._unit, tick: clock})
+    fields_by_measure = {}
+    branches = []
+    for primitive in primitives:
+        if primitive.measure in fields_by_measure:
+            continue
+        projected, fields = contributions(
+            events, primitive.measure, source=source, counting=True, _name=builder.name
+        )
+        aliases = {field: builder.name(field) for field in fields}
+        fields_by_measure[primitive.measure] = aliases
+        branches.append(
+            projected.select(**{aliases[field]: value for field, value in fields.items()})
+        )
+    leaves = _batch_projections(events, branches)
+    state_fields = [field for aliases in fields_by_measure.values() for field in aliases.values()]
+    grouped = leaves.group_by(state_unit, tick).aggregate(
+        **{field: exact_sum(leaves[field]) for field in state_fields}
+    )
+    prefix = ibis.window(group_by=grouped[state_unit], order_by=grouped[tick], rows=(None, 0))
+    state = grouped.mutate(
+        **{field: exact_sum(grouped[field]).over(prefix) for field in state_fields}
+    )
+
+    unit, anchor, point, index, pair = (
+        builder.name(name) for name in ("unit", "anchor_id", "endpoint", "endpoint_index", "pair")
+    )
+    points = builder.table
+    request = points.select(
+        points.unit.name(unit),
+        points.anchor_id.name(anchor),
+        *contexts,
+        **{
+            pair: ibis.array(
+                [
+                    ibis.struct({"instant": points[name], "position": i})
+                    for i, name in enumerate(endpoints.values())
+                ]
+            ).unnest()
+        },
+    )
+    request = request.select(
+        unit,
+        anchor,
+        *contexts,
+        **{point: request[pair]["instant"], index: request[pair]["position"]},
+    )
+    # P(e) sums only ticks strictly before e; P(end) - P(start) is [start, end).
+    hit = asof_join(
+        request,
+        state,
+        left_unit=unit,
+        left_key=point,
+        right_unit=state_unit,
+        right_key=tick,
+        inclusive=False,
+    )
+    positions = {offset: i for i, offset in enumerate(endpoints)}
+    columns = {}
+    pivot = {}
+    for primitive in primitives:
+        for offset in (primitive.window.start.seconds, primitive.window.end.seconds):
+            for field in fields_by_measure[primitive.measure].values():
+                if (offset, field) not in columns:
+                    name = columns[offset, field] = builder.name("endpoint_state")
+                    pivot[name] = hit[field].max(where=hit[index] == positions[offset])
+    paired = hit.group_by(unit, anchor, *contexts).aggregate(**pivot)
+
+    def zeroed(name):
+        value = paired[name]
+        return value.fill_null(exact_literal(0, value))
+
+    payload = {}
+    reduced_fields = {}
+    for primitive, membership in memberships.items():
+        active = reducer._available(paired, membership)
+        start, end = primitive.window.start.seconds, primitive.window.end.seconds
+        aliases = reduced_fields[primitive] = {}
+        for field, state_field in fields_by_measure[primitive.measure].items():
+            name = aliases[field] = builder.name(field)
+            delta = exact_subtract(
+                zeroed(columns[end, state_field]), zeroed(columns[start, state_field])
+            )
+            payload[name] = active.ifelse(delta, exact_literal(0, delta))
+    return paired.select(unit, anchor, **payload), reduced_fields, (unit, anchor)
+
+
+@contextlib.contextmanager
+def _count_reducer(variant):
+    from terrine.temporal import aggregate as reducer
+
+    def raw(builder, events, source, primitives, boundary, origin_bounds):
+        return reducer._reduce_source(builder, events, source, primitives, origin_bounds)
+
+    def day_endpoints(builder, events, source, primitives, boundary, origin_bounds):
+        return _endpoint_counts(
+            builder, events, source, primitives, day=True, origin_bounds=origin_bounds
+        )
+
+    def event_endpoints(builder, events, source, primitives, origin_bounds):
+        return _endpoint_counts(
+            builder, events, source, primitives, day=False, origin_bounds=origin_bounds
+        )
+
+    with contextlib.ExitStack() as restore:
+        if variant == "raw":
+            restore.enter_context(patch.object(reducer, "_reduce_daily_source", raw))
+        elif variant == "endpoints":
+            restore.enter_context(patch.object(reducer, "_reduce_daily_source", day_endpoints))
+            restore.enter_context(patch.object(reducer, "_reduce_source", event_endpoints))
+        yield
+
+
+def _count_diagnostics(con, submit, path):
+    from benchmarks.compare_sql import _capture_study_sql, _phases
+
+    with _capture_study_sql() as statements, _phases() as phases:
+        result = submit()
+    profiles = []
+    for i, sql in enumerate(statements):
+        path.with_name(f"{path.name}-{i}.sql").write_text(sql)
+        with contextlib.closing(con.con.cursor()) as cursor:
+            row = cursor.execute("EXPLAIN (ANALYZE, FORMAT JSON) " + sql).fetchone()
+        assert row is not None
+        tree = json.loads(row[1])
+        path.with_name(f"{path.name}-{i}-plan.json").write_text(row[1])
+        nodes = list(tree["children"])
+        operators = []
+        while nodes:
+            node = nodes.pop()
+            nodes.extend(reversed(node.get("children", ())))
+            name = node.get("operator_name", "")
+            if any(kind in name for kind in ("JOIN", "GROUP_BY", "WINDOW", "UNNEST")):
+                operators.append((name, node["operator_cardinality"], node["operator_timing"]))
+        profiles.append(operators)
+    return result, phases, profiles
+
+
+def measure_count_case(con, config, args, out):
+    from benchmarks.query_strategy_oracle import assert_count_values, count_inputs
+    from terrine import Budget
+    from terrine.spec import EventAnchor
+
+    first = EPOCH + timedelta(days=30)
+    anchors = int(args.anchors)
+    windows = tuple(range(3, 31, 3))
+    anchor = (
+        EventAnchor("event", "each")
+        if args.irregular
+        else Schedule("1d", first.date(), first.date() + timedelta(days=anchors - 1))
+    )
+    model = make_model(con, config, "integer", "duckdb")
+    design = Design(
+        "user",
+        anchor,
+        features={
+            f"{metric}_{days}d": agg(metric, window=(f"-{days}d", "0s"))
+            for metric in ("events", "active")
+            for days in windows
+        },
+    )
+    expected, timestamps = count_inputs(con, irregular=args.irregular, first=first, anchors=anchors)
+    coverage = model.readiness.for_fact("events")
+    budget = Budget(strict_scan=False)
+    variants = [name for name in args.variants.split(",") if not (args.irregular and name == "raw")]
+    timings: dict[str, list[tuple[float, float, float]]] = {name: [] for name in variants}
+
+    def submit():
+        begin = time.perf_counter()
+        frame = design.build(model)
+        built = time.perf_counter()
+        result = frame.materialize(budget=budget)
+        done = time.perf_counter()
+        return result, (built - begin, done - built, done - begin)
+
+    def verify(result):
+        assert_support(result.table, expected)
+        summary = result.provenance.eligibility_summary
+        size = sum(expected.values())
+        assert summary is not None
+        assert (summary.candidate, summary.excluded_false, summary.unknown, summary.retained) == (
+            size,
+            0,
+            0,
+            size,
+        )
+        return assert_count_values(result, timestamps, windows, coverage)
+
+    records = {}
+    for sample in range(args.repeats):
+        offset = sample % len(variants)
+        for variant in variants[offset:] + variants[:offset]:
+            with _count_reducer(variant):
+                result, timing = submit()
+            verify(result)
+            timings[variant].append(timing)
+    for variant in variants:
+        with _count_reducer(variant):
+            result, phases, operators = _count_diagnostics(con, lambda: submit()[0], out / variant)
+        checked = verify(result)
+        records[variant] = {
+            "timings": timings[variant],
+            "median_public_seconds": statistics.median(sample[2] for sample in timings[variant]),
+            "oracle_values_checked": checked * args.repeats,
+            "phase_diagnostic": phases,
+            "submitted_statement_join_and_state_operators": operators,
+        }
+    report = {
+        "duckdb": con.version,
+        "fixture": config.to_dict(),
+        "irregular": args.irregular,
+        "sparse": args.poor_compression,
+        "outputs": len(windows) * 2,
+        "rows": sum(expected.values()),
+        "windows_days": windows,
+        "timing_columns": ("build_seconds", "materialize_seconds", "public_seconds"),
+        "strategies": records,
+    }
+    (out / "endpoint-comparison.json").write_text(json.dumps(report, indent=2))
+    print({name: row["median_public_seconds"] for name, row in records.items()}, flush=True)
+    return report
+
+
 def run(con, args, out):
+    spacing_days = 2 if args.endpoint_comparator else 1
+    span_days = 60 if args.endpoint_comparator else 30
+    if args.poor_compression:
+        span_days = max(span_days, spacing_days * args.events_per_unit)
     config = ScaleConfig(
-        span_days=max(30, args.events_per_unit) if args.poor_compression else 30,
+        span_days=span_days,
         units=args.units,
         events_per_unit=args.events_per_unit,
         batch_size=50_000,
@@ -603,18 +862,23 @@ def run(con, args, out):
                 ibis.window(group_by=events.unit_id, order_by=events.event_id)
             )
         )
+        index = numbered._event_index.cast("int64")
+        jitter_index = index * index if args.endpoint_comparator and args.irregular else index
         spread = numbered.mutate(
             event_time=ibis.literal(EPOCH)
-            + (
-                numbered._event_index.cast("int64") * 86400
-                + (numbered._event_index.cast("int64") * 997) % 40000
-                + 1800
-            ).as_interval("s")
+            + (index * (86400 * spacing_days) + (jitter_index * 997) % 40000 + 1800).as_interval(
+                "s"
+            )
         ).drop("_event_index")
         con.create_table("events_spread", spread)
         con.drop_table("events")
         con.create_table("events", con.table("events_spread"))
         con.drop_table("events_spread")
+    if args.endpoint_comparator:
+        print(
+            json.dumps({"progress": "loaded", "seconds": time.perf_counter() - start}), flush=True
+        )
+        return [measure_count_case(con, config, args, out)]
     table = con.table("events")
     con.create_table("events_native", table.mutate(value=table.value.cast("float64") / 10))
     if args.backend == "postgres":
@@ -673,11 +937,28 @@ def main():
     parser.add_argument("--poor-compression", action="store_true", help="one event per unit/day")
     parser.add_argument("--irregular", action="store_true", help="event-relative repeated anchors")
     parser.add_argument("--retained", action="store_true", help="also time stage/correct/refresh")
+    parser.add_argument("--endpoint-comparator", action="store_true")
     args = parser.parse_args()
     if args.frame_only and args.backend != "duckdb":
         parser.error("--frame-only currently measures DuckDB")
-    if (args.irregular or args.retained) and not args.frame_only:
-        parser.error("--irregular and --retained require --frame-only")
+    if args.irregular and not (args.frame_only or args.endpoint_comparator):
+        parser.error("--irregular requires --frame-only or --endpoint-comparator")
+    if args.retained and not args.frame_only:
+        parser.error("--retained requires --frame-only")
+    if args.endpoint_comparator:
+        if args.backend != "duckdb" or args.frame_only or args.full:
+            parser.error("--endpoint-comparator is a separate DuckDB-only public benchmark")
+        if args.variants == "current,direct":
+            args.variants = "current,raw,endpoints"
+        variants = set(args.variants.split(","))
+        if not variants <= {"current", "raw", "endpoints"}:
+            parser.error("endpoint comparator variants: current, raw, endpoints")
+        if args.irregular and variants == {"raw"}:
+            parser.error("current already uses raw on irregular anchors")
+        if "," in args.anchors or not args.anchors.isdecimal() or int(args.anchors) < 2:
+            parser.error("--endpoint-comparator requires one --anchors count of at least two")
+        if args.repeats < 1:
+            parser.error("--endpoint-comparator requires at least one repeat")
     args.output.mkdir(parents=True, exist_ok=False)
     environment = {
         "python": platform.python_version(),
@@ -688,7 +969,16 @@ def main():
     }
     (args.output / "environment.json").write_text(json.dumps(environment, default=str, indent=2))
     if args.backend == "duckdb":
-        with tempfile.TemporaryDirectory(prefix="terrine-window-benchmark-") as temporary:
+        with (
+            contextlib.ExitStack() as stack,
+            tempfile.TemporaryDirectory(prefix="terrine-window-benchmark-") as temporary,
+        ):
+            if args.endpoint_comparator:
+                import fcntl
+
+                directory = Path(os.environ.get("TMPDIR", tempfile.gettempdir()))
+                lock = stack.enter_context((directory / "terrine-arch-nj0y-profile.lock").open("a"))
+                fcntl.flock(lock, fcntl.LOCK_EX)
             database = str(Path(temporary) / "owner.duckdb") if args.retained else ":memory:"
             con = ibis.duckdb.connect(database, threads=1)
             try:
