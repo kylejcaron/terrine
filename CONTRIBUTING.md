@@ -57,18 +57,19 @@ uv run python -m tests.documentation --build
 Before tagging a release:
 
 1. Confirm CI is green for the release commit. The release workflow requires the
-   `ci-ok` job for every release tag. Release candidates and final 1.x tags also
-   require successful PostgreSQL and scale jobs on that commit. Dispatch both
-   workflows against a ref containing the release commit, then wait for those
-   jobs to succeed before tagging:
+   `ci-ok` job for every release tag. Non-development 1.x and later release
+   candidates and final tags also require successful PostgreSQL and scale jobs
+   on that commit. Dispatch both workflows against a ref containing the release
+   commit, then wait for those jobs to succeed before tagging:
 
    ```sh
    gh workflow run warehouse-backends --ref <ref> -f backend_mode=postgres
    gh workflow run scale --ref <ref>
    ```
 
-   BigQuery and Snowflake runs are advisory. If the CI push run was deferred or
-   never ran in full, run `gh workflow run CI --ref <ref>` and wait for `ci-ok`.
+   If the CI push run was deferred or never ran in full, run
+   `gh workflow run CI --ref <ref>` and wait for `ci-ok`. Every release also
+   needs [BigQuery and Snowflake evidence](#cloud-evidence-and-waivers).
 2. Run the stable-API compatibility check:
 
    ```sh
@@ -86,18 +87,33 @@ Before tagging a release:
    differences are informational during 0.x and enforced from `1.0.0rc1`.
    Confirm CI is green for the release commit after adding the snapshot, before
    tagging.
-4. Run the release-upgrade test when `tests/artifacts/RELEASES` lists published
-   predecessor releases:
+4. For a saved-format change, build a wheel and run the candidate upgrade lane
+   before tagging:
 
    ```sh
-   uv run pytest -n 0 -m scale integration/test_release_upgrade.py
+   build_dir=$(mktemp -d)
+   uv build --wheel --out-dir "$build_dir"
+   wheel=$(printf '%s\n' "$build_dir"/*.whl)
+   TERRINE_UPGRADE_CANDIDATE_WHEEL="$wheel" \
+     make test-scale SCALE_TESTS="integration/test_release_upgrade.py"
    ```
 
-   `RELEASES` records every published release starting with `0.1.0a1`. Validate
-   the producer once against the locally built wheel as well: run `uv build`,
-   add the wheel's absolute path as one line in `tests/artifacts/RELEASES`, and
-   run the command above. After validation, remove only that temporary wheel
-   path; keep every published release in `RELEASES`.
+   The lane installs the immediately preceding published writer from PyPI, by
+   version order below the candidate (including alphas, betas and release
+   candidates, excluding development builds before the saved-format promise).
+   It stages data with that writer and with the candidate, then reopens both
+   owners in place with the installed candidate wheel outside the checkout.
+   Keep only published versions in `tests/artifacts/RELEASES` for the weekly
+   source-checkout matrix; never add a local wheel path.
+
+   The release workflow compares the candidate with the published predecessor's
+   tag. It requires proof for any change beyond documentation and known release
+   bookkeeping, or when it cannot classify the change. This includes changes to
+   codecs, manifests, receipts, storage and replay schema, identity semantics,
+   and corpus generation. The build records the predecessor and SHA-256 digests
+   and verifies the checked wheel again before artifact upload. Missing
+   predecessor evidence or a failed proof blocks publication. Neither the
+   distribution smoke test nor an earlier weekly success clears the candidate.
 
 5. If a saved format changed, add a generation to the artifact corpus:
 
@@ -109,6 +125,33 @@ Before tagging a release:
    the 1.0 stability policy takes effect.
 7. After publishing, append the released version to `tests/artifacts/RELEASES`
    so later upgrade checks include it.
+
+### Cloud evidence and waivers
+
+Check BigQuery and Snowflake separately before tagging. For each backend, the
+latest executed job in `warehouse-backends` on the candidate SHA must be green
+and complete in the seven days up to the original tag push, inclusive. A newer
+failure blocks an older success. Jobs skipped by a PostgreSQL-only dispatch
+don't count. A workflow retry or manual dispatch uses the original matching
+push run's GitHub-recorded UTC instant; a missing tag push record blocks release.
+Any paid run still requires approval; this check does not start one.
+
+If the release owner considers a waiver, commit the complete candidate notes
+as `.github/release-notes/<tag>.md` on that SHA. For each backend without
+qualifying evidence, include one `## BigQuery waiver` or `## Snowflake waiver`
+section. After the heading, add these nonempty Markdown list fields in order:
+`Date` (UTC `YYYY-MM-DD`, no later than the tag), `Reason`, `Operations`,
+`Evidence` (HTTPS link), `Qualification` (what is not verified for the release).
+The file and its date are disclosures, not approval.
+
+Before PyPI publication, the build summary shows the exact notes and an
+approval comment binding the repository, workflow run and attempt, tag, SHA and
+notes SHA-256. The release owner must review the notes and paste that exact
+comment when approving the existing `pypi` environment. The workflow verifies
+the owner's GitHub review before uploading to PyPI, then publishes the same
+notes bytes on GitHub. A blank or mismatched approval fails; rerun all jobs to
+request approval for a new attempt. A waiver does not change the backend's
+[verification status](docs/guides/backend-compatibility.md#backend-verification-status).
 
 ## License and the CLA
 

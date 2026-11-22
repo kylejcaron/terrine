@@ -32,6 +32,9 @@ jobs:
     outputs:
       version: ${{ steps.check.outputs.version }}
       prerelease: ${{ steps.check.outputs.prerelease }}
+      cloud_evidence: ${{ steps.release-checks.outputs.cloud_evidence }}
+      notes_attempt: ${{ steps.release-checks.outputs.notes_attempt }}
+      notes_artifact_id: ${{ steps.release-notes.outputs.artifact-id }}
     steps:
       - name: Require a version tag
         env:
@@ -45,6 +48,8 @@ jobs:
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
           persist-credentials: false
 
       - uses: astral-sh/setup-uv@ae62891fec2bb8e7d6c99fc78c9fec3a63790f8d # v10.0.0
@@ -52,9 +57,20 @@ jobs:
           enable-cache: true
 
       - name: Require release checks for this commit
+        id: release-checks
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python scripts/require_green_ci.py --sha "$GITHUB_SHA" --tag "$GITHUB_REF_NAME"
+        run: >-
+          python scripts/require_green_ci.py --sha "$GITHUB_SHA" --tag "$GITHUB_REF_NAME"
+          --prepare-notes "$RUNNER_TEMP/release-notes/notes.md"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        id: release-notes
+        if: steps.release-checks.outputs.cloud_evidence == 'waiver'
+        with:
+          name: release-notes-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/release-notes/notes.md
+          if-no-files-found: error
 
       - run: uv build --sdist --wheel --out-dir dist
 
@@ -129,10 +145,58 @@ jobs:
           print(f"sdist: {len(src)} module(s)")
           PY
 
+      - name: Classify saved-format changes from the published predecessor
+        id: upgrade-route
+        shell: bash
+        run: |
+          set -euo pipefail
+          wheels=("$PWD"/dist/*.whl)
+          uv run --no-project --python 3.12 --with packaging python scripts/release_upgrade.py \
+            "${wheels[0]}" --github-output "$GITHUB_OUTPUT" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Prove saved-format upgrade with the built wheel
+        id: upgrade
+        env:
+          PROOF_REQUIRED: ${{ steps.upgrade-route.outputs.proof_required }}
+          PREDECESSOR_SHA256: ${{ steps.upgrade-route.outputs.predecessor_sha256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          wheels=("$PWD"/dist/*.whl)
+          wheel="${wheels[0]}"
+          checksum=$(sha256sum -- "$wheel")
+          digest="${checksum%% *}"
+          case "$PROOF_REQUIRED" in
+            true)
+              uv sync --locked --extra duckdb
+              proof="$RUNNER_TEMP/release-upgrade.log"
+              TERRINE_UPGRADE_CANDIDATE_WHEEL="$wheel" PYTEST_ADDOPTS=-s \
+                make test-scale SCALE_TESTS=integration/test_release_upgrade.py | tee "$proof"
+              grep -Fx "Candidate wheel SHA-256: $digest" "$proof"
+              grep -Fx "Published predecessor SHA-256: $PREDECESSOR_SHA256" "$proof"
+              ;;
+            false) ;;
+            *) echo "::error::Missing saved-format proof decision."; exit 1 ;;
+          esac
+          echo "Candidate wheel SHA-256: $digest" >> "$GITHUB_STEP_SUMMARY"
+          echo "wheel=$(basename "$wheel")" >> "$GITHUB_OUTPUT"
+          echo "sha256=$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Verify the wheel digest before upload
+        env:
+          WHEEL: ${{ steps.upgrade.outputs.wheel }}
+          WHEEL_SHA256: ${{ steps.upgrade.outputs.sha256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s  dist/%s\n' "$WHEEL_SHA256" "$WHEEL" | sha256sum --check
+
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: dist
-          path: dist/
+          path: |
+            dist/${{ steps.upgrade.outputs.wheel }}
+            dist/*.tar.gz
           if-no-files-found: error
 
   publish:
@@ -143,9 +207,48 @@ jobs:
       name: pypi
       url: https://pypi.org/project/terrine/${{ needs.build.outputs.version }}
     permissions:
-      # OIDC token for Trusted Publishing. This is the only credential used.
+      actions: read
+      contents: read
+      # Publishing uses OIDC; the read token only verifies waiver approval.
       id-token: write
     steps:
+      - name: Require a release evidence decision
+        env:
+          CLOUD_EVIDENCE: ${{ needs.build.outputs.cloud_evidence }}
+          NOTES_ATTEMPT: ${{ needs.build.outputs.notes_attempt }}
+          NOTES_ARTIFACT_ID: ${{ needs.build.outputs.notes_artifact_id }}
+        run: |
+          case "$CLOUD_EVIDENCE" in
+            green) ;;
+            waiver)
+              if [ "$NOTES_ATTEMPT" != "$GITHUB_RUN_ATTEMPT" ] || [ -z "$NOTES_ARTIFACT_ID" ]; then
+                echo "::error::Re-run all jobs to prepare exact waiver notes for this attempt."
+                exit 1
+              fi
+              ;;
+            *) echo "::error::Missing release evidence decision."; exit 1 ;;
+          esac
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: needs.build.outputs.cloud_evidence == 'waiver'
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        if: needs.build.outputs.cloud_evidence == 'waiver'
+        with:
+          artifact-ids: ${{ needs.build.outputs.notes_artifact_id }}
+          path: ${{ runner.temp }}/release-notes
+
+      - name: Verify owner approval of exact notes before publishing
+        if: needs.build.outputs.cloud_evidence == 'waiver'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          python scripts/require_green_ci.py --sha "$GITHUB_SHA" --tag "$GITHUB_REF_NAME"
+          --verify-notes "$RUNNER_TEMP/release-notes/notes.md"
+
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: dist
@@ -172,13 +275,25 @@ jobs:
           name: dist
           path: dist/
 
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        if: needs.build.outputs.cloud_evidence == 'waiver'
+        with:
+          artifact-ids: ${{ needs.build.outputs.notes_artifact_id }}
+          path: ${{ runner.temp }}/release-notes
+
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
           PRERELEASE: ${{ needs.build.outputs.prerelease }}
+          CLOUD_EVIDENCE: ${{ needs.build.outputs.cloud_evidence }}
         run: |
           set -euo pipefail
-          args=(--verify-tag --generate-notes --title "$TAG")
+          args=(--verify-tag --title "$TAG")
+          case "$CLOUD_EVIDENCE" in
+            green) args+=(--generate-notes) ;;
+            waiver) args+=(--notes-file "$RUNNER_TEMP/release-notes/notes.md") ;;
+            *) echo "::error::Missing release evidence decision."; exit 1 ;;
+          esac
           [ "$PRERELEASE" = "true" ] && args+=(--prerelease)
           gh release create "$TAG" "${args[@]}" dist/*

@@ -1,208 +1,179 @@
-"""Datasets staged by each released version reopen in place with the current code."""
+"""Published writers reopen in place with the weekly source or release wheel."""
 
-import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
+from urllib.request import urlopen
 
-import ibis
-import pyarrow.parquet as pq
 import pytest
+from packaging.version import Version
 
-from scripts.write_artifact_corpus import (
-    _reproducible_staging,
-    bind_model,
-    materialized_schema,
-    output_schema,
+from scripts import release_upgrade
+from scripts.release_upgrade import (
+    PublishedWheel,
+    candidate_version,
+    proof_route,
+    published_predecessor,
+    sha256,
 )
-from terrine import Budget, Dataset
-from terrine.data import MaterializedFrame
-from terrine.dataset.manifest import DatasetManifest
-from terrine.spec import from_json
 from tests._timing import HANG_GUARD_SECONDS
+from tests.integration import release_upgrade_probe as probe
 
-CHECKOUT = Path(__file__).resolve().parents[1]
-ARTIFACTS = CHECKOUT / "tests" / "artifacts"
-# Generation 1 was written by 1.0.0rc1, so every 1.x release reads its documents.
-CORPUS = ARTIFACTS / "1"
-# One released version, or the absolute path of a wheel file, per line.
+RELEASES_PATH = probe.CHECKOUT / "tests" / "artifacts" / "RELEASES"
 RELEASES = [
     line.strip()
-    for line in (ARTIFACTS / "RELEASES").read_text(encoding="utf-8").splitlines()
+    for line in RELEASES_PATH.read_text("utf-8").splitlines()
     if line.strip()
 ]
+CANDIDATE = os.environ.get("TERRINE_UPGRADE_CANDIDATE_WHEEL")
 RUNTIME_SETTINGS = ("TERRINE_RUNTIME_NAMESPACE", "TERRINE_RUNTIME_SNAPSHOT_ROOT")
+PYTHON = f"{sys.version_info.major}.{sys.version_info.minor}"
+PROBE = str(Path(probe.__file__).resolve())
 
-# Runs on the released package alone, so it uses only its public API.
-PRODUCER = """\
-import importlib.metadata
-import json
-import sys
-from pathlib import Path
 
-expected, checkout, corpus, output = sys.argv[1:]
-installed = importlib.metadata.version("terrine")
-assert installed == expected, f"terrine {installed} is installed, not {expected}"
+def _run(command: list[str], *, cwd: Path) -> None:
+    assert not cwd.resolve().is_relative_to(probe.CHECKOUT), cwd
+    environment = {
+        name: value
+        for name, value in os.environ.items()
+        if name not in ("VIRTUAL_ENV", "PYTHONPATH", "PYTHONHOME", *RUNTIME_SETTINGS)
+    }
+    result = subprocess.run(
+        command,
+        cwd=cwd,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=HANG_GUARD_SECONDS,
+        check=False,
+    )
+    print(result.stdout, end="")
+    assert result.returncode == 0, result.stderr
 
-import ibis
-import pyarrow.parquet as pq
 
-import terrine
-from terrine.errors import TerrineError
-from terrine import Budget, Coverage, Model, UnitSource, recipes
-from terrine.spec import BinnedMetricState, from_json
+def _install(wheel: Path, digest: str, directory: Path) -> tuple[str, str, str]:
+    version = str(candidate_version(wheel))
+    assert sha256(wheel) == digest, wheel
+    source = f"{wheel.as_uri()}#sha256={digest}"
+    environment = directory / "venv"
+    executable = str(environment / "bin" / "python")
+    _run(["uv", "venv", "--python", PYTHON, str(environment)], cwd=directory)
+    _run(
+        [
+            "uv",
+            "pip",
+            "install",
+            "--python",
+            executable,
+            "--link-mode",
+            "copy",
+            "--reinstall-package",
+            "terrine",
+            f"terrine[duckdb] @ {source}",
+        ],
+        cwd=directory,
+    )
+    assert sha256(wheel) == digest, wheel
+    return executable, version, source
 
-location = Path(terrine.__file__).resolve()
-assert not location.is_relative_to(checkout), f"terrine was imported from {location}"
-corpus, output = Path(corpus), Path(output)
-con = ibis.duckdb.connect(str(output / "owner.duckdb"))
-for path in sorted((corpus / "data").glob("*.parquet")):
-    con.create_table(path.stem, pq.read_table(path))
-model = Model.from_catalog(
-    corpus / "catalog.yaml",
-    con=con,
-    units={"customer": UnitSource("customers", "customer_id")},
-    readiness={"orders": Coverage("2025-01-01", "2025-02-28")},
-)
-budget = Budget(max_rows=100, max_output_bytes=1_000_000, strict_scan=False)
 
-for index, design_path in enumerate(sorted(corpus.glob("**/design.json"))):
-    name = design_path.parent.name
-    frame = from_json(design_path.read_text(encoding="utf-8")).build(model)
-    try:
-        dataset = frame.stage(f"corpus_{index}", budget=budget)
-    except TerrineError as error:
-        if error.code != "terrine.compile.runtime_shape_unsupported":
-            raise
-        (output / f"{name}-refusal.json").write_text(
-            json.dumps({"code": error.code}), encoding="utf-8"
+def _wheel_probe(installation: tuple[str, str, str], operation: str, output: Path) -> None:
+    executable, version, source = installation
+    _run([executable, "-I", PROBE, operation, version, source, str(output)], cwd=output)
+
+
+def test_candidate_wheel_proof_exempts_only_proven_bookkeeping(tmp_path, monkeypatch):
+    monkeypatch.setattr(release_upgrade, "CHECKOUT", tmp_path)
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+
+    def git(*args):
+        subprocess.run(
+            ["git", "-c", "user.name=Terrine", "-c", "user.email=test@example.com", *args],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
         )
-        materialized = frame.materialize(budget=budget)
-        pq.write_table(materialized.to_pyarrow(), output / f"{name}-rows.parquet")
-    else:
-        (output / f"{name}-manifest.json").write_text(dataset.manifest.to_json(), encoding="utf-8")
-        pq.write_table(dataset.to_pyarrow(), output / f"{name}-rows.parquet")
-state_panel = recipes.state_panel(
-    state_source=BinnedMetricState("spend", cutpoints=(0,), levels=("no_spend", "spend")),
-    every="1d",
-    start="2025-01-01",
-    end="2025-01-02",
-).build(model).stage("state_panel", budget=budget)
-(output / "state-panel-manifest.json").write_text(state_panel.manifest.to_json(), encoding="utf-8")
-con.disconnect()
-"""
+
+    predecessor = PublishedWheel(Version("0.1.0a2"), "prior.whl", "", "0" * 64)
+    git("init")
+    (tmp_path / "pyproject.toml").write_text('[project]\nversion = "0.1.0a2"\n')
+    git("add", "pyproject.toml")
+    git("commit", "-m", "Published writer")
+    assert proof_route(predecessor)[0] is True
+
+    git("tag", "v0.1.0a2")
+    (tmp_path / "pyproject.toml").write_text('[project]\nversion = "0.1.0a3"\n')
+    (tmp_path / "README.md").write_text("Release notes\n")
+    git("add", "pyproject.toml", "README.md")
+    git("commit", "-m", "Bookkeeping")
+    assert proof_route(predecessor)[0] is False
+
+    source = tmp_path / "terrine" / "runtime"
+    source.mkdir(parents=True)
+    (source / "saved_plan.py").write_text("FORMAT_VERSION = 2\n")
+    git("add", "terrine/runtime/saved_plan.py")
+    git("commit", "-m", "Saved format change")
+    assert proof_route(predecessor)[0] is True
 
 
-def _version(entry: str) -> str:
-    return Path(entry).name.split("-")[1] if entry.endswith(".whl") else entry
-
-
-def _requirement(entry: str) -> str:
-    if entry.endswith(".whl"):
-        return f"terrine[duckdb] @ {Path(entry).as_uri()}"
-    return f"terrine[duckdb]=={entry}"
-
-
-if RELEASES:  # An empty list defines no test, rather than collecting a skipped one.
+if CANDIDATE is None and RELEASES:
 
     @pytest.mark.scale
-    @pytest.mark.parametrize("entry", RELEASES, ids=_version)
+    @pytest.mark.parametrize("entry", RELEASES)
     def test_dataset_staged_by_release_reopens_in_place(entry, tmp_path, monkeypatch):
         for name in RUNTIME_SETTINGS:
             monkeypatch.delenv(name, raising=False)
-        environment = {
-            name: value
-            for name, value in os.environ.items()
-            if name not in ("VIRTUAL_ENV", *RUNTIME_SETTINGS)
-        }
-        producer = tmp_path / "producer"
-        producer.mkdir()
-        (producer / "producer.py").write_text(PRODUCER, encoding="utf-8")
-        result = subprocess.run(
+        _run(
             [
                 "uv",
                 "run",
                 "--no-project",
                 "--isolated",
                 "--python",
-                f"{sys.version_info.major}.{sys.version_info.minor}",
+                PYTHON,
                 "--with",
-                _requirement(entry),
+                f"terrine[duckdb]=={entry}",
                 "python",
                 "-I",
-                "producer.py",
-                _version(entry),
-                str(CHECKOUT),
-                str(CORPUS),
+                PROBE,
+                "produce",
+                entry,
+                "",
                 str(tmp_path),
             ],
-            cwd=producer,
-            env=environment,
-            capture_output=True,
-            text=True,
-            timeout=HANG_GUARD_SECONDS,
-            check=False,
+            cwd=tmp_path,
         )
-        assert result.returncode == 0, result.stderr
+        probe.reopen(tmp_path)
 
-        con = ibis.duckdb.connect(str(tmp_path / "owner.duckdb"))
-        try:
-            for design_path in sorted(CORPUS.glob("**/design.json")):
-                name = design_path.parent.name
-                staged = pq.read_table(tmp_path / f"{name}-rows.parquet")
-                expected_schema = json.loads(
-                    (design_path.parent / "expected_schema.json").read_text("utf-8")
-                )["design.json"]
-                refusal_path = tmp_path / f"{name}-refusal.json"
-                if refusal_path.exists():
-                    refusal = json.loads(refusal_path.read_text("utf-8"))
-                    assert refusal == {"code": "terrine.compile.runtime_shape_unsupported"}
-                    with _reproducible_staging():
-                        direct_con = ibis.duckdb.connect()
-                        try:
-                            model = bind_model(direct_con, CORPUS / "data")
-                            frame = from_json(design_path.read_text("utf-8")).build(model)
-                            assert {
-                                column["name"]: column for column in output_schema(frame)
-                            } == {column["name"]: column for column in expected_schema}
-                            current_rows = frame.materialize(
-                                budget=Budget(
-                                    max_rows=100,
-                                    max_output_bytes=1_000_000,
-                                    strict_scan=False,
-                                )
-                            ).to_pyarrow()
-                        finally:
-                            direct_con.disconnect()
-                    outputs = {column["name"] for column in expected_schema}
-                    current_rows = current_rows.select(
-                        [name for name in current_rows.column_names if name in outputs]
-                    )
-                    staged = staged.select(
-                        [name for name in staged.column_names if name in outputs]
-                    )
-                    assert current_rows.schema.equals(staged.schema, check_metadata=False)
-                    assert current_rows.to_pylist() == staged.to_pylist()
-                    continue
 
-                manifest = DatasetManifest.from_json(
-                    (tmp_path / f"{name}-manifest.json").read_text("utf-8")
-                )
-                reopened = Dataset.from_manifest(manifest, con=con).to_pyarrow()
-                assert reopened.schema.equals(staged.schema)
-                assert reopened.to_pylist() == staged.to_pylist()
-                materialized = MaterializedFrame.from_arrow(reopened)
-                reopened_schema = materialized_schema(materialized)
-                assert {
-                    column["name"]: column for column in reopened_schema
-                } == {column["name"]: column for column in expected_schema}
+if CANDIDATE is not None:
 
-            restored_manifest = DatasetManifest.from_json(
-                (tmp_path / "state-panel-manifest.json").read_text("utf-8")
-            )
-            restored = Dataset.from_manifest(restored_manifest, con=con)
-            assert restored.manifest.frame_metadata["provenance"]["state_panel"] is not None
-            restored.to_pandas()
-        finally:
-            con.disconnect()
+    @pytest.fixture(scope="module")
+    def candidate_installation(tmp_path_factory):
+        assert CANDIDATE is not None
+        wheel = Path(CANDIDATE)
+        version = candidate_version(wheel)
+        digest = sha256(wheel)
+        predecessor = published_predecessor(version)
+        print(f"Published predecessor: {predecessor}")
+        print(f"Published predecessor SHA-256: {predecessor.sha256}")
+        directory = tmp_path_factory.mktemp("candidate-wheel")
+        installation = _install(wheel, digest, directory)
+        print(f"Candidate wheel SHA-256: {digest}", flush=True)
+        return installation, predecessor
+
+    @pytest.mark.scale
+    @pytest.mark.parametrize("writer", ("predecessor", "candidate"))
+    def test_candidate_wheel_reopens_real_owner_data(writer, candidate_installation, tmp_path):
+        candidate, predecessor = candidate_installation
+        producer = candidate
+        if writer == "predecessor":
+            wheel = tmp_path / predecessor.filename
+            with urlopen(predecessor.url, timeout=30) as response, wheel.open("wb") as output:
+                shutil.copyfileobj(response, output)
+            producer = _install(wheel, predecessor.sha256, tmp_path)
+        _wheel_probe(producer, "produce", tmp_path)
+        _wheel_probe(candidate, "reopen", tmp_path)
