@@ -488,7 +488,12 @@ def _legacy_saved_plan(saved):
     """Encode historical version-one envelopes with their original checksums."""
     plan = json.loads(saved.plan_json)
     plan["schema_version"] = 2
-    for field in ("execution_revision", "reuse_base_generation", "reuse_base_revision"):
+    for field in (
+        "execution_mode",
+        "execution_revision",
+        "reuse_base_generation",
+        "reuse_base_revision",
+    ):
         plan.pop(field, None)
     del plan["fingerprint"]
 

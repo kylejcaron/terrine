@@ -68,7 +68,7 @@ def preview(
             bounded count.
 
     Returns:
-        A Preview containing planned columns, estimates and any requested bounded row count.
+        A Preview containing estimates, metadata on retained inputs, and any requested row count.
 
     Example: tr.preview(design, model)
     """
@@ -106,6 +106,8 @@ def preview(
                 unknown_rows=summary.unknown,
                 eligible_rows=summary.retained,
             )
+    from terrine.compile._staging import staging_footprint
+
     return Preview(
         planned_rows=None,
         output_bytes=None,
@@ -118,5 +120,6 @@ def preview(
         strategy=planned.strategy,
         budget_warnings=warnings,
         source_reads=source_reads,
+        staging_footprint=staging_footprint(design, model, planned),
         **counts,
     )

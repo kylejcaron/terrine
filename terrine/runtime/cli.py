@@ -37,6 +37,15 @@ def _parser() -> argparse.ArgumentParser:
 
     cancel = commands.add_parser("cancel", help="request cancellation through the owner")
     cancel.add_argument("run_id")
+
+    backup = commands.add_parser("backup", help="bundle one closed, checkpointed DuckDB owner")
+    backup.add_argument("state_file", type=Path)
+    backup.add_argument("snapshot_root", type=Path)
+    backup.add_argument("bundle", type=Path)
+    restore = commands.add_parser("restore", help="recover a verified bundle to a new directory")
+    restore.add_argument("bundle", type=Path)
+    restore.add_argument("expected_digest")
+    restore.add_argument("destination", type=Path)
     return parser
 
 
@@ -57,6 +66,16 @@ def _client() -> ControlClient:
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
+        if args.command in {"backup", "restore"}:
+            from terrine.runtime.backup import backup_owner, restore_owner
+
+            result = (
+                backup_owner(args.state_file, args.snapshot_root, args.bundle)
+                if args.command == "backup"
+                else restore_owner(args.bundle, args.expected_digest, args.destination)
+            )
+            print(_json(result))
+            return 0
         client = _client()
         if args.command == "plan":
             serialized = client.plan(args.plan_file.read_bytes())
@@ -99,7 +118,10 @@ def main(argv: list[str] | None = None) -> int:
             print(_json(client.cancel_run(args.run_id)))
     except (OSError, ValueError, TerrineError) as error:
         code = getattr(error, "code", "terrine.runtime.cli_error")
-        print(json.dumps({"code": code}, sort_keys=True), file=sys.stderr)
+        details = {"code": code}
+        if args.command in {"backup", "restore"} and isinstance(error, TerrineError):
+            details["reason"] = error.context.get("reason", "owner_verification_failed")
+        print(json.dumps(details, sort_keys=True), file=sys.stderr)
         return 2
     return 0
 

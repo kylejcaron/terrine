@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -235,6 +236,42 @@ def test_snapshot_reopen_refuses_modified_retained_inputs(tmp_path):
         assert error.value.code == "terrine.runtime.snapshot_invalid"
     finally:
         reopened_con.disconnect()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="requires a detached read-only file")
+def test_run_image_isolates_readers_and_rejects_corruption_on_the_next_attempt(tmp_path):
+    import duckdb
+
+    path = tmp_path / "owner.duckdb"
+    authority = SnapshotAuthority(RuntimeOwner(path, tmp_path / "snapshots"))
+    con = ibis.duckdb.connect(str(path))
+    try:
+        con.raw_sql("CREATE TABLE events (ts TIMESTAMP, user_id INTEGER, value INTEGER)")
+        con.raw_sql("INSERT INTO events VALUES ('2025-01-01', 1, 3)")
+        model = Model.from_catalog(
+            _catalog(), con=con, readiness={"events": Coverage("2025-01-01", "2025-02-01")}
+        )
+        receipt = authority.capture(
+            model, design=_design(), con=con, namespace="runtime", run_id="run-1", budget=Budget()
+        )
+        source = model.catalog.sources["events"].relation
+        with (
+            authority._run_image(receipt, con=con, namespace="runtime") as reader,
+            reader() as first,
+        ):
+            first.con.raw_sql("CREATE TEMP TABLE scratch AS SELECT 99 AS n")
+            with duckdb.connect(receipt.artifact_path) as artifact:
+                artifact.execute("UPDATE input_0 SET value=7")
+            with reader() as second:
+                assert "scratch" not in second.con.list_tables()
+                assert second.execute(second.resolve(source))["value"].to_pylist() == [3]
+
+        with pytest.raises(TerrineError) as error:
+            with authority._run_image(receipt, con=con, namespace="runtime"):
+                pass
+        assert error.value.code == "terrine.runtime.snapshot_invalid"
+    finally:
+        con.disconnect()
 
 
 def test_snapshot_gc_respects_pins_and_tombstones_collected_inputs(tmp_path):

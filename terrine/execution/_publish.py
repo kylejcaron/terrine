@@ -8,16 +8,17 @@ import shutil
 import tempfile
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import duckdb
 import ibis
 from sqlglot import tokenize
 
 from terrine.backends.capabilities import _SNAPSHOT_UNAVAILABLE
-from terrine.data import Budget
+from terrine.data import Budget, UnitSource
 from terrine.errors import RefusalSpec, TerrineError
 from terrine.execution import _native
+from terrine.execution._metadata import metadata_operation
 from terrine.execution.inputs import (
     PhysicalRelationId,
     PublishedInputs,
@@ -26,7 +27,7 @@ from terrine.execution.inputs import (
     _Issuer,
     _register_published_backend,
 )
-from terrine.semantic.models import Catalog, SqlQuery, TableRef
+from terrine.semantic.models import Catalog, RelationSpec, SqlQuery, TableRef
 
 _CAPTURE_SCAN_UNKNOWN = RefusalSpec(
     "terrine.budget.scan_unknown",
@@ -35,19 +36,22 @@ _CAPTURE_SCAN_UNKNOWN = RefusalSpec(
 )
 
 
+type _CaptureRoot = tuple[Literal["source", "dimension", "roster"], str, RelationSpec]
+
+
 def _quote_ident(value: str) -> str:
     return '"' + value.replace('"', '""') + '"'
 
 
 def _root_spec(
     catalog: Catalog,
-    units: Mapping[str, Any] | None,
+    units: Mapping[str, UnitSource] | None,
     *,
     source_names: frozenset[str] | None = None,
     dimension_names: frozenset[str] | None = None,
     unit_names: frozenset[str] | None = None,
-):
-    roots = [
+) -> list[_CaptureRoot]:
+    roots: list[_CaptureRoot] = [
         ("source", name, source.relation)
         for name, source in catalog.sources.items()
         if source_names is None or name in source_names
@@ -96,7 +100,7 @@ def _admit_roots(
     catalog: Catalog,
     raw: Any,
     units: Mapping[str, Any] | None,
-    roots: list[tuple[str, str, Any]],
+    roots: list[_CaptureRoot],
 ) -> None:
     try:
         _native.required_relations(
@@ -124,6 +128,42 @@ def _admit_roots(
             raise _SNAPSHOT_UNAVAILABLE.error(
                 reason="opaque result lacks a verified read-only capture contract"
             ) from capture_exc
+
+
+@metadata_operation()
+def _inspect_capture_roots(
+    catalog: Catalog,
+    units: Mapping[str, UnitSource],
+    con: Any,
+    names: tuple[frozenset[str], frozenset[str], frozenset[str]],
+) -> tuple[tuple[_CaptureRoot, PhysicalRelationId], ...] | None:
+    """Resolve the same root identities as capture, with read-only metadata only."""
+    raw = _native.raw_connection(con)
+    with _native.connection_lock(raw):
+        databases = _native._rows(
+            raw,
+            "SELECT path, readonly FROM system.main.duckdb_databases() "
+            "WHERE database_name = system.main.current_database()",
+        )
+        if not databases or not databases[0][0] or databases[0][1]:
+            return None
+        source_names, dimension_names, unit_names = names
+        roots = _root_spec(
+            catalog,
+            units,
+            source_names=source_names,
+            dimension_names=dimension_names,
+            unit_names=unit_names,
+        )
+        if not roots:
+            return None
+        try:
+            _native.verify_native_backend(raw)
+            _admit_roots(catalog, raw, units, roots)
+        except TerrineError:
+            return None
+        objects = _native.native_objects(raw)
+        return tuple((root, _identity(root[2], objects)) for root in roots)
 
 
 def publish(

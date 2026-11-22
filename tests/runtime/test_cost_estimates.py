@@ -13,8 +13,9 @@ from terrine.runtime.backends.base import BackendCapabilities
 from terrine.runtime.backends.duckdb import DuckDBBackend
 from terrine.runtime.cost import ScanAuthorization, ScanEvidence, ScanPhase
 from terrine.runtime.execute import execute_plan
-from terrine.runtime.graph import dependency_graph
-from terrine.runtime.planner import RefreshPlan, plan_refresh
+from terrine.runtime.graph import DependencyGraph, dependency_graph
+from terrine.runtime.planner import ExecutionMode, RefreshPlan, plan_refresh
+from terrine.runtime.state import LayerNode
 from terrine.runtime.status import get_run
 from tests.runtime.test_execute import _publish
 
@@ -266,6 +267,48 @@ def test_cost_evidence_serializes_and_changes_fingerprint(owner):
     altered["execution_identity"] = "ignored"
     with pytest.raises(ValueError):
         RefreshPlan.deserialize(json.dumps(altered))
+
+
+def test_design_job_estimates_charge_one_anchor_across_logical_paths(owner):
+    anchor, other, state, frame = (
+        LayerNode(layer, source, "all", "definition", "pending")
+        for layer, source in (
+            ("anchor", "events"),
+            ("anchor", "properties"),
+            ("state_period", "properties"),
+            ("frame", "events"),
+        )
+    )
+    graph = DependencyGraph(
+        (anchor, other, state, frame), ((anchor, frame), (other, state), (state, frame))
+    )
+
+    def plan(mode: ExecutionMode, *, max_tasks: int):
+        return plan_refresh(
+            namespace="owner",
+            dataset="study",
+            definition_hash="definition",
+            snapshot_id="snapshot",
+            graph=graph,
+            cost_provider=owner,
+            execution_mode=mode,
+            max_tasks=max_tasks,
+        )
+
+    physical = plan("design", max_tasks=2)
+    logical = plan("custom", max_tasks=4)
+    assert tuple(task.layer for task in logical.tasks) == (
+        "anchor",
+        "anchor",
+        "state_period",
+        "frame",
+    )
+    first, result = physical.tasks
+    assert (first.layer, result.layer, result.dependencies) == ("anchor", "frame", (first.task_id,))
+    assert physical.scan_bytes == 6 * owner.size
+    assert logical.scan_bytes == 12 * owner.size
+    assert RefreshPlan.deserialize(physical.serialize()) == physical
+    assert logical.definition.fingerprint != physical.definition.fingerprint
 
 
 def test_fingerprint_valid_forecast_cannot_be_promoted_by_budget(owner):

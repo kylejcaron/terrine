@@ -347,7 +347,7 @@ def test_airflow_and_dagster_share_owner_state_and_failed_run_fence(tmp_path):
     resolver = Resolver()
     executor = Executor()
     authority = SnapshotAuthority(RuntimeOwner(database, tmp_path / "snapshots"))
-    planner = OwnerPlanner(resolver=resolver, snapshot_authority=authority)
+    planner = OwnerPlanner(resolver=resolver, snapshot_authority=authority, execution_mode="custom")
     endpoint = ControlEndpoint(Path("/tmp") / f"terrine-composed-{uuid4().hex}.sock")
     server = ControlServer(
         RuntimeStore(connection.con, namespace="owner"),
@@ -680,6 +680,7 @@ def test_dagster_same_root_failed_retry_reuses_fence_scoped_outputs(monkeypatch,
     planner = OwnerPlanner(
         resolver=Resolver(),
         snapshot_authority=authority,
+        execution_mode="custom",
     )
     invocations = []
     receipts = []
@@ -847,7 +848,9 @@ def test_airflow_operator_runs_and_retries_persisted_owner_invocation(tmp_path):
             return _publish(connection.con, plan, outputs, lease, run_id, generation="generation-1")
 
     authority = SnapshotAuthority(RuntimeOwner(database, tmp_path / "snapshots"))
-    planner = OwnerPlanner(resolver=Resolver(), snapshot_authority=authority)
+    planner = OwnerPlanner(
+        resolver=Resolver(), snapshot_authority=authority, execution_mode="custom"
+    )
     endpoint = ControlEndpoint(Path("/tmp") / f"terrine-airflow-{uuid4().hex}.sock")
     executor = Executor()
     server = ControlServer(
