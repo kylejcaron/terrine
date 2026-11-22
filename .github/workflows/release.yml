@@ -45,6 +45,8 @@ jobs:
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
           persist-credentials: false
 
       - uses: astral-sh/setup-uv@ae62891fec2bb8e7d6c99fc78c9fec3a63790f8d # v10.0.0
@@ -129,10 +131,58 @@ jobs:
           print(f"sdist: {len(src)} module(s)")
           PY
 
+      - name: Classify saved-format changes from the published predecessor
+        id: upgrade-route
+        shell: bash
+        run: |
+          set -euo pipefail
+          wheels=("$PWD"/dist/*.whl)
+          uv run --no-project --python 3.12 --with packaging python scripts/release_upgrade.py \
+            "${wheels[0]}" --github-output "$GITHUB_OUTPUT" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Prove saved-format upgrade with the built wheel
+        id: upgrade
+        env:
+          PROOF_REQUIRED: ${{ steps.upgrade-route.outputs.proof_required }}
+          PREDECESSOR_SHA256: ${{ steps.upgrade-route.outputs.predecessor_sha256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          wheels=("$PWD"/dist/*.whl)
+          wheel="${wheels[0]}"
+          checksum=$(sha256sum -- "$wheel")
+          digest="${checksum%% *}"
+          case "$PROOF_REQUIRED" in
+            true)
+              uv sync --locked --extra duckdb
+              proof="$RUNNER_TEMP/release-upgrade.log"
+              TERRINE_UPGRADE_CANDIDATE_WHEEL="$wheel" PYTEST_ADDOPTS=-s \
+                make test-scale SCALE_TESTS=integration/test_release_upgrade.py | tee "$proof"
+              grep -Fx "Candidate wheel SHA-256: $digest" "$proof"
+              grep -Fx "Published predecessor SHA-256: $PREDECESSOR_SHA256" "$proof"
+              ;;
+            false) ;;
+            *) echo "::error::Missing saved-format proof decision."; exit 1 ;;
+          esac
+          echo "Candidate wheel SHA-256: $digest" >> "$GITHUB_STEP_SUMMARY"
+          echo "wheel=$(basename "$wheel")" >> "$GITHUB_OUTPUT"
+          echo "sha256=$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Verify the wheel digest before upload
+        env:
+          WHEEL: ${{ steps.upgrade.outputs.wheel }}
+          WHEEL_SHA256: ${{ steps.upgrade.outputs.sha256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s  dist/%s\n' "$WHEEL_SHA256" "$WHEEL" | sha256sum --check
+
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: dist
-          path: dist/
+          path: |
+            dist/${{ steps.upgrade.outputs.wheel }}
+            dist/*.tar.gz
           if-no-files-found: error
 
   publish:

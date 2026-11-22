@@ -205,16 +205,23 @@ administrative compatibility does not permit obsolete execution or replay
   a materialization. The three distinct root definitions are materialized
   separately. Regeneration must match the recorded bytes without changing any
   saved generation.
-- Release tags in the 0.x series require a successful CI run. Release candidates
-  and final tags require successful CI, PostgreSQL, and scale jobs; the scale
-  tier includes the release-upgrade test. BigQuery and Snowflake are advisory
-  in the automated gate, but each needs a green run within seven days of the
-  tag or a waiver recorded in the release notes. Record each cloud backend's
-  latest passing release as `verified at vX.Y` in the [backend compatibility
-  table](backend-compatibility.md#operation-regression-environment).
+- Every release tag requires `ci-ok`. All non-development tags in 1.x and
+  later, including alphas, betas and release candidates, also require PostgreSQL
+  and scale on the release commit.
+- BigQuery and Snowflake checks are advisory; evidence is specific to the
+  tested commit and operations. See the
+  [dated backend results](backend-compatibility.md#backend-verification-status).
 - An [upgrade test](../../integration/test_release_upgrade.py) installs each
   published release listed in `tests/artifacts/RELEASES`, starting with
   `0.1.0a1`, into an isolated interpreter, stages a dataset with it and reopens
   that dataset in place with the current code. It runs in the weekly scale tier.
+- Before publishing a release with saved-format changes or uncertain format
+  impact, a separate gate stages data with the immediately preceding published
+  release and with the built candidate wheel. The installed candidate reopens
+  both owners in place outside the checkout. A shape the predecessor could
+  stage must still stage; direct materialization does not substitute for it.
+  The gate checks rows, schema, roles and state-panel metadata, then verifies
+  that the uploaded wheel has the same SHA-256. A weekly pass is not evidence
+  about the built wheel.
 - Adding a format generation, and adding a release to `RELEASES`, are release
   checklist steps.

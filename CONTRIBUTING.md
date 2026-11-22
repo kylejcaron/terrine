@@ -57,18 +57,18 @@ uv run python -m tests.documentation --build
 Before tagging a release:
 
 1. Confirm CI is green for the release commit. The release workflow requires the
-   `ci-ok` job for every release tag. Release candidates and final 1.x tags also
-   require successful PostgreSQL and scale jobs on that commit. Dispatch both
-   workflows against a ref containing the release commit, then wait for those
-   jobs to succeed before tagging:
+   `ci-ok` job for every release tag. All non-development tags in 1.x and later,
+   including alphas, betas and release candidates, also require PostgreSQL and scale jobs
+   on that commit. Dispatch both workflows against a ref containing the release
+   commit, then wait for those jobs to succeed before tagging:
 
    ```sh
    gh workflow run warehouse-backends --ref <ref> -f backend_mode=postgres
    gh workflow run scale --ref <ref>
    ```
 
-   BigQuery and Snowflake runs are advisory. If the CI push run was deferred or
-   never ran in full, run `gh workflow run CI --ref <ref>` and wait for `ci-ok`.
+   If the CI push run was deferred or never ran in full, run
+   `gh workflow run CI --ref <ref>` and wait for `ci-ok`.
 2. Run the stable-API compatibility check:
 
    ```sh
@@ -86,18 +86,33 @@ Before tagging a release:
    differences are informational during 0.x and enforced from `1.0.0rc1`.
    Confirm CI is green for the release commit after adding the snapshot, before
    tagging.
-4. Run the release-upgrade test when `tests/artifacts/RELEASES` lists published
-   predecessor releases:
+4. For a saved-format change, build a wheel and run the candidate upgrade lane
+   before tagging:
 
    ```sh
-   uv run pytest -n 0 -m scale integration/test_release_upgrade.py
+   build_dir=$(mktemp -d)
+   uv build --wheel --out-dir "$build_dir"
+   wheel=$(printf '%s\n' "$build_dir"/*.whl)
+   TERRINE_UPGRADE_CANDIDATE_WHEEL="$wheel" \
+     make test-scale SCALE_TESTS="integration/test_release_upgrade.py"
    ```
 
-   `RELEASES` records every published release starting with `0.1.0a1`. Validate
-   the producer once against the locally built wheel as well: run `uv build`,
-   add the wheel's absolute path as one line in `tests/artifacts/RELEASES`, and
-   run the command above. After validation, remove only that temporary wheel
-   path; keep every published release in `RELEASES`.
+   The lane installs the immediately preceding published writer from PyPI, by
+   version order below the candidate (including alphas, betas and release
+   candidates, excluding development builds before the saved-format promise).
+   It stages data with that writer and with the candidate, then reopens both
+   owners in place with the installed candidate wheel outside the checkout.
+   Keep only published versions in `tests/artifacts/RELEASES` for the weekly
+   source-checkout matrix; never add a local wheel path.
+
+   The release workflow compares the candidate with the published predecessor's
+   tag. It requires proof for any change beyond documentation and known release
+   bookkeeping, or when it cannot classify the change. This includes changes to
+   codecs, manifests, receipts, storage and replay schema, identity semantics,
+   and corpus generation. The build records the predecessor and SHA-256 digests
+   and verifies the checked wheel again before artifact upload. Missing
+   predecessor evidence or a failed proof blocks publication. Neither the
+   distribution smoke test nor an earlier weekly success clears the candidate.
 
 5. If a saved format changed, add a generation to the artifact corpus:
 
@@ -109,6 +124,13 @@ Before tagging a release:
    the 1.0 stability policy takes effect.
 7. After publishing, append the released version to `tests/artifacts/RELEASES`
    so later upgrade checks include it.
+
+### BigQuery and Snowflake evidence
+
+Check the [dated warehouse results](docs/guides/backend-compatibility.md#backend-verification-status)
+when describing BigQuery or Snowflake support. These checks are advisory for
+releases. Without a matching successful run, say the candidate was not verified
+on that backend. A paid warehouse run still requires approval.
 
 ## License and the CLA
 
