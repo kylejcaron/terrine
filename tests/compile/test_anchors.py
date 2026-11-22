@@ -409,18 +409,19 @@ def test_null_roster_key_refuses(native_model):
         "users",
         pa.table(
             {
-                "id": pa.array([None], type=pa.string()),
-                "entered": pa.array([None], type=pa.timestamp("us", tz="UTC")),
-                "exited": pa.array([None], type=pa.timestamp("us", tz="UTC")),
-                "observed_from": pa.array([None], type=pa.timestamp("us", tz="UTC")),
-                "observed_until": pa.array([None], type=pa.timestamp("us", tz="UTC")),
+                "id": pa.array([None, None, "a", "a"], type=pa.string()),
+                "entered": pa.nulls(4, type=pa.timestamp("us", tz="UTC")),
+                "exited": pa.nulls(4, type=pa.timestamp("us", tz="UTC")),
+                "observed_from": pa.nulls(4, type=pa.timestamp("us", tz="UTC")),
+                "observed_until": pa.nulls(4, type=pa.timestamp("us", tz="UTC")),
             }
         ),
     )
     anchors = compile_anchors(Design(unit="user", anchor=FixedDate(date(2025, 1, 3))), native_model)
     with pytest.raises(TerrineError) as error:
         anchors.validate(execute=lambda query: query.to_pyarrow())
-    assert error.value.context["check_key"] == "null_roster_key"
+    assert error.value.code == "terrine.compile.anchor_integrity"
+    assert error.value.context == {"check_key": "null_roster_key"}
 
 
 def test_roster_key_named_like_aggregate_alias_is_checked(native_model):

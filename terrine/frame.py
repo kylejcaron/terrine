@@ -6,12 +6,14 @@ import hashlib
 import json
 import warnings
 from collections.abc import Iterable
+from copy import copy
 from dataclasses import dataclass, replace
 from datetime import datetime
 from decimal import Decimal
 from importlib import import_module
 from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 
+import ibis
 import pyarrow as pa
 import pyarrow.compute as pc
 
@@ -28,10 +30,11 @@ from terrine.data import (
     SamplingMeta,
     dataframe_view_preflight,
 )
-from terrine.errors import RefusalSpec
+from terrine.errors import RefusalSpec, TerrineError
 from terrine.execution.gates import (
     GatedStream,
     enforce_shape_budget,
+    fold,
     gate_totals,
     gated_output,
     run_schedule,
@@ -45,12 +48,56 @@ from terrine.spec.trajectory import CohortGrouping, CohortSpec, LifeTable, TimeT
 
 if TYPE_CHECKING:
     from terrine.compile.columns import CompiledStudy
+    from terrine.compile.dispatch import _StudyRequirements
     from terrine.model import Model
     from terrine.spec.design import Design
     from terrine.spec.expressions import EventTime
     from terrine.spec.transforms import Winsorization
 
 __all__ = ["Frame", "CohortTable"]
+
+
+def _life_table_group_supports(
+    shape: LifeTable, compiled: CompiledStudy
+) -> tuple[dict[str, str], list[tuple[str, int]]]:
+    supports: dict[str, str] = {}
+    synthesized: list[tuple[str, int]] = []
+    for name in shape.group_by:
+        timing = compiled.expression_timings.get(name)
+        if timing is not None:
+            # A group has an interval of contributing times, not a row origin.
+            for field, offset, policy in (
+                ("start_bound_column", timing.support_seconds[0], "min"),
+                ("end_bound_column", timing.support_seconds[1], "max"),
+            ):
+                column = getattr(timing, field)
+                if column is None:
+                    column = f"__terrine_{name}_{field.removesuffix('_column')}"
+                    synthesized.append((column, offset))
+                supports[column] = policy
+        meta = compiled.columns[name]
+        for column, policy in (
+            (meta.observed_from_column, "min"),
+            (meta.observed_until_column, "max"),
+            (meta.complete_column, "all"),
+            (meta.reason_column, "reasons"),
+        ):
+            if column is not None:
+                supports.setdefault(column, policy)
+    return supports, synthesized
+
+
+def _add_life_table_timing(table: pa.Table, synthesized: list[tuple[str, int]]) -> pa.Table:
+    for column, offset in synthesized:
+        table = table.append_column(
+            column,
+            # pyarrow.compute lacks a stub for this checked Arrow kernel.
+            pc.add_checked(  # ty: ignore[unresolved-attribute]
+                table["t0"], pa.scalar(offset, pa.duration("s"))
+            ),
+        )
+    return table
+
 
 _INVALID_SPLIT = RefusalSpec(
     "terrine.dataset.invalid_split", "Split input {field} is invalid: {reason}."
@@ -391,20 +438,32 @@ def _apply_training_view(compiled: CompiledStudy, view: _TrainingView) -> Compil
 
 
 def _excluded_label_counts(compiled: CompiledStudy, view: _TrainingView, execute) -> dict[str, int]:
-    counts: dict[str, int] = {}
-    for name in view.labels:
+    table = compiled.table
+    reasons = {}
+    for index, name in enumerate(view.labels):
         metadata = compiled.columns[name]
         assert metadata.complete_column is not None and metadata.reason_column is not None
-        excluded = compiled.table.filter(
-            ~compiled.table[metadata.complete_column].fill_null(False)
-            | compiled.table[name].isnull()
+        unusable = ~table[metadata.complete_column].fill_null(False) | table[name].isnull()
+        reasons[f"label_{index}"] = unusable.ifelse(
+            table[metadata.reason_column].fill_null("unknown"), ibis.null("string")
         )
-        grouped = excluded.group_by(metadata.reason_column).aggregate(rows=excluded.count())
-        for row in execute(grouped).to_pylist():
-            reason = row[metadata.reason_column]
-            key = "unknown" if reason is None else reason
-            counts[key] = counts.get(key, 0) + row["rows"]
-    return dict(sorted(counts.items()))
+    if len(reasons) == 1:
+        occurrences = table.select(reason=next(iter(reasons.values())))
+    else:
+        # Expand label occurrences, not distinct reasons. Only the inline ordinals
+        # are unioned; the study appears once and requires no registered memtable.
+        ordinals = ibis.union(
+            *(ibis.literal(i, type="int64").name("ordinal").as_table() for i in range(len(reasons)))
+        )
+        expanded = table.select(**reasons).cross_join(ordinals)
+        occurrences = expanded.select(
+            reason=ibis.cases(
+                *((expanded.ordinal == i, expanded[name]) for i, name in enumerate(reasons))
+            )
+        )
+    excluded = occurrences.filter(occurrences.reason.notnull())
+    grouped = excluded.group_by("reason").aggregate(rows=excluded.count())
+    return dict(sorted((row["reason"], row["rows"]) for row in execute(grouped).to_pylist()))
 
 
 @dataclass(frozen=True, slots=True, init=False, repr=False, eq=False)
@@ -424,19 +483,21 @@ class Frame:
 
     _design: Design
     _model: Model
+    _requirements: _StudyRequirements
     _compiled: CompiledStudy
     _training_view: _TrainingView | None
     _scoring_view: _ScoringView | None
     _winsorizations: tuple[Winsorization, ...]
 
     def __init__(self, design: Design, model: Model) -> None:
-        from terrine.compile.dispatch import compile_design
-        from terrine.spec.validate import resolve_unit
+        from terrine.compile.dispatch import _prepare_study
 
-        design = resolve_unit(design, model)
+        requirements, compiled = _prepare_study(design, model)
+        design = requirements.design
         object.__setattr__(self, "_design", design)
         object.__setattr__(self, "_model", model)
-        object.__setattr__(self, "_compiled", compile_design(design, model))
+        object.__setattr__(self, "_requirements", requirements)
+        object.__setattr__(self, "_compiled", compiled)
         object.__setattr__(self, "_training_view", None)
         object.__setattr__(self, "_scoring_view", None)
         object.__setattr__(self, "_winsorizations", ())
@@ -619,13 +680,12 @@ class Frame:
                     "terrine.dataset.invalid_label_support",
                     "Selected label lacks completeness and reason metadata: {label}",
                 ).error(label=name)
-        result = Frame(self._design, self._model)
+        result = copy(self)
         object.__setattr__(
             result,
             "_training_view",
             _TrainingView(selected_features, labels, incomplete_labels, split),
         )
-        object.__setattr__(result, "_winsorizations", self._winsorizations)
         if self._winsorizations:
             result._active_compiled()
         return result
@@ -693,9 +753,7 @@ class Frame:
             feature_hash = _feature_definition_hash(self._design, (transform.column,), self._model)
             if not compatible or feature_hash != fit.feature_definition_hash:
                 raise transforms.identity_error(transform.column)
-        result = Frame(self._design, self._model)
-        object.__setattr__(result, "_training_view", self._training_view)
-        object.__setattr__(result, "_scoring_view", self._scoring_view)
+        result = copy(self)
         object.__setattr__(result, "_winsorizations", (*self._winsorizations, bound))
         return result
 
@@ -748,9 +806,9 @@ class Frame:
         for warning in _scan_policy(budget):
             warnings.warn(warning, RuntimeWarning, stacklevel=2)
         from terrine.compile.columns import expression_policy
-        from terrine.compile.dispatch import compile_design
+        from terrine.compile.dispatch import _bind_study
+        from terrine.compile.prune import prune_columns
         from terrine.execution.backend import backend_provider
-        from terrine.execution.inputs import open_execution
 
         backend_provider(self._model.con, engine=self._model._engine).capabilities.require(
             "arrow_batches",
@@ -759,21 +817,10 @@ class Frame:
             allow_unverified=self._model._engine.status == "unverified",
         )
         model = self._model
-        with open_execution(
-            model.catalog,
-            model.con,
-            units=model.units,
-            input_binding=model.input_binding,
-            engine=model._engine,
-        ) as context:
-            from terrine.spec.validate import validate_design
-
-            execution_model = model._for_execution(
-                context,
-                source_names=set(validate_design(self._design, model).required_sources),
-                unit_name=self._design.unit,
-            )
-            compiled = compile_design(self._design, execution_model)
+        with model._study_execution(
+            lambda: set(self._requirements.required_sources), unit_name=self._design.unit
+        ) as (context, execution_model):
+            compiled = _bind_study(self._requirements, model, execution_model, prune_output=False)
             # Admit every relation the Frame will run, integrity checks included,
             # so an unsupported primitive refuses before the first source read.
             context.admit(*compiled.reads())
@@ -784,97 +831,83 @@ class Frame:
                 compiled = transform(compiled)
                 context.admit(*compiled.reads())
             compiled = self._with_winsorization_metadata(compiled)
-            # Anchor checks, every earlier run and each in-place check run first; the
-            # final run and the eligibility summary ride on the output statement.
-            final = run_schedule(compiled, context.execute)
+            # Keep the original per-relation counts and barriers. Only prune
+            # after the final gate and retained rows have become one graph.
+            final = fold(compiled._checks)[-1]
             query = gated_output(compiled.table, compiled.audit_table, final)
             chunk_size = 65_536
-            is_life_table = isinstance(self._design.shape, LifeTable)
-            if budget is not None and budget.max_rows is not None and not is_life_table:
-                limit = min(budget.max_rows + 1, 2**63 - 1)
+            study_shape = self._design.shape
+            life_table = study_shape if isinstance(study_shape, LifeTable) else None
+            max_rows = None if budget is None else budget.max_rows
+            input_limit = max_rows if life_table is None else None
+            if input_limit is not None:
+                limit = min(input_limit + 1, 2**63 - 1)
                 query = query.limit(limit)
                 chunk_size = min(chunk_size, limit)
-            batches = []
-            row_count = 0
-            stream = GatedStream(
-                context.to_arrow_batches(query, chunk_size=chunk_size),
-                final,
-                compiled.table.columns,
-                lambda: context.execute(gate_totals(compiled.audit_table, final)),
+            query = prune_columns(query)
+            context.admit(query)
+            run_schedule(compiled, context.execute)
+            stream_life_table = (
+                life_table is not None
+                and not compiled.sketches
+                and transform is None
+                and self._training_view is None
             )
-            try:
+            with context.to_arrow_batches(query, chunk_size=chunk_size) as reader:
+                stream = GatedStream(
+                    reader,
+                    final,
+                    compiled.table.columns,
+                    lambda: context.execute(
+                        prune_columns(gate_totals(compiled.audit_table, final))
+                    ),
+                )
                 summary = stream.resolve()
                 schema = stream.schema
-                output_schema = self._winsorize_output(
-                    pa.Table.from_batches([], schema=schema)
-                ).schema
-                for batch in stream:
-                    if batch.schema != schema:
-                        batch = batch.cast(schema)
-                    batch = self._winsorize_output(batch)
-                    row_count += batch.num_rows
-                    if budget is not None and not is_life_table:
-                        if budget.max_rows is not None and row_count > budget.max_rows:
-                            raise _ROWS_EXCEEDED.error(limit=budget.max_rows)
-                    batches.append(batch)
-                table = pa.Table.from_batches(batches, schema=output_schema)
-            finally:
-                stream.close()
+                empty = self._winsorize_output(pa.Table.from_batches([], schema=schema))
+
+                def output_batches() -> Iterable[pa.RecordBatch]:
+                    row_count = 0
+                    for batch in stream:
+                        if batch.schema != schema:
+                            batch = batch.cast(schema)
+                        batch = self._winsorize_output(batch)
+                        if input_limit is not None:
+                            row_count += batch.num_rows
+                            if row_count > input_limit:
+                                raise _ROWS_EXCEEDED.error(limit=input_limit)
+                        yield batch
+
+                if life_table is not None and stream_life_table:
+                    table = self._reduce_life_table_batches(
+                        life_table, compiled, empty, output_batches(), max_rows
+                    )
+                else:
+                    table = pa.Table.from_batches(output_batches(), schema=empty.schema)
             excluded_counts = {}
             if self._training_view is not None and self._training_view.incomplete_labels == "drop":
                 excluded_counts = _excluded_label_counts(
                     study, self._training_view, context.execute
                 )
-            from terrine.compile.columns import resolve_sketch_sidecars
+            if not stream_life_table:
+                from terrine.compile.columns import resolve_sketch_sidecars
 
-            table = resolve_sketch_sidecars(table, compiled, context.con)
-            if isinstance(self._design.shape, LifeTable):
-                table = self._normalize_output(table)
+                table = resolve_sketch_sidecars(table, compiled, context.con)
             roles = compiled.roles
             columns = compiled.columns
-            if isinstance(self._design.shape, LifeTable):
-                from terrine.compile.dispatch import aggregate_life_table
+            if life_table is not None:
+                if not stream_life_table:
+                    from terrine.compile.dispatch import aggregate_life_table
 
-                life_table = self._design.shape
-                group_supports: dict[str, str] = {}
-                for name in life_table.group_by:
-                    timing = compiled.expression_timings.get(name)
-                    if timing is not None:
-                        # A group has an interval of contributing times, not a row origin.
-                        for field, offset, policy in (
-                            ("start_bound_column", timing.support_seconds[0], "min"),
-                            ("end_bound_column", timing.support_seconds[1], "max"),
-                        ):
-                            column = getattr(timing, field)
-                            if column is None:
-                                column = f"__terrine_{name}_{field.removesuffix('_column')}"
-                                table = table.append_column(
-                                    column,
-                                    # pyarrow.compute lacks a stub for this checked Arrow kernel.
-                                    pc.add_checked(  # ty: ignore[unresolved-attribute]
-                                        table["t0"], pa.scalar(offset, pa.duration("s"))
-                                    ),
-                                )
-                            group_supports[column] = policy
-                    meta = compiled.columns[name]
-                    for column, policy in (
-                        (meta.observed_from_column, "min"),
-                        (meta.observed_until_column, "max"),
-                        (meta.complete_column, "all"),
-                        (meta.reason_column, "reasons"),
-                    ):
-                        if column is not None:
-                            group_supports.setdefault(column, policy)
-                table = aggregate_life_table(
-                    table,
-                    interval_seconds=life_table.bin.seconds,
-                    group_by=life_table.group_by,
-                    group_supports=group_supports,
-                    max_rows=None if budget is None else budget.max_rows,
-                )
-                if budget is not None:
-                    if budget.max_rows is not None and table.num_rows > budget.max_rows:
-                        raise _ROWS_EXCEEDED.error(limit=budget.max_rows)
+                    table = self._normalize_output(table)
+                    group_supports, synthesized = _life_table_group_supports(life_table, compiled)
+                    table = aggregate_life_table(
+                        _add_life_table_timing(table, synthesized),
+                        interval_seconds=life_table.bin.seconds,
+                        group_by=life_table.group_by,
+                        group_supports=group_supports,
+                        max_rows=max_rows,
+                    )
                 roles = Roles(
                     unit="unit",
                     anchor="anchor_id",
@@ -993,6 +1026,51 @@ class Frame:
                 if result.table.nbytes > budget.max_output_bytes:
                     raise _OUTPUT_BYTES_EXCEEDED.error(limit=budget.max_output_bytes)
             return result
+
+    def _reduce_life_table_batches(
+        self,
+        shape: LifeTable,
+        compiled: CompiledStudy,
+        empty: pa.Table,
+        batches: Iterable[pa.RecordBatch],
+        max_rows: int | None,
+    ) -> pa.Table:
+        from terrine.compile.dispatch import _life_table_accumulator
+
+        supports, synthesized = _life_table_group_supports(shape, compiled)
+        prepared = _add_life_table_timing(self._normalize_output(empty), synthesized)
+        accumulator = _life_table_accumulator(
+            prepared.schema,
+            interval_seconds=shape.bin.seconds,
+            group_by=shape.group_by,
+            group_supports=supports,
+            max_rows=max_rows,
+        )
+        # The materialized route reads all rows before normalization, then adds
+        # timing columns before reduction. Drain earlier phases on failure so
+        # a later batch's read or timestamp refusal still takes precedence.
+        failed_at: Literal["normalize", "timing", "reduce"] | None = None
+        failure: Exception | None = None
+        for batch in batches:
+            phase: Literal["normalize", "timing", "reduce"] = "normalize"
+            try:
+                if failed_at == "normalize":
+                    continue
+                table = self._normalize_output(pa.Table.from_batches([batch], schema=empty.schema))
+                phase = "timing"
+                if failed_at == "timing":
+                    continue
+                table = _add_life_table_timing(table, synthesized)
+                phase = "reduce"
+                if failed_at == "reduce":
+                    continue
+                for record_batch in table.to_batches():
+                    accumulator.consume(record_batch)
+            except (pa.ArrowException, TerrineError, TypeError, ValueError, OverflowError) as exc:
+                failed_at, failure = phase, exc
+        if failure is not None:
+            raise failure
+        return accumulator.finish()
 
     def _view_provenance(self, provenance: Provenance, excluded_counts: dict[str, int]):
         model = self._model

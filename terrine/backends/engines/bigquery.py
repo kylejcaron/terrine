@@ -112,6 +112,23 @@ class BigQueryDialect(Dialect):
     def timestamp_text(self, value: ir.TimestampValue) -> ir.StringValue:
         return value.cast(dt.string)
 
+    def literal_bound_keys(
+        self, column: ir.TimestampValue, bound: ir.TimestampValue
+    ) -> tuple[ir.Value, ir.Value] | None:
+        # Keep the partition column bare. TIMESTAMP and DATETIME each order
+        # natively in their own microsecond domain.
+        left, right = column.type(), bound.type()
+        if (
+            isinstance(left, dt.Timestamp)
+            and isinstance(right, dt.Timestamp)
+            and left.timezone == right.timezone
+            and left.timezone in (None, "UTC")
+            and left.scale in (None, 6)
+            and right.scale in (None, 6)
+        ):
+            return column, bound
+        return None
+
     def timestamp_parts(
         self, value: ir.TimestampValue
     ) -> tuple[ir.IntegerValue, ir.IntegerValue, ir.IntegerValue]:

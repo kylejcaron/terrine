@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
+from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta
 from difflib import get_close_matches
@@ -909,6 +910,11 @@ def _validate_shape(
         measure = metric.measures[0]
         if measure.aggregation != "sum" or metric.transforms:
             raise _INVALID.error(reason="trajectory_metric_must_be_additive")
+        if (
+            measure.window_days is not None
+            and design.shape.trajectory.period.seconds != measure.window_days * 86400
+        ):
+            raise _METRIC_WINDOW.error(metric=design.shape.trajectory.metric)
         for source_name in metric.source_names:
             _required(model, source_name, required)
     elif isinstance(design.shape, (TimeToEvent, LifeTable)):
@@ -966,7 +972,19 @@ def resolve_unit(design: Design, model: Model) -> Design:
     raise _AMBIGUOUS_UNIT.error(owner="design", choices=choices, parameter="unit")
 
 
+# Dispatch sets this only while compiling an inspection or a private binding.
+# Shape compilers can validate their derived Designs in their original order.
+_validation_resolver: ContextVar[Callable[[Design, Model], ValidationReport] | None] = ContextVar(
+    "study_validation_resolver", default=None
+)
+
+
 def validate_design(design: Design, model: Model) -> ValidationReport:
+    resolve = _validation_resolver.get()
+    return _validate_declarations(design, model) if resolve is None else resolve(design, model)
+
+
+def _validate_declarations(design: Design, model: Model) -> ValidationReport:
     for expressions in (design.features, design.outcomes):
         for name, value in expressions.items():
             for leaf in _output_leaves(value):

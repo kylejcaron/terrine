@@ -504,4 +504,5 @@ def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
             identity_kind="configured" if configured_id is not None else "timestamp",
         ),
         range_plans=base.range_plans,
+        source_reads=base.source_reads,
     )

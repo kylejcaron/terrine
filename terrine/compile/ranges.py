@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 from terrine.spec.anchors import EventAnchor, FixedDate, Schedule
 from terrine.spec.design import Design
 from terrine.spec.expressions import (
@@ -24,9 +26,11 @@ _ROUTE = (
 )
 
 
-def plan_ranges(design: Design, model) -> dict[Expr, RangePlan]:
+def plan_ranges(
+    design: Design, model, *, leaves: Iterable[Expr] | None = None
+) -> dict[Expr, RangePlan]:
     """Derive candidate bounds without querying relation sizes or event density."""
-    expressions = {
+    expressions = set(leaves) if leaves is not None else {
         expression
         for named in (design.features, design.outcomes, design.eligibility)
         for value in named.values()

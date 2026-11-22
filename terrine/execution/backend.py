@@ -18,8 +18,15 @@ from terrine.semantic.models import Catalog, RelationSpec
 
 if TYPE_CHECKING:
     import ibis
+    import ibis.expr.types as ir
 
-    from terrine.execution.inputs import ExecutionContext, PhysicalRelationId, VerifiedInputBinding
+    from terrine.execution.inputs import (
+        ExecutionContext,
+        PhysicalRelationId,
+        VerifiedInputBinding,
+        _StudyRoots,
+    )
+    from terrine.semantic.models import BoundSource
 
 __all__ = ["BackendProvider", "backend_provider", "backend_capabilities"]
 
@@ -53,6 +60,7 @@ class BackendProvider(Protocol):
         *,
         units: Mapping[str, Any] | None = None,
         input_binding: VerifiedInputBinding | None = None,
+        _study_roots: _StudyRoots | None = None,
     ) -> AbstractContextManager[ExecutionContext]: ...
 
 
@@ -73,6 +81,15 @@ def backend_capabilities(con: Any) -> BackendCapabilities:
     if isinstance(con, BaseBackend):
         return GENERIC.capabilities
     return UNVERIFIED_CAPABILITIES
+
+
+def _event_partition(
+    engine: Engine, con: Any, source: BoundSource, timestamp: ir.TimestampValue
+) -> tuple[str | None, str | None]:
+    """Ask the already-admitted provider about this bound event clock, without re-admission."""
+    provider = import_module(engine.provider_module).PROVIDER
+    prove = getattr(provider, "event_partition", None)
+    return (None, "layout_unverified") if prove is None else prove(con, source, timestamp)
 
 
 def backend_provider(con: Any, *, engine: Engine | None = None) -> BackendProvider:

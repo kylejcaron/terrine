@@ -91,6 +91,33 @@ def test_life_table_grouping_features_retain_conservative_surrogate_timing():
         con.disconnect()
 
 
+def test_life_table_caps_aggregated_output_not_subject_records():
+    from terrine.data import Budget
+    from terrine.spec.trajectory import LifeTable
+
+    con, model = _model()
+    try:
+        con.raw_sql(
+            "DELETE FROM outcomes WHERE user_id = 'u1' "
+            "AND ts = TIMESTAMPTZ '2025-01-01 00:00:00+00'"
+        )
+        frame = Design(
+            "user",
+            EventAnchor("signup", occurrence="first"),
+            shape=LifeTable(TimeToEvent("churn"), "7d"),
+            administrative_cutoff=datetime(2025, 1, 4, tzinfo=UTC),
+        ).build(model)
+        table = frame.materialize(budget=Budget(max_rows=1)).table
+        assert table["at_risk"].to_pylist() == [2]
+        assert table["events"].to_pylist() == [1]
+        assert table["censored_by_reason"].to_pylist() == [[("administrative_cutoff", 1)]]
+        with pytest.raises(TerrineError) as error:
+            frame.materialize(budget=Budget(max_output_bytes=table.nbytes - 1))
+        assert error.value.code == "terrine.budget.output_bytes_exceeded"
+    finally:
+        con.disconnect()
+
+
 def test_prevalent_events_are_excluded_and_cutoff_equality_is_censored():
     con, model = _model()
     try:
@@ -543,6 +570,16 @@ def test_life_table_matches_independent_pandas_risk_set_oracle():
             administrative_cutoff=datetime(2025, 1, 4, tzinfo=UTC),
         ).build(model)
         materialized = frame.materialize()
+        assert materialized.roles.features == ("time_bin",)
+        assert materialized.roles.outcomes == (
+            "at_risk",
+            "events",
+            "censored",
+            "delayed_entries",
+            "event_rate",
+            "censor_rate",
+        )
+        assert materialized.roles.treatment is None
         rows = materialized.table.to_pylist()
         expected = pd.DataFrame(
             [

@@ -17,6 +17,7 @@ With `Model.from_tables`, that is a `tr.sum(column)` metric declared on the
 `Events`; counts, means and ratios are not accepted by this shape.
 Other aggregations, multi-measure metrics, and transforms refuse with
 `terrine.design.invalid` (reason `trajectory_metric_must_be_additive`).
+If the measure declares `window_days`, the period must match it.
 The first start event is the origin; each age represents a period of elapsed
 time from it. For ages `a = 0, ..., max_periods - 1` and positive period width `p`,
 let `m_j` be the metric value in `[t0 + j*p, t0 + (j+1)*p)`. The cumulative
@@ -24,6 +25,13 @@ value is `m_0 + ... + m_a`, the total in `[t0, t0 + (a+1)*p)`.
 **Age 0 includes the origin event**, rather than starting
 after it. An event declared by
 [`Model.from_tables`](temporal-engine.md#binding-event-tables) can be the origin.
+
+On DuckDB, a trajectory with a native UTC microsecond clock and an unfiltered
+SUM measure can assign each event directly to one age per origin. The query
+keeps empty ages. Trajectories with baseline features, eligibility, treatment,
+keyed or dimension-backed sources, or other time axes use the regular window
+compiler. This does not change age boundaries, arithmetic policy, or support metadata.
+Native floating-point sums remain order-dependent.
 
 Supported options are `features`, `eligibility`, `treatment`, `anchor_range`,
 `gap="0d"`, and `administrative_cutoff=None`. Other optional inputs default to
@@ -213,6 +221,15 @@ Delayed entry contributes to the risk set starting at its actual entry bin;
 events and censoring are recorded in their terminal-time bin. Censor reasons
 remain explicit counts in `censored_by_reason`; no incomplete record is
 zero-filled or reclassified as an event.
+
+Each group emits all bins from zero through its last terminal bin, including
+bins before anyone enters. `Budget.max_rows` and `Budget.max_output_bytes`
+apply to the final life table, not the individual follow-up records. Frame
+materialization can reduce those records in batches, but the budget does not
+cap process memory. For bounded reads of an ordinary pinned dataset, use
+[`Dataset.to_arrow_batches`](ml-staging.md). Event and censor rates are null
+wherever no one is at risk.
+
 Every risk-set value has its own adjacent support columns, such as
 `events__complete` and `events__reason`. The latter is `list<string>` and retains
 all distinct exact incompleteness reasons for the trajectory, not just one.

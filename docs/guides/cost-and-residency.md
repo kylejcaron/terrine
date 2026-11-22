@@ -48,6 +48,29 @@ reviewing the upstream work. Non-strict policy does not turn an unknown cost
 into zero. Reducing an output limit is not a route to a strict scan guarantee.
 No output limit returns truncated success.
 
+For ordinary fixed-date or scheduled additive windows, Terrine can restrict
+compatible DuckDB and BigQuery fact reads to the half-open span covering the
+requested windows. It still checks each fact against its own window and runs
+independent integrity checks over their original inputs. Ranked event anchors,
+re-anchored windows and clocks without an exact literal comparison keep their
+ordinary reads.
+
+In Python, `preview(...).source_reads` describes each shared additive fact
+read used to produce study values: the source, lowering family, applied UTC
+event span (if any), and a physical partition key or the reason none was
+proven. For example, a binned state panel can report separate reads for
+scheduled features, period metrics and baseline features. The list does not
+describe direct event queries or integrity checks. A BigQuery table natively
+time-partitioned on the bound event timestamp can use the event predicate itself
+to prune. Missing or changed layout metadata, ingestion-time partitions, and
+separate date columns with no enforced event lineage do not prove pruning.
+An old event can still arrive in a newer ingestion partition. Terrine does not
+read rows to infer partition lineage or disclose these keys in agent previews.
+
+The event span is not declared source coverage. A known partition key describes
+an eligible filter, not which partitions the engine actually read, bytes
+estimated or billed, or a verified bound on all study reads.
+
 `preview(..., bounded_count=N)` is an opt-in capped diagnostic read, not a
 metadata-only preview. A cap does not establish complete cohort totals, and
 integrity checks can still scan upstream data. The runtime records estimates,
@@ -83,18 +106,25 @@ units and 300,000 events, and a hand-written query of the same semantics
 ([reference queries](../../benchmarks/workloads.py)). On that workload every
 window lies inside declared coverage, so completeness flags are constant; the
 check asserts that each recipe returns the hand-written query's values on
-DuckDB and on PostgreSQL 16. SQL size is `len(ibis.to_sql(frame.expr))`, the
-formatted statement; the statement sent for execution is more compact.
+DuckDB and on PostgreSQL 16. The recipe and README checks count characters in
+formatted `Frame.expr` SQL. The BigQuery check instead measures UTF-8 bytes at
+the owned client's submission boundary, including integrity checks and the final
+guarded statement with its output limit.
 
 | Checked budget | Ceiling |
 | --- | --- |
 | Recipe SQL | 30,000 characters per feature (declared features and outcomes, plus one for the measurement the recipe's shape adds) |
 | README design SQL | 20,000 characters |
-| 5 metrics by 10 windows, BigQuery dialect | 1,000,000 characters (BigQuery accepts 1,024k) |
+| 5 metrics by 10 windows, BigQuery | 1,000,000 UTF-8 bytes per submitted statement |
 
-A size above its ceiling fails the check. Existing strict expected failures name
-the unresolved `ltv` and `life_table` budgets; their marks are removed only after
-an actual budget pass. Other failures are not automatically reclassified.
+A size above its ceiling fails the check. The `life_table` SQL budget remains
+a strict expected failure until it passes the actual budget check. Other failures
+are not automatically reclassified.
+
+BigQuery admits and submits the same compact SQL. The offline wide fixture's
+guarded output statement is 549,201 bytes, down from 1,218,531 bytes with the
+previous submission path. This measures SQL length, not warehouse acceptance,
+bytes scanned or billing.
 
 Query time is a tracked target, not a guarantee or a test gate: a recipe should
 evaluate within 3 times (DuckDB) or 10 times (PostgreSQL 16) the time of its
@@ -135,7 +165,7 @@ ten windows). Only wide meets the 3× waypoint; its public call is 30.013× the 
 query and includes additional validation, compilation and output metadata.
 These are observed fixtures, not all-recipe or warehouse guarantees.
 
-The current consumer budget selection observes:
+That historical selection measured:
 
 | Consumer | Formatted characters | Ceiling | Result |
 | --- | ---: | ---: | --- |
