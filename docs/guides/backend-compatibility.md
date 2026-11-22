@@ -8,16 +8,33 @@ materialize Frames directly from their tables.
 
 ## Backend verification status
 
-| Backend | Verification status |
-| --- | --- |
-| DuckDB | Verified local reference backend |
-| PostgreSQL | Verified on PostgreSQL 16 |
-| Snowflake | Verified at 0.1.0.dev2 |
-| BigQuery | Verified at 0.1.0.dev2 |
+DuckDB is the local reference backend. For warehouses, the latest executed
+jobs in the standalone [`warehouse-backends` workflow][warehouse-runs] as of
+2026-11-21 were:
 
-The support matrix and dependency extras are summarized before the operation
-evidence below. The live probes and measured limits are detailed in each
-backend's section.
+| Backend | Last passed (UTC) | Last tested (UTC) | Operation scope |
+| --- | --- | --- | --- |
+| PostgreSQL 16 | [2026-11-16][postgres-nov16] · `2d6758ea` · `v0.1.0a2` | [2026-11-16][postgres-nov16] · same SHA/tag · pass | Live conformance, portable-policy parity and dataset example |
+| BigQuery | [2026-11-16][bigquery-nov16] · `2d6758ea` · `v0.1.0a2` | [2026-11-16][bigquery-nov16] · same SHA/tag · pass | Live conformance, warehouse operations and dataset example |
+| Snowflake | [2026-10-29][snowflake-oct29] · `ae2e0f6c` · no matching tag | [2026-11-16][snowflake-nov16] · `2d6758ea` · `v0.1.0a2` · fail | Live conformance and warehouse operations; dataset example skipped in the failing job |
+
+A matching tag identifies the tested commit, not a verified release. The
+November 16 jobs ran after `v0.1.0a2` was tagged. Verification of a different
+release candidate is unknown without a matching run. BigQuery and Snowflake
+results are advisory, not [release requirements](stability.md#how-the-promises-are-checked).
+
+The [failing Snowflake job][snowflake-nov16] refused the success case at the
+`NUMBER(38, 0)` sum boundary: `10**38 - 1` should succeed; one more should refuse
+with `terrine.temporal.exact_overflow`. Four separate statements timed out at
+600 seconds: exact window sums after large history, cohort summaries,
+out-of-range float ratio refusal, and float-window parity. Those results are
+on `2d6758ea`, not a reproduction or a fix on a later candidate.
+
+[warehouse-runs]: https://github.com/kylejcaron/terrine/actions/workflows/warehouse-backends.yml
+[postgres-nov16]: https://github.com/kylejcaron/terrine/actions/runs/43889348311/job/133375989032
+[bigquery-nov16]: https://github.com/kylejcaron/terrine/actions/runs/43889348311/job/133375989773
+[snowflake-nov16]: https://github.com/kylejcaron/terrine/actions/runs/43889348311/job/133375991389
+[snowflake-oct29]: https://github.com/kylejcaron/terrine/actions/runs/40854981483/job/123383586017
 
 ### Optional extras
 
@@ -41,11 +58,10 @@ orchestration or modeling libraries support that interpreter.
 Backends fall into three tiers:
 
 - **Verified engines**: DuckDB, PostgreSQL 16, BigQuery and Snowflake. Each has
-  registered identity admission, a native expression policy with the measured
-  numerical contracts in its section below, and one consistent view per
-  materialization. Nothing in the unverified tier changes these guarantees:
-  their native conversions, refusals and session lifetimes are unaffected by
-  the portable policy.
+  registered identity admission, a native expression policy and one consistent
+  view per materialization. This registry tier describes the execution provider,
+  not verification of a particular release. Opting into the portable tier on
+  other backends does not change their native conversions, refusals or sessions.
 - **Opted-in unverified backends**: any other genuine Ibis backend, admitted
   for read-only operations only after `allow_unverified=True`, executed under
   the portable expression policy with coded, operation-specific refusals. See
@@ -593,10 +609,11 @@ columns stay exact in `NUMBER(38, 0)` and property filters compare against the
 column's 38-digit range, so a 20-digit value is correctly excluded by a
 21-digit threshold and a threshold beyond 38 digits settles without a literal.
 
-Supported, matching the DuckDB reference ([parity probes][snowflake]): everything
-listed for PostgreSQL above, with the same tolerance contract for averages,
-ratios and float windows. Exact state is `NUMBER(38, 0)`; counts and decimal
-sums are exact, and a required result outside the 38-digit output domain refuses
+Snowflake targets the same results as PostgreSQL above, with the same tolerance
+contract for averages, ratios and float windows ([parity probes][snowflake]).
+See the [latest live failures](#backend-verification-status) before relying on
+those results for a particular release. Exact state is `NUMBER(38, 0)`; counts
+and decimal sums are exact, and a result outside the 38-digit output domain refuses
 `terrine.temporal.exact_overflow`, including bounded float coefficient
 accumulation. Exact float measures quantize each selected input at scale 9 and
 share this exact coefficient domain. Unsafe bounded exact accumulations are
@@ -735,17 +752,19 @@ The operation evidence below was run with Python **3.13.5**, Ibis **12.0.0**,
 DuckDB driver **1.5.6** / embedded engine **v1.5.6**, and PyArrow **23.0.1**.
 These are measured versions, not a claim for every release in a dependency range.
 Python 3.14 distribution/tutorial checks above do not replace these operation tests.
+Warehouse cells identify operation contracts and regression probes, not
+verification of a release. See the [dated results](#backend-verification-status).
 
 | Operation | Local DuckDB versions above | PostgreSQL | Snowflake | BigQuery | Route or limitation |
 | --- | --- | --- | --- | --- | --- |
-| Read-only dialect admission, relation identity | [Verified][provider] | [Verified][postgres] | [Verified][snowflake-admission]; Snowflake identifier rules, identity re-verified after each read | [Verified][bigquery] | Use native local DuckDB, PostgreSQL, Snowflake or BigQuery; an Ibis dialect/name is not execution evidence |
-| Accepted UTC timestamps, exact decimals, strict t0 and SCD2 boundaries | [Verified][acceptance] | [Verified][postgres]; microsecond timestamps, declared `numeric(p, s)` | [Verified][snowflake]; nanosecond timestamps (Arrow outputs within 1677-2262), `NUMBER(p, s)` | [Verified][bigquery]; microsecond timestamps, `NUMERIC` read as `decimal(38, 9)` | Existing timestamp precision/domain and decimal overflow refusals remain active |
+| Read-only dialect admission, relation identity | [Verified][provider] | [Verified][postgres] | [Admission probe][snowflake-admission]; Snowflake identifier rules, identity re-verified after each read | [Live probe][bigquery] | Use native local DuckDB, PostgreSQL, Snowflake or BigQuery; an Ibis dialect/name is not execution evidence |
+| Accepted UTC timestamps, exact decimals, strict t0 and SCD2 boundaries | [Verified][acceptance] | [Verified][postgres]; microsecond timestamps, declared `numeric(p, s)` | [Live probe][snowflake]; nanosecond timestamps (Arrow outputs within 1677-2262), `NUMBER(p, s)` | [Live probe][bigquery]; microsecond timestamps, `NUMERIC` read as `decimal(38, 9)` | Existing timestamp precision/domain and decimal overflow refusals remain active |
 | Scale-9 float quantization: signed sub-nanounit values, exact ties, magnitude bounds and admitted boundary | [Local probe](../../tests/backends/test_numeric.py) | [Live probe][float-quantization] on every push and weekly; unconstrained `NUMERIC` rounding | [Weekly live probe][float-quantization]; native `NUMBER` casts under the portable split-and-cap policy | [Weekly live probe][float-quantization]; native `NUMERIC` casts | Conversion error near halfway points is allowed only within the shared window-sum bound; the next binary64 above `1e29` refuses |
 | Bounded float coefficient accumulation (`9e28 + 9e28`) | [Forced portable-policy probe][conformance] on every push; native `BIGNUM` is unbounded | [Forced portable-policy live probe][conformance] on every push and weekly; native `NUMERIC` admits this sum | [Weekly live probe][conformance]; `NUMBER(38, 0)` refuses before returning output | Native `BIGNUMERIC` admits this sum | Bounded policies refuse with `terrine.temporal.exact_overflow`; no materialized result is returned |
-| Private transaction view and owned-session cleanup | [Verified][provider] | [Verified][postgres]; consistent `REPEATABLE READ` snapshot | [Verified][snowflake-admission]; Time Travel instant on the caller's connection, reads only | [Verified][bigquery]; session transaction snapshot | Does not promise a durable source snapshot or native query cancellation |
+| Private transaction view and owned-session cleanup | [Verified][provider] | [Verified][postgres]; consistent `REPEATABLE READ` snapshot | [Admission probe][snowflake-admission]; Time Travel instant on the caller's connection, reads only | [Live probe][bigquery]; session transaction snapshot | Does not promise a durable source snapshot or native query cancellation |
 | Retained immutable inputs and pinned generation reads | [Verified][acceptance] | Unverified | Unverified | Unverified | Use the owner-retained snapshot receipt; native source revisions remain unknown |
 | Table publication and atomic fenced manifest switch | [Verified][publication] | Unverified | Unverified | Unverified | Materialize a bounded Frame if publication is unavailable |
-| Bounded Arrow batch reads | [Verified][acceptance] | [Verified][postgres] | [Verified][snowflake-admission] | [Verified][bigquery] | Requires independent Arrow-batch evidence |
+| Bounded Arrow batch reads | [Verified][acceptance] | [Verified][postgres] | [Admission probe][snowflake-admission] | [Live probe][bigquery] | Requires independent Arrow-batch evidence |
 | Local Parquet streaming and metadata readback | [Verified][handoffs] | Unverified | Unverified | Unverified | Bounded Arrow/PyArrow path; caller-owned local destination only |
 | Output row/byte limits | [Verified][exports] | Unverified | Unverified | Unverified | Do not certify source scan work or peak query memory |
 | Native durable/replay snapshot | Unsupported | Unverified | Unverified | Unverified | Use retained immutable capture, not a transaction-view claim |
