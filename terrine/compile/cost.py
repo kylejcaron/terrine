@@ -4,17 +4,21 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from terrine.compile._assumptions import study_assumptions
 from terrine.data import (
     _OUTPUT_BYTES_EXCEEDED,
     _ROWS_EXCEEDED,
     Budget,
     CoverageSummary,
     Preview,
+    StudyAssumptions,
 )
 from terrine.errors import RefusalSpec
 from terrine.execution.gates import audit_summary, validate_schedule
 
 if TYPE_CHECKING:
+    from terrine.compile.columns import CompiledStudy
+    from terrine.compile.dispatch import _StudyRequirements
     from terrine.model import Model
     from terrine.spec.design import Design
 
@@ -68,7 +72,7 @@ def preview(
             bounded count.
 
     Returns:
-        A Preview containing estimates, metadata on retained inputs, and any requested row count.
+        A Preview with estimates, assumptions, retained input metadata and any requested row count.
 
     Example: tr.preview(design, model)
     """
@@ -76,19 +80,53 @@ def preview(
         raise ValueError("bounded_count must be a nonnegative integer")
     if budget is not None and not isinstance(budget, Budget):
         raise TypeError("budget must be Budget or None")
-    from terrine.compile.dispatch import _bind_study, _prepare_study
+    from terrine.compile.dispatch import _prepare_study
 
     # Planning and private execution must observe metadata in separate scopes.
     requirements, planned = _prepare_study(design, model)
+    design = requirements.design
+    return _preview_report(
+        design,
+        model,
+        planned,
+        budget,
+        bounded_count=bounded_count,
+        assumptions=study_assumptions(design, model),
+        requirements=requirements,
+    )
+
+
+def _preview_report(
+    design: Design,
+    model: Model,
+    planned: CompiledStudy,
+    budget: Budget | None,
+    *,
+    bounded_count: int,
+    assumptions: StudyAssumptions,
+    authorized_sources: tuple[str, ...] | None = None,
+    requirements: _StudyRequirements | None = None,
+) -> Preview:
+    """Assemble the owner preview or its policy-scoped agent presentation."""
     source_reads = planned.source_reads
     warnings = (_SCAN_WARNING,)
     counts: dict[str, Any] = {}
     if bounded_count:
         _scan_policy(budget)
+        from terrine.compile.dispatch import _bind_study, compile_design
+
+        selected = requirements.required_sources if requirements is not None else authorized_sources
+        assert selected is not None
         with model._study_execution(
-            lambda: set(requirements.required_sources), unit_name=requirements.design.unit
+            lambda: set(selected),
+            unit_name=design.unit,
+            scoped_preview=authorized_sources is not None,
         ) as (context, execution_model):
-            compiled = _bind_study(requirements, model, execution_model, prune_output=True)
+            compiled = (
+                compile_design(design, execution_model)
+                if requirements is None
+                else _bind_study(requirements, model, execution_model, prune_output=True)
+            )
             source_reads = compiled.source_reads
             # Admit every relation the count will run, integrity checks included,
             # so an unsupported primitive refuses before the first source read.
@@ -106,7 +144,11 @@ def preview(
                 unknown_rows=summary.unknown,
                 eligible_rows=summary.retained,
             )
-    from terrine.compile._staging import staging_footprint
+    footprint = None
+    if authorized_sources is None:
+        from terrine.compile._staging import staging_footprint
+
+        footprint = staging_footprint(design, model, planned)
 
     return Preview(
         planned_rows=None,
@@ -116,10 +158,13 @@ def preview(
         coverage={
             name: CoverageSummary(coverage.start, coverage.end_exclusive)
             for name, coverage in model.readiness.sources.items()
+            if authorized_sources is None or name in authorized_sources
         },
         strategy=planned.strategy,
         budget_warnings=warnings,
-        source_reads=source_reads,
-        staging_footprint=staging_footprint(design, model, planned),
+        staging_footprint=footprint,
+        assumptions=assumptions,
+        # Physical binding names belong to the owner preview.
+        source_reads=() if authorized_sources is not None else source_reads,
         **counts,
     )

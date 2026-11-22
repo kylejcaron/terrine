@@ -368,6 +368,7 @@ def test_row_checks_count_base_candidates_not_shape_rows(con):
         "user",
         Schedule("1d", "2025-01-01", "2025-01-04"),
         features={"spend": agg("spend", window=("-1d", "0s"))},
+        outcomes={"label": agg("spend", window=("0s", "1d"))},
         shape=CalendarComparisonSpec(
             Initiation("amount", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
             "never_treated",
@@ -403,6 +404,18 @@ def test_row_checks_count_base_candidates_not_shape_rows(con):
         (datetime(2025, 1, 3, tzinfo=UTC), 0, True, None),
         (datetime(2025, 1, 4, tzinfo=UTC), 1, True, None),
     ]
+    initiation = "__terrine_treatment_initiation_time"
+    assert any(
+        row[initiation] is not None and row[initiation] > row["t0"]
+        for row in materialized.table.to_pylist()
+    )
+    training = (
+        design.build(model)
+        .training_set(label="label", incomplete_labels="keep")
+        .to_pandas(values_only=True)
+    )
+    assert {"event_period", "control_eligible"} <= set(training.columns)
+    assert initiation not in training.columns
 
 
 # --- the output statement carries the final run and the eligibility summary ------

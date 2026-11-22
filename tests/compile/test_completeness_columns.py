@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import pyarrow as pa
@@ -47,9 +48,10 @@ def test_life_table_keeps_list_valued_reasons_under_the_suffix():
                 reason_column="events__reason",
             )
         },
-        provenance=_provenance(),
+        provenance=replace(_provenance(), shape="life_table", expression_timings={}),
     )
-    result = preflight_export(frame, drop_incomplete=True)
+    restored = MaterializedFrame.from_arrow(frame.to_pyarrow())
+    result = preflight_export(restored, drop_incomplete=True)
     assert result.table.num_rows == 0
     assert result.excluded_counts == {reason: 1 for reason in expected}
 
@@ -95,7 +97,7 @@ def test_null_reason_round_trips_arrow_and_manifest_under_new_names():
                 reason_column="revenue__reason",
             )
         },
-        provenance=_provenance(),
+        provenance=replace(_provenance(), expression_timings={}),
     )
     arrow = frame.to_pyarrow()
     assert arrow.column_names == table.column_names
@@ -127,8 +129,6 @@ def test_null_reason_round_trips_arrow_and_manifest_under_new_names():
 
 
 def test_lossless_arrow_keeps_observation_evidence_with_sorted_filtered_rows():
-    from dataclasses import replace
-
     origin = datetime(2025, 1, 1, tzinfo=UTC)
     table = pa.table(
         {
@@ -206,7 +206,15 @@ def test_compact_arrow_refuses_missing_bookkeeping_with_pickle_safe_context():
 
     origin = datetime(2025, 1, 1, tzinfo=UTC)
     frame = MaterializedFrame(
-        table=pa.table({"unit": ["u"], "value": [None], "value__observed_from": [origin]}),
+        table=pa.table(
+            {
+                "unit": ["u"],
+                "anchor_id": ["a"],
+                "t0": [origin],
+                "value": [None],
+                "anchor_provenance": ["schedule"],
+            }
+        ),
         roles=Roles(
             unit="unit",
             anchor="anchor_id",
@@ -219,15 +227,15 @@ def test_compact_arrow_refuses_missing_bookkeeping_with_pickle_safe_context():
             "value": ColumnMeta(
                 window=None,
                 role="outcome",
-                observed_from_column="value__observed_from",
+                observed_from_column=None,
                 observed_until_column=None,
                 complete_column=None,
                 reason_column=None,
             )
         },
-        provenance=_provenance(),
+        provenance=replace(_provenance(), expression_timings={}),
     )
-    arrow = frame.to_pyarrow().select(["unit", "value"])
+    arrow = frame.to_pyarrow().drop(["anchor_provenance"])
     with pytest.raises(TerrineError) as error:
         MaterializedFrame.from_arrow(arrow)
     for refusal in (
@@ -236,7 +244,7 @@ def test_compact_arrow_refuses_missing_bookkeeping_with_pickle_safe_context():
         pickle.loads(pickle.dumps(error.value)),
     ):
         assert refusal.code == "terrine.metadata.missing_columns"
-        assert refusal.context["columns"] == ("value__observed_from",)
+        assert refusal.context["columns"] == ("anchor_provenance",)
 
 
 def test_grouped_life_table_keeps_identity_first_and_group_support_adjacent():

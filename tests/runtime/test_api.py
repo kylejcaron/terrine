@@ -302,17 +302,19 @@ def test_published_frame_reader_roundtrips_exact_generation_metadata():
     from tests.test_metadata import _provenance
 
     con = duckdb.connect(":memory:")
+    instant = pa.array([datetime(2025, 1, 1, tzinfo=UTC)], type=pa.timestamp("us", tz="UTC"))
     clean = MaterializedFrame(
         table=pa.table(
             {
                 "unit": ["u"],
                 "anchor": ["a"],
-                "t0": pa.array(
-                    [datetime(2025, 1, 1, tzinfo=UTC)], type=pa.timestamp("us", tz="UTC")
-                ),
+                "t0": instant,
                 "revenue": [3],
                 "revenue_complete": [True],
-                "revenue_reason": [None],
+                "revenue_reason": pa.array([None], type=pa.string()),
+                "selected_time": instant,
+                "start_bound": instant,
+                "end_bound": instant,
             }
         ),
         roles=Roles(

@@ -6,6 +6,10 @@
   runners must pass `execution_mode="design"` to `plan_refresh`; drain queued
   built-in work on its original version before upgrading. Custom callbacks
   retain their existing task schedule.
+- Save a bound Frame definition without staging, or reopen a trusted Parquet
+  export with its typed schema and provenance, including older list columns.
+- Show static roster attribute assumptions separately from membership and
+  observation bounds. Historical availability remains unknown.
 
 ## 0.1.0a3
 

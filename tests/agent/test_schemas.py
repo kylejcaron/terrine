@@ -61,6 +61,36 @@ def test_refusal_does_not_serialize_exception_messages_or_unknown_context():
     assert response.context == {"kind": "metric", "name": "total"}
 
 
+def test_definition_discovery_accepts_fixed_limits_as_encoded():
+    from jsonschema import Draft202012Validator
+
+    from terrine.agent.definitions import definition_schema
+    from terrine.spec import Design, FixedDate, agg
+    from terrine.spec.dataset import DatasetDefinition
+    from terrine.spec.transforms import Winsorization
+
+    definition = DatasetDefinition(
+        base_design=Design(
+            "user", FixedDate("2025-01-01"), features={"spend": agg("total", window=("-1d", "0s"))}
+        ),
+        transforms=(
+            Winsorization(
+                "spend",
+                lower="-1.25",
+                upper="10",
+                source_type="decimal(18, 2)",
+                output_precision=38,
+                output_scale=2,
+            ),
+        ),
+    )
+    payload = json.loads(definition.canonical_json())
+    validator = Draft202012Validator(definition_schema())
+    validator.validate(payload)
+    payload["transforms"][0]["lower"] = -1.25
+    assert not validator.is_valid(payload)
+
+
 def test_discovery_schema_accepts_canonical_temporal_nodes():
     from jsonschema import Draft202012Validator
 

@@ -353,6 +353,9 @@ def normalize_source(
         catalog.day_boundary,
         source.where,
         source.row_key,
+        MappingProxyType(
+            {name: str(columns[col]) for name, col in events.items() if col is not None}
+        ),
     )
 
 

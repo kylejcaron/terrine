@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import tempfile
 from decimal import Decimal
 from pathlib import Path
@@ -125,6 +126,7 @@ def main() -> None:
                     split=GroupSplit(seed=17),
                 )
             )
+            print(training.assumptions, file=sys.stderr)
             dataset = training.stage("training", budget=budget)
             original = amounts(dataset)
             manifest_path = root / "dataset.json"

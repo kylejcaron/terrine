@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
-from typing import Literal
+from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING, Literal
 
 import ibis
 
@@ -13,8 +13,67 @@ from terrine.backends.dialect import current_dialect
 from terrine.backends.extrema import greatest, least
 from terrine.data import ColumnMeta, FeatureCutoff
 from terrine.semantic.predicates import lower_predicate
-from terrine.spec.expressions import And, Expr, IsNull, Not, Or, Predicate
+from terrine.spec.expressions import (
+    _COMPARISON_NODES,
+    And,
+    Expr,
+    IsNull,
+    MetricAgg,
+    MetricQuantile,
+    Not,
+    Or,
+    Predicate,
+)
 from terrine.temporal.aggregate import _Builder
+from terrine.temporal.daily import native_arithmetic
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+    from terrine.model import Model
+
+
+def _comparison_metrics(node: Expr | Predicate) -> Iterator[MetricAgg | MetricQuantile]:
+    if isinstance(node, (And, Or)):
+        for term in node.terms:
+            yield from _comparison_metrics(term)
+    elif isinstance(node, Not):
+        yield from _comparison_metrics(node.term)
+    elif isinstance(node, _COMPARISON_NODES) and isinstance(node.expr, (MetricAgg, MetricQuantile)):
+        yield node.expr
+
+
+def native_metric_events(
+    metric_name: str, model: Model, *, measure_values: bool = False
+) -> tuple[str, ...]:
+    """Return native value events, not the exact counts or presence inputs."""
+    metric = model.metrics[metric_name]
+    if metric.kind == "conversion" and not measure_values:
+        return ()
+    native_events: dict[str, None] = {}
+    for index, measure in enumerate(metric.measures):
+        if metric.presence and metric.presence[index]:
+            continue  # Formula occurrence indicators do not sum the event value.
+        value_type = model.sources[measure.source_name].event_types.get(measure.event)
+        if native_arithmetic(replace(measure, value_type=value_type)):
+            native_events[measure.event] = None
+    return tuple(native_events)
+
+
+def native_decision_dependencies(
+    node: Expr | Predicate, model: Model
+) -> dict[str, tuple[str, ...]]:
+    """Map compared metric names to their resolved native value events."""
+    dependencies: dict[str, tuple[str, ...]] = {}
+    for operand in _comparison_metrics(node):
+        if operand.metric in dependencies:
+            continue
+        events = native_metric_events(
+            operand.metric, model, measure_values=isinstance(operand, MetricQuantile)
+        )
+        if events:
+            dependencies[operand.metric] = events
+    return dependencies
 
 
 @dataclass(frozen=True, slots=True)

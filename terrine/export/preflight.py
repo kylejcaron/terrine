@@ -59,6 +59,7 @@ _CHOICE = RefusalSpec(
 )
 
 
+
 @dataclass(frozen=True, slots=True)
 class ExportPreflight:
     """Return checked export rows and exclusion counts by reason.

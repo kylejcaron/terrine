@@ -28,6 +28,7 @@ from terrine.data import (
     Provenance,
     Roles,
     SamplingMeta,
+    StudyAssumptions,
     dataframe_view_preflight,
 )
 from terrine.errors import RefusalSpec, TerrineError
@@ -41,7 +42,9 @@ from terrine.execution.gates import (
 )
 from terrine.semantic.models import BoundDimension, BoundMetric, BoundSource
 from terrine.spec.anchors import FixedDate
+from terrine.spec.dataset import DatasetDefinition
 from terrine.spec.design import _output_shape_name
+from terrine.spec.io import _encode
 from terrine.spec.sequence import EventSequence
 from terrine.spec.state_panel import BinnedMetricState, StatePanel
 from terrine.spec.trajectory import CohortGrouping, CohortSpec, LifeTable, TimeToEvent
@@ -179,8 +182,10 @@ def _definition_record(value: object) -> object:
             field.name: _definition_record(getattr(value, field.name)) for field in fields(value)
         }
         # Preserve existing feature identities when shared-only fields are unused.
-        if isinstance(value, BoundSource) and value.row_key is None:
-            del record["row_key"]
+        if isinstance(value, BoundSource):
+            del record["event_types"]  # Derived metadata, not part of the definition.
+            if value.row_key is None:
+                del record["row_key"]
         if isinstance(value, BoundDimension) and value.foreign_key is None:
             del record["foreign_key"]
         if isinstance(value, BoundMetric):
@@ -381,6 +386,9 @@ def _apply_training_view(compiled: CompiledStudy, view: _TrainingView) -> Compil
         "gap",
         "terminal",
     )
+    if roles.trial == "cohort":
+        # Retain the contrast keys, not the realized initiation time after t0.
+        structural = (*structural, "cohort", "event_period", "control_eligible")
     names = list(dict.fromkeys((roles.unit, roles.anchor, roles.t0, *view.features, *view.labels)))
     for name in (*role_columns, *structural):
         if name is not None and name in compiled.table.columns and name not in names:
@@ -512,9 +520,22 @@ class Frame:
 
     def _active_compiled(self, compiled: CompiledStudy | None = None) -> CompiledStudy:
         active = self._compiled if compiled is None else compiled
+        return self._with_winsorization_metadata(self._project_view(active))
+
+    def _project_view(self, compiled: CompiledStudy) -> CompiledStudy:
         if self._training_view is not None:
-            active = _apply_training_view(active, self._training_view)
-        return self._with_winsorization_metadata(active)
+            return _apply_training_view(compiled, self._training_view)
+        view = self._scoring_view
+        if view is None or view.features == compiled.roles.features:
+            return compiled
+        selected = set(view.features)
+        requested = iter(view.features)
+        names = [next(requested) if name in selected else name for name in compiled.table.columns]
+        return replace(
+            compiled,
+            table=compiled.table.select(*names),
+            roles=replace(compiled.roles, features=view.features),
+        )
 
     def _with_winsorization_metadata(self, compiled: CompiledStudy) -> CompiledStudy:
         if not self._winsorizations:
@@ -560,6 +581,54 @@ class Frame:
     @property
     def columns(self):
         return self._active_compiled().columns
+
+    @property
+    def assumptions(self) -> StudyAssumptions:
+        """Report historical input assumptions and native float decisions without reading rows."""
+        from terrine.compile._assumptions import study_assumptions
+
+        view = self._training_view
+        return study_assumptions(
+            self._design,
+            self._model,
+            features=None if view is None else view.features,
+            labels=None if view is None else view.labels,
+        )
+
+    def to_definition(self) -> DatasetDefinition:
+        """Return the resolved design, selected view and frozen transforms without reading data.
+
+        The definition records the bound split or absolute scoring time, but not a
+        connection, source snapshot or published generation.
+
+        Returns:
+            A portable definition that can rebuild this Frame on compatible model bindings.
+        """
+        return self._project_definition(self._winsorizations)
+
+    def _project_definition(self, transforms: tuple[Winsorization, ...]) -> DatasetDefinition:
+        view = None
+        if self._training_view is not None:
+            training = self._training_view
+            view = {
+                "kind": "training",
+                "features": list(training.features),
+                "labels": list(training.labels),
+                "incomplete_labels": training.incomplete_labels,
+                "split": None
+                if training.split is None
+                else cast(_SplitPolicy, training.split).to_record(),
+            }
+        elif self._scoring_view is not None:
+            scoring = self._scoring_view
+            view = {
+                "kind": "scoring",
+                "features": list(scoring.features),
+                "as_of": scoring.resolved_as_of.isoformat(),
+                "eligibility": _encode(self._design.eligibility),
+                "parent_design_hash": scoring.parent_design_hash,
+            }
+        return DatasetDefinition(base_design=self._design, view=view, transforms=transforms)
 
     def training_set(
         self,
@@ -714,7 +783,7 @@ class Frame:
         transforms.require_numeric_type(
             self._active_compiled().table.schema()[column].to_pyarrow(), column
         )
-        definition = import_module("terrine.dataset.reference")._definition_for(self)
+        definition = self._project_definition(())
         return transforms.fit_winsorization(
             self.materialize(budget=budget),
             column=column,
@@ -741,9 +810,7 @@ class Frame:
         if bound.fit is not None:
             fit = bound.fit
             if self._training_view is not None:
-                definition = import_module("terrine.dataset.reference")._definition_for(
-                    self, include_transforms=False
-                )
+                definition = self._project_definition(())
                 compatible = definition.digest == fit.definition_hash
             else:
                 compatible = (
@@ -825,8 +892,7 @@ class Frame:
             # so an unsupported primitive refuses before the first source read.
             context.admit(*compiled.reads())
             study = compiled
-            if self._training_view is not None:
-                compiled = _apply_training_view(compiled, self._training_view)
+            compiled = self._project_view(compiled)
             if transform is not None:
                 compiled = transform(compiled)
                 context.admit(*compiled.reads())

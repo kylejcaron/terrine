@@ -132,6 +132,7 @@ When a design declares a treatment, each retained survival row includes the
 `treatment` value and its support metadata. The `treatment` role refers to that
 output column; event and censoring rules are unchanged.
 
+
 ### Landmark survival
 
 To begin follow-up after a baseline period, use an offset event anchor with the

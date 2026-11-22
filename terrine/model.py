@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 from collections.abc import Callable, Generator, Mapping, Sequence
@@ -901,6 +902,34 @@ class Model:
     def _relation(self, relation: RelationSpec) -> Any:
         return self._resolver(relation)
 
+    def _for_preview(self, source_names: tuple[str, ...]) -> Model:
+        """Limit metadata compilation to already authorized logical source bindings."""
+        model = copy.copy(self)
+        object.__setattr__(
+            model, "sources", MappingProxyType({name: self.sources[name] for name in source_names})
+        )
+        return model
+
+    def _preview_execution_inputs(self, unit: str) -> tuple[Catalog, Mapping[str, UnitSource]]:
+        """Use only scoped roots when opening an unbound preview execution."""
+        if self.input_binding is not None:
+            # An issued binding is verified against the whole owner declaration.
+            return self.catalog, self.units
+        dimensions = {
+            dim.name: self.catalog.dimensions[dim.name]
+            for source in self.sources.values()
+            for dim in source.dimensions
+        }
+        catalog = self.catalog.model_copy(
+            update={
+                "sources": MappingProxyType(
+                    {name: self.catalog.sources[name] for name in self.sources}
+                ),
+                "dimensions": MappingProxyType(dimensions),
+            }
+        )
+        return catalog, {unit: self.units[unit]} if unit in self.units else {}
+
     def _execution_inputs(
         self, source_names: set[str], unit_name: str | None
     ) -> tuple[Mapping[str, UnitSource], tuple[RelationSpec, ...]]:
@@ -921,11 +950,19 @@ class Model:
 
     @contextmanager
     def _study_execution(
-        self, source_names: Callable[[], set[str]], *, unit_name: str | None
+        self,
+        source_names: Callable[[], set[str]],
+        *,
+        unit_name: str | None,
+        scoped_preview: bool = False,
     ) -> Generator[tuple[ExecutionContext, Model]]:
         from terrine.execution.inputs import open_execution
 
         select_sources = cache(source_names)
+        catalog, units = self.catalog, self.units
+        if scoped_preview:
+            assert unit_name is not None
+            catalog, units = self._preview_execution_inputs(unit_name)
 
         def study_roots() -> tuple[RelationSpec, ...] | None:
             try:
@@ -938,9 +975,9 @@ class Model:
         with (
             metadata_operation(),
             open_execution(
-                self.catalog,
+                catalog,
                 self.con,
-                units=self.units,
+                units=units,
                 input_binding=self.input_binding,
                 engine=self._engine,
                 _study_roots=study_roots,

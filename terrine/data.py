@@ -11,9 +11,10 @@ from dataclasses import field as dataclass_field
 from datetime import UTC, date, datetime, timedelta
 from importlib import import_module
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 import pyarrow as pa
+from pydantic import WrapSerializer
 
 from terrine.backends.registry import get_engine
 from terrine.errors import RefusalSpec, TerrineError, freeze, parameter_names, thaw
@@ -118,7 +119,7 @@ _COVERAGE_UTC_OVERFLOW = RefusalSpec(
 _MISSING_COLUMNS = RefusalSpec(
     "terrine.metadata.missing_columns",
     "Arrow table is missing required columns {columns!r}; "
-    "use lossless Arrow with all observation columns.",
+    "use lossless Arrow with all role, value and support columns.",
 )
 _UNSUPPORTED_METADATA_VERSION = RefusalSpec(
     "terrine.metadata.unsupported_version",
@@ -1215,6 +1216,7 @@ class EligibilitySummary:
             )
 
 
+
 @dataclass(frozen=True, slots=True)
 class RowCheck:
     """A column whose TRUE rows fail ``refusal``; NULL rows pass.
@@ -1502,15 +1504,6 @@ class CoverageSummary:
 
 
 @dataclass(frozen=True, slots=True)
-class _SourceRead:
-    family: str
-    source: str
-    event_span: CoverageSummary | None
-    physical_key: str | None
-    reason: str | None
-
-
-@dataclass(frozen=True, slots=True)
 class RetainedUse:
     """A declaration or integrity-check use and its declared fact coverage, if any."""
 
@@ -1545,14 +1538,85 @@ class StagingFootprint:
     release: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class SourceAssumption:
+    """One logical use of a source, not evidence about the rows it returns."""
+
+    source: str
+    role: Literal["anchor", "feature", "outcome", "eligibility", "treatment", "shape"]
+    output: str
+    time_axis: Literal["event_time", "effective_time", "recorded_at", "static"]
+    knowledge: Literal["declared_recorded_at", "unknown"] = "unknown"
+    historical_versions: Literal["unknown"] = "unknown"
+    dimension: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class RosterAssumption:
+    """Membership and observation bounds are independent binding declarations."""
+
+    scope: Literal["bounded", "current_unbounded", "event_anchored_no_roster", "unknown"] = (
+        "unknown"
+    )
+    entered_at: bool = False
+    exited_at: bool = False
+    observed_from: bool = False
+    observed_until: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class RosterAttributeAssumption:
+    """One use of a static roster value, separate from membership and observation bounds."""
+
+    attribute: str
+    role: Literal["anchor", "feature", "outcome", "eligibility", "treatment", "shape"]
+    output: str
+    time_axis: Literal["static"] = "static"
+    knowledge: Literal["unknown"] = "unknown"
+    historical_versions: Literal["unknown"] = "unknown"
+
+
+@dataclass(frozen=True, slots=True)
+class NativeFloatDecision:
+    """A named hard comparison that depends on a native floating-point measure."""
+
+    role: Literal["eligibility", "outcome"]
+    output: str
+    metric: str
+    native_events: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class StudyAssumptions:
+    """Row-free advisory evidence; neither a historical guarantee nor a refusal."""
+
+    sources: tuple[SourceAssumption, ...] = ()
+    roster: RosterAssumption = RosterAssumption()
+    native_float_decisions: tuple[NativeFloatDecision, ...] = ()
+    roster_attributes: tuple[RosterAttributeAssumption, ...] = ()
+
+
+def _serialize_preview_mapping(value, handler):
+    return handler(dict(value))
+
+
+@dataclass(frozen=True, slots=True)
+class _SourceRead:
+    family: str
+    source: str
+    event_span: CoverageSummary | None
+    physical_key: str | None
+    reason: str | None
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Preview:
     planned_rows: int | None
     output_bytes: int | None
     scan_bytes: int | None
     scan_reason: str | None
-    coverage: Mapping[str, CoverageSummary]
-    strategy: Mapping[str, str]
+    coverage: Annotated[Mapping[str, CoverageSummary], WrapSerializer(_serialize_preview_mapping)]
+    strategy: Annotated[Mapping[str, str], WrapSerializer(_serialize_preview_mapping)]
     budget_warnings: tuple[str, ...]
     candidate_rows: int | None = None
     known_false_rows: int | None = None
@@ -1560,8 +1624,9 @@ class Preview:
     eligible_rows: int | None = None
     counted_rows: int | None = None
     count_capped: bool = False
-    source_reads: tuple[_SourceRead, ...] = ()
     staging_footprint: StagingFootprint | None = None
+    assumptions: StudyAssumptions = StudyAssumptions()
+    source_reads: tuple[_SourceRead, ...] = ()
 
     def __post_init__(self) -> None:
         for name in (
@@ -1593,6 +1658,7 @@ class Preview:
         if not all(isinstance(use, _SourceRead) for use in self.source_reads):
             raise TypeError("source_reads must contain source-read summaries")
         object.__setattr__(self, "source_reads", tuple(self.source_reads))
+
 
 
 def _encode(value: Any) -> Any:
@@ -1864,6 +1930,202 @@ def _ordered_columns(
     return (*ordered, *bookkeeping)
 
 
+def _list_element(dtype: pa.DataType) -> pa.DataType | None:
+    if isinstance(dtype, (pa.ListType, pa.LargeListType, pa.FixedSizeListType)):
+        return dtype.value_type
+    return None
+
+
+def _is_text(dtype: pa.DataType) -> bool:
+    return pa.types.is_string(dtype) or pa.types.is_large_string(dtype)
+
+
+def _validate_physical_metadata(
+    schema: pa.Schema,
+    roles: Roles,
+    columns: Mapping[str, ColumnMeta],
+    provenance: Provenance,
+    bookkeeping: Sequence[str],
+) -> None:
+    if not isinstance(bookkeeping, (list, tuple)) or not all(
+        isinstance(name, str) and name for name in bookkeeping
+    ):
+        raise _INVALID_METADATA.error(reason="invalid_bookkeeping_columns")
+    if len(set(schema.names)) != len(schema):
+        raise _INVALID_METADATA.error(reason="duplicate_physical_names")
+    physical = {field.name: field.type for field in schema}
+    required = {*columns, *bookkeeping, *roles.features, *roles.outcomes}
+    required.update(
+        name
+        for role in fields(Roles)
+        if role.name not in ("features", "outcomes")
+        if (name := getattr(roles, role.name)) is not None
+    )
+    checks: list[tuple[str, Callable[[pa.DataType], bool]]] = []
+    nested: list[tuple[str, str, Callable[[pa.DataType], bool] | None]] = []
+
+    def reasons(dtype: pa.DataType) -> bool:
+        child = _list_element(dtype)
+        return _is_text(dtype) or (
+            provenance.shape == "life_table" and child is not None and _is_text(child)
+        )
+
+    def require(name: str | None, check: Callable[[pa.DataType], bool] | None = None) -> None:
+        if name is not None:
+            required.add(name)
+            if check is not None:
+                checks.append((name, check))
+
+    def list_struct(dtype: pa.DataType) -> bool:
+        return isinstance(_list_element(dtype), pa.StructType)
+
+    for meta in columns.values():
+        require(meta.complete_column, pa.types.is_boolean)
+        require(meta.reason_column, reasons)
+        require(meta.observed_from_column, pa.types.is_timestamp)
+        require(meta.observed_until_column, pa.types.is_timestamp)
+    for timing in provenance.expression_timings.values():
+        require(timing.point_time_column, pa.types.is_timestamp)
+        require(timing.start_bound_column, pa.types.is_timestamp)
+        require(timing.end_bound_column, pa.types.is_timestamp)
+    panel = provenance.state_panel
+    if panel is not None:
+        require(panel.period_column, pa.types.is_integer)
+        require(panel.from_time_column, pa.types.is_timestamp)
+        require(panel.to_time_column, pa.types.is_timestamp)
+        require(panel.scheduled_to_column, pa.types.is_timestamp)
+        require(panel.gap_column, pa.types.is_duration)
+        require(panel.terminal_column, pa.types.is_boolean)
+    view = provenance.dataset_view
+    if view is not None:
+        selected = (*view.selected_features, *view.selected_labels)
+        required.update(selected)
+        if view.split_policy is not None:
+            require("__terrine_split", _is_text)
+            require("__terrine_split_reason", _is_text)
+
+    sequence = provenance.sequence_meta
+    if sequence is not None:
+        array = sequence.representation == "arrays"
+        required.update(sequence.event_fields)
+        if array:
+            require("event_values", list_struct)
+            nested.append(("event_values", "event_id", None))
+            nested.append(("event_values", "event_time", pa.types.is_timestamp))
+        require(sequence.event_id_column)
+        require(sequence.event_time_column, pa.types.is_timestamp)
+        require(sequence.position_column, pa.types.is_integer)
+        require(sequence.event_count_column, pa.types.is_integer)
+        require(sequence.complete_column, pa.types.is_boolean)
+        require(sequence.reason_column, _is_text)
+        require(sequence.sessions_column, list_struct)
+        require(sequence.sessions_complete_column, pa.types.is_boolean)
+        require(sequence.sessions_reason_column, _is_text)
+        require(sequence.funnel_attempts_column, list_struct)
+        require(sequence.funnel_attempts_complete_column, pa.types.is_boolean)
+        require(sequence.funnel_attempts_reason_column, _is_text)
+
+        for name in sequence.session_fields:
+            if array and name not in (
+                sequence.sessions_column,
+                sequence.sessions_complete_column,
+                sequence.sessions_reason_column,
+            ):
+                nested.append(("event_values", name, None))
+            else:
+                require(name)
+        for name in sequence.funnel_fields:
+            if sequence.funnel_attempts_column is not None:
+                nested.append((sequence.funnel_attempts_column, name, None))
+
+        def sequence_reference(
+            name: str | None, check: Callable[[pa.DataType], bool] | None = None
+        ) -> None:
+            if name is not None and array and name.startswith("event_values."):
+                nested.append(("event_values", name.removeprefix("event_values."), check))
+            else:
+                require(name, check)
+
+        sequence_reference(sequence.transition_from_column)
+        sequence_reference(sequence.transition_to_column)
+        for name, reason in sequence.property_reason_columns.items():
+            if array:
+                nested.append(("event_values", name, None))
+            sequence_reference(reason, _is_text)
+
+    missing = required - physical.keys()
+    invalid_types = set()
+    for parent, name, check in nested:
+        dtype = physical.get(parent)
+        child = None if dtype is None else _list_element(dtype)
+        path = f"{parent}.{name}"
+        if not isinstance(child, pa.StructType):
+            if dtype is not None:
+                invalid_types.add(parent)
+        elif child.get_field_index(name) == -1:
+            missing.add(path)
+        elif check is not None and not check(child.field(name).type):
+            invalid_types.add(path)
+    if missing:
+        raise _MISSING_COLUMNS.error(columns=tuple(sorted(missing)))
+    if view is not None:
+        features_match = view.selected_features == roles.features
+        if not features_match and view.kind == "scoring":
+            # Older scoring exports stored features in Design's canonical order.
+            features_match = sorted(view.selected_features) == sorted(roles.features)
+        if (
+            not features_match
+            or view.selected_labels != roles.outcomes
+            or any(name not in columns for name in (*roles.features, *roles.outcomes))
+        ):
+            raise _INVALID_METADATA.error(reason="invalid_view_columns")
+    if invalid_types or any(not check(physical[name]) for name, check in checks):
+        raise _INVALID_METADATA.error(reason="invalid_support_type")
+
+
+def _check_nested_names(dtype: pa.DataType) -> None:
+    if isinstance(dtype, pa.StructType):
+        if len({field.name for field in dtype}) != dtype.num_fields:
+            raise _INVALID_METADATA.error(reason="duplicate_physical_names")
+        for field in dtype:
+            _check_nested_names(field.type)
+    elif isinstance(dtype, pa.MapType):
+        _check_nested_names(dtype.key_type)
+        _check_nested_names(dtype.item_type)
+    elif (child := _list_element(dtype)) is not None:
+        _check_nested_names(child)
+
+
+def _decode_table_metadata(
+    schema: pa.Schema, payload: Mapping[str, Any], *, bookkeeping: Sequence[str] = ()
+) -> tuple[Roles, dict[str, ColumnMeta], Provenance]:
+    roles = _decode(payload["roles"], Roles)
+    columns = {key: _decode(item, ColumnMeta) for key, item in payload["columns"].items()}
+    provenance = _decode(payload["provenance"], Provenance)
+    for field in schema:
+        _check_nested_names(field.type)
+    _validate_physical_metadata(schema, roles, columns, provenance, bookkeeping)
+    return roles, columns, provenance
+
+
+def _decode_arrow_metadata(schema: pa.Schema) -> tuple[Roles, dict[str, ColumnMeta], Provenance]:
+    metadata = schema.metadata or {}
+    raw = metadata.get(_ARROW_METADATA_KEY)
+    if raw is None and _LEGACY_ARROW_METADATA_KEY in metadata:
+        raise _UNSUPPORTED_METADATA_VERSION.error(version=1)
+    if raw is None:
+        raise ValueError("Arrow schema has no Terrine metadata")
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+        if payload.get("version") != 2:
+            raise _UNSUPPORTED_METADATA_VERSION.error(version=payload.get("version"))
+        return _decode_table_metadata(schema, payload, bookkeeping=payload["bookkeeping_columns"])
+    except TerrineError:
+        raise
+    except Exception as error:
+        raise _INVALID_METADATA.error(reason="invalid_arrow_metadata") from error
+
+
 def output_sort_keys(schema: pa.Schema, roles: Roles, *, shape: str) -> tuple[str, ...]:
     """Return present ordering columns for the declared output shape."""
     names = set(schema.names)
@@ -1989,40 +2251,36 @@ class MaterializedFrame:
 
     @classmethod
     def _from_table_metadata(cls, table: pa.Table, payload: Mapping[str, Any]) -> MaterializedFrame:
-        roles = _decode(payload["roles"], Roles)
-        columns = {key: _decode(item, ColumnMeta) for key, item in payload["columns"].items()}
-        provenance = _decode(payload["provenance"], Provenance)
+        roles, columns, provenance = _decode_table_metadata(
+            table.schema, payload, bookkeeping=payload.get("bookkeeping_columns", ())
+        )
         return cls(table=table, roles=roles, columns=columns, provenance=provenance)
 
     @classmethod
+    def _from_decoded_arrow(
+        cls,
+        table: pa.Table,
+        roles: Roles,
+        columns: Mapping[str, ColumnMeta],
+        provenance: Provenance,
+    ) -> MaterializedFrame:
+        clean = dict(table.schema.metadata or {})
+        del clean[_ARROW_METADATA_KEY]
+        return cls(
+            table=table.replace_schema_metadata(clean or None),
+            roles=roles,
+            columns=columns,
+            provenance=provenance,
+        )
+
+    @classmethod
     def from_arrow(cls, table: pa.Table) -> MaterializedFrame:
+        """Read a physically consistent Arrow v2 envelope, without authenticating its origin."""
         if not isinstance(table, pa.Table):
             raise TypeError("table must be a pyarrow.Table")
-        raw = (table.schema.metadata or {}).get(_ARROW_METADATA_KEY)
-        if raw is None and _LEGACY_ARROW_METADATA_KEY in (table.schema.metadata or {}):
-            raise _UNSUPPORTED_METADATA_VERSION.error(version=1)
-        if raw is None:
-            raise ValueError("Arrow schema has no Terrine metadata")
+        decoded = _decode_arrow_metadata(table.schema)
         try:
-            payload = json.loads(raw.decode("utf-8"))
-            if payload.get("version") != 2:
-                raise _UNSUPPORTED_METADATA_VERSION.error(version=payload.get("version"))
-            roles = _decode(payload["roles"], Roles)
-            columns = {key: _decode(item, ColumnMeta) for key, item in payload["columns"].items()}
-            provenance = _decode(payload["provenance"], Provenance)
-            missing = tuple(
-                name for name in payload["bookkeeping_columns"] if name not in table.column_names
-            )
-            if missing:
-                raise _MISSING_COLUMNS.error(columns=missing)
-            clean = dict(table.schema.metadata or {})
-            del clean[_ARROW_METADATA_KEY]
-            return cls(
-                table=table.replace_schema_metadata(clean or None),
-                roles=roles,
-                columns=columns,
-                provenance=provenance,
-            )
+            return cls._from_decoded_arrow(table, *decoded)
         except TerrineError:
             raise
         except Exception as error:
@@ -2046,10 +2304,7 @@ class MaterializedFrame:
                 raise _UNSUPPORTED_METADATA_VERSION.error(version=version)
             raw = b64decode(payload.pop("arrow_ipc"), validate=True)
             table = pa.ipc.open_stream(pa.py_buffer(raw)).read_all()
-            roles = _decode(payload["roles"], Roles)
-            columns = {key: _decode(item, ColumnMeta) for key, item in payload["columns"].items()}
-            provenance = _decode(payload["provenance"], Provenance)
-            return cls(table=table, roles=roles, columns=columns, provenance=provenance)
+            return cls._from_table_metadata(table, payload)
         except TerrineError:
             raise
         except json.JSONDecodeError as error:

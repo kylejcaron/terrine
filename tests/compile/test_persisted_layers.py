@@ -366,7 +366,7 @@ def test_physical_source_type_change_invalidates_persisted_layer_identity(column
         )
 
 
-@pytest.mark.parametrize("entry", ["sequence", "offset"])
+@pytest.mark.parametrize("entry", ["sequence", "offset", "offset_and_sequence"])
 def test_direct_dispatch_refuses_unsupported_substitutions_before_sources(
     column_model, monkeypatch, entry
 ):
@@ -374,15 +374,13 @@ def test_direct_dispatch_refuses_unsupported_substitutions_before_sources(
     from terrine.spec import EventSequence
     from terrine.windows import Window
 
-    design = (
-        Design("user", EventAnchor("amount", offset="1d"))
+    anchor = FixedDate("2025-01-03") if entry == "sequence" else EventAnchor("amount", offset="1d")
+    shape = (
+        "cross_section"
         if entry == "offset"
-        else Design(
-            "user",
-            FixedDate("2025-01-03"),
-            shape=EventSequence("amount", Window("-1d", "0s"), max_events=3),
-        )
+        else EventSequence("amount", Window("-1d", "0s"), max_events=3)
     )
+    design = Design("user", anchor, shape=shape)
 
     def forbidden(*args, **kwargs):
         raise AssertionError("unsupported substitution resolved a source")
@@ -393,12 +391,13 @@ def test_direct_dispatch_refuses_unsupported_substitutions_before_sources(
         lambda: compile_design(design, column_model, persisted_anchors=persisted),
         lambda: compose_materialized_frame(design, column_model, persisted={}),
     ]
-    if entry == "offset":
+    if entry != "sequence":
         entrypoints.append(lambda: compile_anchors(design, column_model, persisted=persisted))
     for invoke in entrypoints:
         with pytest.raises(TerrineError) as error:
             invoke()
         assert error.value.code == "terrine.compile.runtime_shape_unsupported"
-        assert error.value.context["shape"] == (
-            "EventAnchor.offset" if entry == "offset" else "EventSequence"
-        )
+        assert error.value.context == {
+            "shape": "EventSequence" if entry == "sequence" else "EventAnchor.offset",
+            "route": "ordinary Frame materialization or a full rebuild",
+        }
