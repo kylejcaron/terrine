@@ -11,23 +11,38 @@ import ibis
 
 from terrine.errors import RefusalSpec
 from terrine.execution._metadata import metadata_operation
+from terrine.runtime._relocation import _hash, _Imports, _json, _key
+from terrine.runtime.arrow import (
+    _OUTPUT_RUN,
+    ArrowOutput,
+    _output_binding,
+    _owner_output_directory,
+    _task_key,
+)
 from terrine.runtime.backends.base import CostProvider, PublicationReceipt
 from terrine.runtime.cost import _AUTHORITY, ScanAuthorization, ScanEvidence, ScanPhase
 from terrine.runtime.events import read_run_events
 from terrine.runtime.execute import RunReceipt, execute_plan
+from terrine.runtime.owner import RuntimeOwner
 from terrine.runtime.planner import RefreshPlan, plan_refresh
 from terrine.runtime.saved_plan import (
     _INVALID as _SAVED_PLAN_MISMATCH,
 )
 from terrine.runtime.saved_plan import (
     DestinationRef,
+    ModelReference,
     ModelResolver,
     SavedPlan,
     _bind_saved_plan,
     resolve_plan,
 )
 from terrine.runtime.schema import check_runtime_schema
-from terrine.runtime.snapshot import ReopenableSnapshot, SnapshotAuthority, _SnapshotContext
+from terrine.runtime.snapshot import (
+    ReopenableSnapshot,
+    SnapshotAuthority,
+    _assert_owner_connection,
+    _SnapshotContext,
+)
 from terrine.runtime.state import RuntimeStore
 from terrine.runtime.status import _recover_interrupted_runs, cancel_run, get_run
 
@@ -139,12 +154,67 @@ def run_plan(
         cancelled=cancelled,
         run_task=executor.run_task,
         authorize_scan=getattr(executor, "authorize_scan", None),
+        _snapshot_owner=(
+            executor.authority.owner if isinstance(executor, _SnapshotBoundExecutor) else None
+        ),
         publish=lambda current_plan, outputs, lease: executor.publish(
             current_plan, outputs, lease, run_id
         ),
     )
     _record_result_partitions(plan, receipt, con=con, namespace=namespace)
     return receipt
+
+
+def _verify_imported_replay(
+    saved: SavedPlan,
+    plan: RefreshPlan,
+    request_key: str | None,
+    receipt: RunReceipt | None,
+    *,
+    con: Any,
+    snapshot_authority: SnapshotAuthority | None,
+) -> str | None:
+    if isinstance(snapshot_authority, SnapshotAuthority):
+        owner = snapshot_authority.owner
+        _assert_owner_connection(owner, con)
+    else:
+        try:
+            owner = RuntimeOwner.from_connection(con)
+        except ValueError:
+            return None
+    imported = _Imports.read(owner)
+    if imported is None:
+        return None
+    plan_record = imported.records.get(_key("plan", saved.namespace, saved.plan_hash))
+    if plan_record is None:
+        if _key("snapshot", saved.namespace, plan.snapshot_id) in imported.records:
+            raise _SAVED_PLAN_MISMATCH.error(reason="plan is not in the verified import")
+        return None
+    if request_key is None:
+        raise _SAVED_PLAN_MISMATCH.error(reason="imported plan needs its original request")
+    destination = _json(saved.destination.to_dict()).decode()
+    digest = _hash(_json((plan.definition.fingerprint, destination)))
+    record = (
+        None
+        if receipt is None
+        else imported.records.get(_key("request", saved.namespace, request_key, receipt.run_id))
+    )
+    if record is None:
+        record = imported.records.get(
+            _key("planned_request", saved.namespace, request_key, saved.plan_hash)
+        )
+    if record is None or record.digest != digest:
+        raise _SAVED_PLAN_MISMATCH.error(reason="request is not in the verified import")
+    return owner.reference if saved.model.owner_key == plan_record.origin else None
+
+
+class _ImportedModelResolver:
+    def __init__(self, resolver: ModelResolver, owner_key: str) -> None:
+        self.resolver = resolver
+        self.owner_key = owner_key
+
+    def resolve(self, reference: ModelReference):
+        return self.resolver.resolve(replace(reference, owner_key=self.owner_key))
 
 
 def run_serialized_plan(
@@ -174,29 +244,35 @@ def run_serialized_plan(
         saved_plan_destination = saved_plan.destination
         if destination is not None and destination != saved_plan_destination:
             raise _SAVED_PLAN_MISMATCH.error(reason="supplied destination differs from saved plan")
+        existing = None
         if request_key is not None:
             destination = saved_plan_destination
             existing = find_run_by_request_key(
                 request_key, destination=destination, con=con, namespace=namespace
             )
-            if existing is not None:
-                store = RuntimeStore(con, namespace=namespace)
-                store.initialize()
-                fingerprint = con.execute(
-                    f"SELECT fingerprint FROM {store._schema}.runtime_runs WHERE run_id=?",
-                    [existing.run_id],
-                ).fetchone()
-                if fingerprint is None or fingerprint[0] != embedded_plan.definition.fingerprint:
-                    raise RefusalSpec(
-                        "terrine.runtime.request_key_conflict",
-                        "Request key is already bound to a different plan.",
-                    ).error()
-            if existing is not None and existing.state in {
-                "running",
-                "cancel_requested",
-                "succeeded",
-                "cancelled",
-            }:
+        elif destination is not None:
+            raise ValueError("destination is only used with a request_key")
+        imported_model_key = _verify_imported_replay(
+            saved_plan,
+            embedded_plan,
+            request_key,
+            existing,
+            con=con,
+            snapshot_authority=snapshot_authority,
+        )
+        if existing is not None:
+            store = RuntimeStore(con, namespace=namespace)
+            store.initialize()
+            fingerprint = con.execute(
+                f"SELECT fingerprint FROM {store._schema}.runtime_runs WHERE run_id=?",
+                [existing.run_id],
+            ).fetchone()
+            if fingerprint is None or fingerprint[0] != embedded_plan.definition.fingerprint:
+                raise RefusalSpec(
+                    "terrine.runtime.request_key_conflict",
+                    "Request key is already bound to a different plan.",
+                ).error()
+            if existing.state in {"running", "cancel_requested", "succeeded", "cancelled"}:
                 return run_plan(
                     embedded_plan,
                     con=con,
@@ -204,8 +280,6 @@ def run_serialized_plan(
                     request_key=request_key,
                     destination=destination,
                 )
-        elif destination is not None:
-            raise ValueError("destination is only used with a request_key")
         built_in = executor is None
         if built_in and embedded_plan.tasks and embedded_plan.definition.execution_mode != "design":
             raise _SAVED_PLAN_MISMATCH.error(
@@ -217,6 +291,8 @@ def run_serialized_plan(
             )
         if resolver is None or snapshot_authority is None:
             raise ValueError("saved plans require an owner resolver and snapshot authority")
+        if imported_model_key is not None:
+            resolver = _ImportedModelResolver(resolver, imported_model_key)
         plan, model, construction, _saved_plan_destination = resolve_plan(
             saved_plan, resolver=resolver, namespace=namespace
         )
@@ -265,6 +341,9 @@ def run_serialized_plan(
                 # Admission above already verified the reuse fence. This path reads no sources.
                 budget = replace(budget, max_scan_bytes=None)
             preflight_runtime_shape(design, budget)
+            output_directory = _owner_output_directory(
+                snapshot_authority.owner.reference, namespace, plan.definition.fingerprint
+            )
             snapshot_executor = DesignExecutor(
                 model,
                 design,
@@ -272,7 +351,8 @@ def run_serialized_plan(
                 con,
                 namespace=namespace,
                 dataset_definition=saved_plan.restore_dataset_definition(),
-                output_root=snapshot_authority.owner.snapshot_root / namespace / "outputs",
+                output_root=snapshot_authority.owner.snapshot_root / output_directory,
+                _output_owner=snapshot_authority.owner,
             )
         if not callable(getattr(snapshot_executor, "run_snapshot_task", None)):
             raise ValueError("saved plans require an executor with run_snapshot_task")
@@ -461,8 +541,6 @@ def _restore_persisted_layer(context: Any, arrow: Any, name: str):
     """Restore a retained anchor relation in the snapshot connection."""
     from contextlib import nullcontext
 
-    from terrine.runtime.arrow import ArrowOutput
-
     raw = context.con.con
     with arrow.open() if isinstance(arrow, ArrowOutput) else nullcontext(arrow) as source:
         raw.register(name + "_input", source)
@@ -486,6 +564,7 @@ class DesignExecutor:
         namespace: str,
         dataset_definition: Any = None,
         output_root: Any = None,
+        _output_owner: RuntimeOwner | None = None,
     ) -> None:
         from terrine.compile.layers import LayerKey
         from terrine.runtime.backends.duckdb import DuckDBBackend
@@ -504,17 +583,29 @@ class DesignExecutor:
             if dataset_definition is not None
             else design.build(model)
         )
+        owner = _output_owner
         if output_root is None:
-            from terrine.runtime.owner import RuntimeOwner
-
-            output_root = RuntimeOwner.from_connection(con).snapshot_root / namespace / "outputs"
+            owner = owner or RuntimeOwner.from_connection(con)
+            output_root = owner.snapshot_root / _owner_output_directory(
+                owner.reference, namespace, plan.definition.fingerprint
+            )
         self._output_root = output_root
+        self._output_owner = None if owner is None else owner.reference
+        self._output_namespace = namespace
 
     def run_snapshot_task(self, context: Any, task: Any, dependencies: Any):
         import pyarrow as pa
 
         from terrine.compile.layers import build_layer, plan_layers
         from terrine.data import MaterializedFrame, Provenance
+
+        output_root = self._output_root / _task_key(task.task_id)
+        run_id = _OUTPUT_RUN.get()
+        binding = (
+            None
+            if run_id is None or self._output_owner is None
+            else _output_binding(self._output_owner, self._output_namespace, run_id, task.task_id)
+        )
 
         if task.layer not in {"anchor", "frame"}:
             raise ValueError(f"unsupported runtime task layer: {task.layer}")
@@ -529,7 +620,8 @@ class DesignExecutor:
                 self.design, execution_model, key, relation_resolver=context.resolve
             )
             context.admit(relation)
-            return self._stream_layer(relation, context)
+            reader = context.to_arrow_batches(relation, chunk_size=65_536)
+            return ArrowOutput.write(reader, root=output_root, binding=binding)
 
         from terrine.runtime.materialize import compose_runtime_frame
 
@@ -580,7 +672,6 @@ class DesignExecutor:
                 lambda: context.execute(gate_totals(compiled.audit_table, [])),
             )
             summary = reader.resolve()
-            from terrine.runtime.arrow import ArrowOutput
 
             table = self._frame._normalize_output(pa.Table.from_batches([], schema=reader.schema))
             table, _ = self._frame._split_output(table, compiled)
@@ -603,7 +694,7 @@ class DesignExecutor:
 
                 spooled = ArrowOutput.write(
                     pa.RecordBatchReader.from_batches(table.schema, split_batches()),
-                    root=self._output_root,
+                    root=output_root,
                     budget=self._plan.budget,
                 )
                 reader = spooled.open()
@@ -699,20 +790,15 @@ class DesignExecutor:
 
             return ArrowOutput.write(
                 pa.RecordBatchReader.from_batches(metadata, batches()),
-                root=self._output_root,
+                root=output_root,
                 budget=self._plan.budget,
+                binding=binding,
             )
         finally:
             if spooled is not None:
                 spooled.path.unlink(missing_ok=True)
             if name is not None:
                 context.con.drop_table(name, force=True)
-
-    def _stream_layer(self, relation: Any, context: Any):
-        from terrine.runtime.arrow import ArrowOutput
-
-        reader = context.to_arrow_batches(relation, chunk_size=65_536)
-        return ArrowOutput.write(reader, root=self._output_root)
 
     @metadata_operation()
     def _execution_model(self, context: Any):
@@ -724,7 +810,6 @@ class DesignExecutor:
         )
 
     def publish(self, plan: Any, outputs: Any, lease: Any, run_id: str):
-        from terrine.runtime.arrow import ArrowOutput
         from terrine.runtime.backends.base import StagedGeneration
 
         if not plan.tasks:

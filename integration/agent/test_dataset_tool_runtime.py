@@ -537,6 +537,44 @@ def test_refresh_preserves_owner_approved_destination_alias(owner_tools, tmp_pat
     assert saved.destination == approved
 
 
+@pytest.mark.parametrize("use_alias", [False, True], ids=["canonical", "symlink"])
+def test_offline_recovery_preserves_agent_publication(owner_tools, tmp_path, use_alias):
+    from terrine import Dataset
+    from terrine.runtime.backup import backup_owner, restore_owner
+
+    destination = next(iter(owner_tools.policy.allowed_destinations))
+    state = Path(destination.database)
+    owner = RuntimeOwner.from_connection(owner_tools.model.con)
+    alias = tmp_path / "owner-alias.duckdb"
+    if use_alias:
+        alias.symlink_to(state)
+        approved = replace(destination, database=str(alias))
+        owner_tools.policy = replace(
+            owner_tools.policy, allowed_destinations=frozenset({approved})
+        )
+    first = owner_tools.stage(_prepare_materialization(owner_tools), request_key="stable")
+    assert first.status == "ok" and first.output is not None
+    generation = first.output.generation
+    original = Dataset.open_generation(
+        destination.dataset, generation, con=owner_tools.model.con, namespace="agent"
+    ).to_pyarrow()
+    owner_tools.model.con.disconnect()
+
+    bundle = tmp_path / "backup"
+    inventory = backup_owner(state, owner.snapshot_root, bundle)
+    if use_alias:
+        alias.unlink()
+    restored = restore_owner(bundle, inventory["digest"], tmp_path / "restored")
+    con = ibis.duckdb.connect(restored["state_path"])
+    try:
+        recovered = Dataset.open_generation(
+            destination.dataset, generation, con=con, namespace="agent"
+        )
+        assert recovered.to_pyarrow().equals(original, check_metadata=True)
+    finally:
+        con.disconnect()
+
+
 @pytest.mark.parametrize("preview", [False, True])
 def test_partitioned_export_projects_no_partition_values(shared_tools, tmp_path, preview):
     owner_tools = shared_tools

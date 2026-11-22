@@ -112,6 +112,7 @@ CODES: frozenset[str] = frozenset(
         "terrine.model.invalid_binding",
         "terrine.model.missing_event_completeness",
         "terrine.readiness.missing_source",
+        "terrine.runtime.backup_invalid",
         "terrine.runtime.concurrency_limit",
         "terrine.runtime.control_message_too_large",
         "terrine.runtime.control_unavailable",

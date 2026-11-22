@@ -5,7 +5,7 @@ import threading
 import time
 from collections.abc import Callable, Mapping
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from types import MappingProxyType
 from typing import Any
@@ -14,10 +14,12 @@ import pyarrow as pa
 
 from terrine.compile.cost import _OUTPUT_BYTES_EXCEEDED, _ROWS_EXCEEDED
 from terrine.errors import RefusalSpec, TerrineError
-from terrine.runtime.arrow import _PREFIX, ArrowOutput
+from terrine.runtime._relocation import _ROOT, _hash, _Imports, _key, _open_regular, _relative
+from terrine.runtime.arrow import _OUTPUT_PREFIXES, _OUTPUT_RUN, ArrowOutput
 from terrine.runtime.cost import _ATTEMPTS, ScanAuthorization, authorize_plan_scan
 from terrine.runtime.events import event_transaction, record_run_event
 from terrine.runtime.leases import Lease, LeaseStore
+from terrine.runtime.owner import RuntimeOwner
 from terrine.runtime.planner import RefreshPlan, TaskSpec, admit_execution
 from terrine.runtime.saved_plan import DestinationRef
 from terrine.runtime.state import RuntimeStore
@@ -65,6 +67,7 @@ def execute_plan(
     max_active_runs: int | None = None,
     lease_ttl: timedelta = timedelta(minutes=5),
     authorize_scan: Callable[[RefreshPlan], ScanAuthorization] | None = None,
+    _snapshot_owner: RuntimeOwner | None = None,
 ) -> RunReceipt:
     """Execute a bounded DAG; callbacks must isolate connections when concurrency exceeds one."""
     admit_execution(plan, namespace=namespace)
@@ -398,6 +401,13 @@ def execute_plan(
                 stop_heartbeat.set()
                 return
 
+    def run_bound_task(task, dependencies):
+        token = _OUTPUT_RUN.set(run_id)
+        try:
+            return run_task(task, dependencies)
+        finally:
+            _OUTPUT_RUN.reset(token)
+
     heartbeat_thread = threading.Thread(target=heartbeat, daemon=True)
     heartbeat_thread.start()
     try:
@@ -436,7 +446,14 @@ def execute_plan(
                         [run_id, task.task_id],
                     ).fetchone()
                     if saved is not None and saved[0] == "complete":
-                        outputs[task.task_id] = _decode(saved[1])
+                        outputs[task.task_id] = _decode(
+                            saved[1],
+                            con=con,
+                            owner=_snapshot_owner,
+                            namespace=namespace,
+                            run_id=run_id,
+                            task_id=task.task_id,
+                        )
                         made_progress = True
                         continue
                     attempt_limit = (
@@ -479,7 +496,7 @@ def execute_plan(
                     dependencies = MappingProxyType(
                         {key: outputs[key] for key in task.dependencies}
                     )
-                    inflight[executor.submit(run_task, task, dependencies)] = task
+                    inflight[executor.submit(run_bound_task, task, dependencies)] = task
                     active_partitions.add(task.partition)
                     made_progress = True
                 if not inflight:
@@ -777,10 +794,37 @@ def _encode(table: pa.Table | ArrowOutput) -> bytes:
     return sink.getvalue().to_pybytes()
 
 
-def _decode(payload: bytes) -> pa.Table | ArrowOutput:
-    if payload.startswith(_PREFIX):
-        return ArrowOutput.from_bytes(payload)
-    return pa.ipc.open_stream(payload).read_all()
+def _decode(
+    payload: bytes,
+    *,
+    con: Any,
+    owner: RuntimeOwner | None,
+    namespace: str,
+    run_id: str,
+    task_id: str,
+) -> pa.Table | ArrowOutput:
+    if not payload.startswith(_OUTPUT_PREFIXES):
+        return pa.ipc.open_stream(payload).read_all()
+    output = ArrowOutput.from_bytes(payload)
+    if owner is None:
+        try:
+            owner = RuntimeOwner.from_connection(con)
+        except ValueError:
+            return output
+    imports = _Imports.read(owner)
+    if imports is None:
+        return output
+    imported = imports.records.get(_key("arrow", namespace, run_id, task_id))
+    if imported is not None:
+        if _hash(payload) != imported.digest or imported.path is None:
+            raise ValueError("imported Arrow reference differs from verified owner record")
+        relative = _relative(imported.path).relative_to(_ROOT)
+        with _open_regular(owner.snapshot_root, relative):
+            pass
+        return replace(output, path=owner.snapshot_root / relative)
+    if not output.path.is_relative_to(owner.snapshot_root / namespace):
+        raise ValueError("retained Arrow reference is outside the restored owner")
+    return output
 
 
 def _release_run_snapshot_refs(store: RuntimeStore, snapshot_id: str, run_id: str) -> None:

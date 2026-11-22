@@ -67,7 +67,7 @@ def measure_bounded_workflow(root: Path, rows: int) -> dict[str, int]:
         stats["batch_rows"] = max(stats["batch_rows"], batch.num_rows)
 
     @classmethod
-    def measured(cls, reader, *, root, budget=None):
+    def measured(cls, reader, *, root, budget=None, binding=None):
         def batches():
             for batch in reader:
                 observe(batch)
@@ -77,7 +77,10 @@ def measure_bounded_workflow(root: Path, rows: int) -> dict[str, int]:
         stream = batches()
         try:
             return original_write(
-                pa.RecordBatchReader.from_batches(reader.schema, stream), root=root, budget=budget
+                pa.RecordBatchReader.from_batches(reader.schema, stream),
+                root=root,
+                budget=budget,
+                binding=binding,
             )
         finally:
             stream.close()

@@ -291,6 +291,51 @@ established; interpreting JSON alone never proves run ownership.
 
 Run-state transitions distinguish recoverable failure from terminal results. A `failed` run may retry only after acquiring a newer lease fencing token; an expired writer cannot resume or publish. `succeeded` and `cancelled` runs are terminal and never regress.
 
+## Back up and restore one owner
+
+On Linux or macOS, stop the owner, checkpoint its DuckDB database, and close
+the connection before backing it up. Leave unrelated owners running, even
+when they share the snapshot root. The bundle includes the **whole DuckDB
+database, including user tables**, plus the selected owner's retained inputs
+and task artifacts across its runtime namespaces. Protect the bundle like
+the original database. A Parquet export is not a runtime backup.
+
+```console
+terrine backup /srv/analytics/study.duckdb /srv/analytics/.terrine/snapshots /backups/study
+terrine restore /backups/study EXPECTED_SHA256 /srv/recovered-study
+```
+
+Use the `digest` from the first command's JSON as `EXPECTED_SHA256`. Keep it
+in a trusted location separate from the bundle. The same output lists each
+included file, its size, and checksum. Restore requires a new directory with
+an existing parent; it does not replace an owner or recover an uncheckpointed
+database. Use absolute paths without symlinks.
+
+Open `/srv/recovered-study/owner.duckdb` and use its
+`/srv/recovered-study/.terrine/snapshots` root and original namespace. Keep
+the `owner.duckdb.terrine-import.json` file beside the database. Historical
+manifests, receipt IDs and saved plans are unchanged. To resume an imported
+request, use its original saved plan, request key and destination. If the
+process default snapshot root points elsewhere, pass the restored owner's
+`SnapshotAuthority` explicitly. Fresh plans target the restored owner.
+Only verified records in the import map can resolve historical references.
+An ordinary directory copy does not establish that binding.
+An imported manifest that refers to a separately stored definition still
+needs that definition store. The resolved manifest must match the original
+inline manifest recorded in the owner database.
+
+Restore checks bundle files, retained receipt and plan identities, and
+published output content before installing the owner. Missing or foreign
+objects refuse rather than expanding the copy to the whole snapshot root.
+New task files bind their bytes to an exact owner, namespace, run, and task.
+Legacy task files have no such proof. Backup preserves terminal run history
+without copying legacy task files, because exact terminal replay uses the
+published generation or cancellation record, not task outputs. If an
+unfinished run still needs a legacy file, backup refuses with
+`terrine.runtime.backup_invalid` (`reason="legacy_retry_artifact_unbound"`).
+Finish the run in place with its compatible reader and back up again. If
+you only need the published data, export it to Parquet instead.
+
 ### Optional telemetry
 
 Telemetry is off unless the owner application creates an adapter and supplies

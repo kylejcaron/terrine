@@ -386,6 +386,7 @@ Inspect authoritative run state. Replay unchanged requests; replan changed input
 
 | Code | Tier | Message template | Interpolation fields | Declaration |
 | --- | --- | --- | --- | --- |
+| `terrine.runtime.backup_invalid` | Provisional | <code>Owner backup or restore refused ({reason}). Use an offline, checkpointed owner or a verified bundle and a new destination directory.</code> | `reason` | [terrine/runtime/_relocation.py](../../terrine/runtime/_relocation.py) |
 | `terrine.runtime.concurrency_limit` | Provisional | <code>Owner concurrent run limit has been reached.</code> | None | [terrine/runtime/execute.py](../../terrine/runtime/execute.py) |
 | `terrine.runtime.control_message_too_large` | Provisional | <code>Owner control message exceeds the configured limit.</code> | None | [terrine/runtime/control.py](../../terrine/runtime/control.py) |
 | `terrine.runtime.control_unavailable` | Provisional | <code>Owner control request was refused.</code> | None | [terrine/runtime/control.py](../../terrine/runtime/control.py) |

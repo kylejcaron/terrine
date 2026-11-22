@@ -30,6 +30,7 @@ from terrine.execution.inputs import (
     verify_immutable_inputs,
 )
 from terrine.model import Model
+from terrine.runtime._relocation import _ROOT, _Imports, _key, _open_regular, _relative
 from terrine.runtime.owner import RuntimeOwner
 from terrine.runtime.schema import check_runtime_schema
 from terrine.runtime.state import RuntimeStore
@@ -153,6 +154,9 @@ class SnapshotAuthority:
     def find_retained(self, snapshot_id: str, *, namespace: str) -> ReopenableSnapshot:
         if not snapshot_id or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", namespace):
             raise ValueError("snapshot_id and a simple namespace are required")
+        imported = self._imported_snapshot(snapshot_id, namespace)
+        if imported is not None:
+            return imported[0]
         root = self.owner.snapshot_root / namespace
         if root.exists():
             for directory in root.iterdir():
@@ -196,19 +200,29 @@ class SnapshotAuthority:
             raise ValueError("collection time must be timezone-aware")
         removed = []
         for directory in root.iterdir():
-            if not directory.is_dir():
+            if directory.is_symlink() or not directory.is_dir():
                 continue
             receipt_path = directory / "receipt.json"
             if not receipt_path.is_file():
                 continue
             receipt = ReopenableSnapshot.from_json(receipt_path.read_bytes())
-            if receipt.namespace != namespace or receipt.owner_reference != self.owner.reference:
-                continue
-            if Path(receipt.artifact_path).resolve().parent != directory.resolve():
-                continue
-            if Path(receipt.receipt_path).resolve() != receipt_path.resolve():
+            if receipt.namespace != namespace:
                 continue
             marked = store.snapshot_marked_for_gc(receipt.snapshot_id)
+            if receipt.owner_reference == self.owner.reference:
+                if Path(receipt.artifact_path).resolve().parent != directory.resolve():
+                    continue
+                if Path(receipt.receipt_path).resolve() != receipt_path.resolve():
+                    continue
+            else:
+                imported = self._imported_snapshot(
+                    receipt.snapshot_id, namespace, allow_missing_input=marked
+                )
+                if imported is None or (
+                    imported[0].receipt_hash != receipt.receipt_hash
+                    or imported[1].parent != directory
+                ):
+                    continue
             modified = datetime.fromtimestamp(directory.stat().st_mtime, UTC)
             if not marked and current - modified < retain:
                 continue
@@ -227,13 +241,8 @@ class SnapshotAuthority:
         reference: str,
     ) -> None:
         """Release one verified owner reference; physical deletion remains GC-only."""
-        verified = ReopenableSnapshot.from_json(snapshot.to_json())
-        if (
-            verified.owner_reference != self.owner.reference
-            or verified.namespace != store.namespace
-            or not Path(verified.receipt_path).is_file()
-        ):
-            raise _INVALID.error(reason="snapshot release identity does not match owner")
+        self._retained_artifact(snapshot, store.namespace)
+        verified = snapshot
         _assert_owner_connection(self.owner, store.con)
         store.unpin_snapshot(verified.snapshot_id, kind=kind, reference=reference)
 
@@ -378,6 +387,8 @@ class SnapshotAuthority:
         import duckdb
 
         restored, artifact = self._retained_artifact(snapshot, namespace)
+        if restored.owner_reference != self.owner.reference:
+            _assert_owner_connection(self.owner, con)
         if not artifact.is_file() or _file_hash(artifact) != restored.artifact_hash:
             raise _INVALID.error(reason="retained artifact is absent or changed")
         catalog, units = _retained_declarations(restored)
@@ -393,6 +404,8 @@ class SnapshotAuthority:
 
         if os.name == "posix":
             restored, artifact = self._retained_artifact(snapshot, namespace)
+            if restored.owner_reference != self.owner.reference:
+                _assert_owner_connection(self.owner, con)
             with ExitStack() as resources:
                 try:
                     private = resources.enter_context(TemporaryDirectory(prefix="terrine-run-"))
@@ -426,8 +439,13 @@ class SnapshotAuthority:
         if not isinstance(snapshot, ReopenableSnapshot):
             raise TypeError("snapshot must be ReopenableSnapshot")
         restored = ReopenableSnapshot.from_json(snapshot.to_json())
-        if namespace != restored.namespace or self.owner.reference != restored.owner_reference:
+        if namespace != restored.namespace:
             raise _INVALID.error(reason="owner namespace or identity changed")
+        if self.owner.reference != restored.owner_reference:
+            imported = self._imported_snapshot(restored.snapshot_id, namespace)
+            if imported is None or imported[0].receipt_hash != restored.receipt_hash:
+                raise _INVALID.error(reason="owner namespace or identity changed")
+            return imported
         receipt_path = Path(restored.receipt_path).resolve()
         try:
             receipt_path.relative_to(self.owner.snapshot_root)
@@ -442,6 +460,35 @@ class SnapshotAuthority:
         except ValueError as exc:
             raise _INVALID.error(reason="snapshot artifact is outside the owner root") from exc
         return restored, artifact
+
+    def _imported_snapshot(
+        self, snapshot_id: str, namespace: str, *, allow_missing_input: bool = False
+    ) -> tuple[ReopenableSnapshot, Path] | None:
+        imports = _Imports.read(self.owner)
+        record = imports.records.get(_key("snapshot", namespace, snapshot_id)) if imports else None
+        if record is None or record.path is None:
+            return None
+        relative = _relative(record.path).relative_to(_ROOT)
+        try:
+            with _open_regular(self.owner.snapshot_root, relative) as stream:
+                receipt = ReopenableSnapshot.from_json(stream.read())
+            artifact = relative.with_name("inputs.duckdb")
+            try:
+                with _open_regular(self.owner.snapshot_root, artifact):
+                    pass
+            except FileNotFoundError:
+                if not allow_missing_input:
+                    raise
+        except OSError as exc:
+            raise _INVALID.error(reason="imported snapshot files are absent or invalid") from exc
+        if (
+            receipt.snapshot_id != snapshot_id
+            or receipt.namespace != namespace
+            or receipt.owner_reference != record.origin
+            or receipt.receipt_hash != record.digest
+        ):
+            raise _INVALID.error(reason="imported snapshot identity changed")
+        return receipt, self.owner.snapshot_root / artifact
 
 
 def _retained_declarations(restored: ReopenableSnapshot) -> tuple[Any, dict[str, UnitSource]]:
