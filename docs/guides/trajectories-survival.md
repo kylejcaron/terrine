@@ -197,8 +197,9 @@ values in the declared column order, after any winsorization of those values.
 Groups with only prevalent subjects remain in the flow even though they emit
 no bins. If all eligible subjects are prevalent, the result has no rows but
 still reports the exclusions.
-If group values cannot be represented as scalars, only the population totals
-are reported.
+For group labels outside the portable scalar format, such as lists or
+intervals, the flow reports only population totals. The life table still
+uses the declared labels.
 
 Grouping features may be expressions or Boolean predicates. Their timing support
 is the conservative interval from the earliest contributing start to the latest

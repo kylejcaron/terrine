@@ -275,13 +275,20 @@ def test_life_table_preserves_roster_group_in_portable_metadata(value_sql, expec
         con.disconnect()
 
 
-def test_empty_grouped_life_table_reports_totals_without_nested_group_labels():
+@pytest.mark.parametrize(
+    ("value_sql", "is_expected_type"),
+    [("[1, 2]", pa.types.is_list), ("INTERVAL '1 month'", pa.types.is_duration)],
+    ids=["list", "interval"],
+)
+def test_empty_grouped_life_table_reports_totals_without_portable_labels(
+    value_sql, is_expected_type
+):
     from terrine import Model, UnitSource, asof
 
     con, model = _model()
     try:
-        con.raw_sql("""
-            CREATE TABLE users AS SELECT user_id AS id, [1, 2] AS band FROM anchors;
+        con.raw_sql(f"""
+            CREATE TABLE users AS SELECT user_id AS id, {value_sql} AS band FROM anchors;
             INSERT INTO outcomes
                 SELECT user_id, TIMESTAMPTZ '2024-12-31 00:00:00+00' FROM anchors;
         """)
@@ -301,12 +308,14 @@ def test_empty_grouped_life_table_reports_totals_without_nested_group_labels():
         ordinary = view.materialize()
         audited = view.materialize(include_population=True)
         assert ordinary.table.equals(audited.table)
-        assert audited.table.num_rows == 0 and pa.types.is_list(audited.table["band"].type)
+        assert audited.table.num_rows == 0 and is_expected_type(audited.table["band"].type)
         flow = audited.provenance.survival_flow
         assert flow is not None
-        assert (
-            flow.eligible_subjects, flow.prevalent_exclusions, flow.retained_records
-        ) == (3, 3, 0)
+        assert (flow.eligible_subjects, flow.prevalent_exclusions, flow.retained_records) == (
+            3,
+            3,
+            0,
+        )
         assert not flow.group_by and not flow.groups
     finally:
         con.disconnect()

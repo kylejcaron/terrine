@@ -437,13 +437,24 @@ def compile_time_to_event(
             "__terrine_prevalent_exclusions": population.unit.nunique(where=excluded),
             "__terrine_retained_records": population.count(where=~excluded),
         }
-        # Nested group labels cannot be represented in the portable population summary.
-        scalar_groups = group_by
-        for name in group_by:
-            dtype = population[name].type()
-            if dtype.is_array() or dtype.is_map() or dtype.is_struct():
-                scalar_groups = ()
-                break
+        # Only group labels supported by the portable SurvivalGroupFlow codec.
+        portable_types = (
+            dt.Null,
+            dt.Boolean,
+            dt.Integer,
+            dt.Floating,
+            dt.Decimal,
+            dt.String,
+            dt.Binary,
+            dt.Date,
+            dt.Time,
+            dt.Timestamp,
+        )
+        scalar_groups = (
+            group_by
+            if all(isinstance(population[name].type(), portable_types) for name in group_by)
+            else ()
+        )
         survival_counts = prune_columns(
             population.group_by(*scalar_groups).aggregate(**counts)
             if scalar_groups
