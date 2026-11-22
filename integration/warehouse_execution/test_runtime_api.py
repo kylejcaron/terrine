@@ -1,5 +1,6 @@
 import copy
 import json
+import os
 import pickle
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -16,7 +17,7 @@ from terrine.execution.backend import backend_provider
 from terrine.model import Model
 from terrine.runtime.graph import dependency_graph
 from terrine.runtime.owner import RuntimeOwner
-from terrine.runtime.planner import plan_refresh
+from terrine.runtime.planner import RefreshPlan, plan_refresh
 from terrine.runtime.planning import OwnerPlanner, PlanInvocation, PlanRequest
 from terrine.runtime.saved_plan import DestinationRef, ModelReference, SavedPlan
 from terrine.runtime.snapshot import SnapshotAuthority
@@ -257,8 +258,33 @@ def test_saved_plan_execution_reopens_retained_snapshot_for_each_task(tmp_path):
             )
         assert changed_error.value.code == "terrine.runtime.request_key_conflict"
 
+    # A logical callback plan is unchanged and inspectable, not a built-in job plan.
+    assert RefreshPlan.deserialize(plan.serialize()).serialize() == plan.serialize()
+    with pytest.raises(TerrineError) as mode_error:
+        runtime.run_serialized_plan(
+            saved_plan.to_json(),
+            con=con.con,
+            namespace="runtime",
+            request_key="no-custom-executor",
+            resolver=Resolver(),
+            snapshot_authority=authority,
+        )
+    assert mode_error.value.code == "terrine.runtime.saved_plan_mismatch"
+    assert mode_error.value.context["reason"] == "physical_jobs_required"
+    for error in (copy.deepcopy(mode_error.value), pickle.loads(pickle.dumps(mode_error.value))):
+        assert error.code == mode_error.value.code
+        assert error.context == mode_error.value.context
+
+    physical_plan = plan_refresh(
+        namespace=plan.namespace,
+        dataset=plan.dataset,
+        definition_hash=plan.definition_hash,
+        snapshot_id=plan.snapshot_id,
+        graph=graph,
+        execution_mode="design",
+    )
     builtin_saved = SavedPlan.create(
-        plan_json=plan.serialize(),
+        plan_json=physical_plan.serialize(),
         design=design,
         model=saved_plan.model,
         destination=saved_plan.destination,
@@ -281,9 +307,9 @@ def test_saved_plan_execution_reopens_retained_snapshot_for_each_task(tmp_path):
     assert status.phase == "succeeded"
     assert status.error_code is None
     assert status.progress == {
-        "completed_tasks": len(plan.tasks),
+        "completed_tasks": len(physical_plan.tasks),
         "running_tasks": 0,
-        "total_tasks": len(plan.tasks),
+        "total_tasks": len(physical_plan.tasks),
     }
     assert status.cost["capture"] == {
         "snapshot_id": snapshot.snapshot_id,
@@ -293,7 +319,7 @@ def test_saved_plan_execution_reopens_retained_snapshot_for_each_task(tmp_path):
     }
     assert status.cost["status"] == "observed"
     assert status.cost["scope"] == "completed_task_artifacts"
-    assert status.cost["attempts"] == len(plan.tasks)
+    assert status.cost["attempts"] == len(physical_plan.tasks)
     assert status.cost["output_rows"] == published.table.num_rows
     stored = runtime.open_published_generation(
         built_in, con=con.con, namespace="runtime"
@@ -384,6 +410,7 @@ def test_reopen_retained_snapshot_with_v2_catalog_json(tmp_path):
             dataset="corpus",
             definition_hash=design.spec_hash,
             snapshot_id=snapshot.snapshot_id,
+            execution_mode="design",
             graph=dependency_graph(
                 model,
                 design,
@@ -636,6 +663,239 @@ def test_owner_planner_persists_same_snapshot_and_manifest_by_invocation(tmp_pat
     assert second.snapshot_id == first.snapshot_id
     assert fresh.expected_base_manifest == "generation-current"
     assert conflict.value.code == "terrine.runtime.plan_invocation_conflict"
+
+
+def test_builtin_stage_schedules_only_physical_jobs_and_verifies_one_input_image(
+    tmp_path, monkeypatch
+):
+    from terrine.dataset.reference import Dataset
+    from terrine.runtime import snapshot as snapshot_module
+    from terrine.spec import event_time
+
+    monkeypatch.setenv("TERRINE_RUNTIME_NAMESPACE", "runtime")
+    monkeypatch.setenv("TERRINE_RUNTIME_SNAPSHOT_ROOT", str(tmp_path / "snapshots"))
+    con = ibis.duckdb.connect(str(tmp_path / "owner.duckdb"))
+    try:
+        con.raw_sql("CREATE TABLE events (ts TIMESTAMP, user_id INTEGER, value INTEGER)")
+        con.raw_sql("INSERT INTO events VALUES ('2025-01-01', 1, 3)")
+        con.raw_sql("CREATE TABLE users AS SELECT 1 user_id")
+        model = Model.from_catalog(
+            _catalog(),
+            con=con,
+            readiness={"events": Coverage("2025-01-01", "2025-02-01")},
+            units={"user": UnitSource("users", "user_id")},
+        )
+        design = Design(
+            "user",
+            FixedDate("2025-01-02"),
+            features={"last_value": event_time("value", window=("-1d", "0s"))},
+        )
+        graph = dependency_graph(model, design)
+        assert any(node.layer == "selector" for node in graph.nodes)
+        hashes = []
+        copies = []
+        file_hash = snapshot_module._file_hash
+
+        def trace_file_hash(path, *, copy_to=None):
+            hashes.append(path.stat().st_size)
+            digest = file_hash(path, copy_to=copy_to)
+            if copy_to is not None:
+                copies.append(copy_to.tell())
+            return digest
+
+        monkeypatch.setattr(snapshot_module, "_file_hash", trace_file_hash)
+        dataset = design.build(model).stage("study")
+        run_id = con.con.execute("SELECT run_id FROM runtime.runtime_runs").fetchone()[0]
+        status = runtime.get_run(run_id, con=con.con, namespace="runtime")
+        assert dataset.to_pyarrow()["last_value__complete"].to_pylist() == [True]
+        assert status.progress == {"completed_tasks": 2, "running_tasks": 0, "total_tasks": 2}
+        assert status.cost["attempts"] == 2
+        bytes_per_image = hashes[0]
+        if os.name == "posix":
+            assert (hashes, copies) == ([bytes_per_image] * 2, [bytes_per_image])
+        else:
+            assert (hashes, copies) == ([bytes_per_image] * 3, [])
+        assert con.con.execute("SELECT count(*) FROM runtime.runtime_partitions").fetchone() == (2,)
+        manifest = dataset.manifest
+        table = con.con.execute(
+            "SELECT table_name FROM runtime.runtime_partitions WHERE partition=?",
+            [manifest.generation.output_refs[0]],
+        ).fetchone()[0]
+        con.raw_sql(f'UPDATE runtime."{table}" SET last_value=NULL')
+        assert Dataset.open_generation(
+            "study", manifest.generation.generation_id, con=con, namespace="runtime"
+        ).manifest == manifest
+        with pytest.raises(TerrineError) as error:
+            Dataset.from_manifest(manifest, con=con, namespace="runtime")
+        assert error.value.code == "terrine.dataset.invalid_generation"
+    finally:
+        con.disconnect()
+
+
+def test_owner_nochange_refresh_pins_existing_inputs_and_replays_exact_generation(
+    tmp_path, monkeypatch
+):
+    from terrine.dataset.reference import dataset_from_run
+    from terrine.runtime.changes import ChangeSet
+    from terrine.spec.dataset import DatasetDefinition
+
+    path = tmp_path / "owner.duckdb"
+    monkeypatch.setenv("TERRINE_RUNTIME_NAMESPACE", "runtime")
+    monkeypatch.setenv("TERRINE_RUNTIME_SNAPSHOT_ROOT", str(tmp_path / "snapshots"))
+    con = ibis.duckdb.connect(str(path))
+    try:
+        con.raw_sql("CREATE TABLE events (ts TIMESTAMP, user_id INTEGER, value INTEGER)")
+        con.raw_sql("INSERT INTO events VALUES ('2025-01-01', 1, 3)")
+        con.raw_sql("CREATE TABLE users AS SELECT 1 user_id")
+        model = Model.from_catalog(
+            _catalog(),
+            con=con,
+            readiness={"events": Coverage("2025-01-01", "2025-02-01")},
+            units={"user": UnitSource("users", "user_id")},
+        )
+        authority = SnapshotAuthority(RuntimeOwner.from_connection(con))
+        store = RuntimeStore(con.con, namespace="runtime")
+
+        changed_model = Model.from_catalog(
+            model.catalog,
+            con=con,
+            readiness={"events": Coverage("2025-01-02", "2025-02-01")},
+            units=model.units,
+        )
+        model_reference = ModelReference.from_model(model, owner_key=authority.owner.reference)
+        changed_reference = ModelReference.from_model(
+            changed_model, owner_key=authority.owner.reference
+        )
+
+        class Resolver:
+            def resolve(self, reference):
+                return changed_model if reference == changed_reference else model
+
+        resolver = Resolver()
+        planner = OwnerPlanner(resolver=resolver, snapshot_authority=authority)
+        budget = Budget(strict_scan=False)
+        dataset = _design().build(model).stage("study", budget=budget)
+        generation = dataset.manifest.generation.generation_id
+        snapshot = dataset.manifest.source_snapshots["snapshot_id"]
+        request = PlanRequest(
+            "nochange",
+            model_reference,
+            _design(),
+            DestinationRef(str(path), "runtime", "study"),
+            changes=ChangeSet((), "operator"),
+            budget=budget,
+            dataset_definition=dataset.manifest.definition,
+            expected_base_manifest=generation,
+            bind_base_manifest=True,
+        )
+
+        def retained_inputs():
+            captures = con.con.execute(
+                "SELECT count(*) FROM runtime.runtime_snapshot_captures"
+            ).fetchone()[0]
+            return captures, sum(
+                file.stat().st_size for file in authority.owner.snapshot_root.rglob("inputs.duckdb")
+            )
+
+        before = retained_inputs()
+        planner.plan(request, con=con.con, namespace="runtime")
+        assert retained_inputs() == before
+        strict_request = replace(request, invocation_id="strict", budget=Budget(max_scan_bytes=1))
+        with pytest.raises(TerrineError) as scan:
+            planner.plan(
+                replace(strict_request, invocation_id="scan-control", changes=None),
+                con=con.con,
+                namespace="runtime",
+            )
+        assert scan.value.code == "terrine.budget.scan_unknown"
+        for limit, code in (
+            (Budget(max_rows=0, max_scan_bytes=1), "terrine.budget.rows_exceeded"),
+            (Budget(max_output_bytes=0, max_scan_bytes=1), "terrine.budget.output_bytes_exceeded"),
+        ):
+            with pytest.raises(TerrineError) as limited:
+                dataset.plan_refresh(model, changes=request.changes, budget=limit)
+            assert limited.value.code == code
+        assert retained_inputs() == before
+        strict = planner.plan(strict_request, con=con.con, namespace="RUNTIME")
+        stale = planner.plan(
+            replace(request, invocation_id="stale"), con=con.con, namespace="runtime"
+        )
+        strict_plan = RefreshPlan.deserialize(strict.serialized_plan)
+        assert strict_plan.budget == strict_request.budget
+        assert strict_plan.scan_bytes == 0
+        assert strict.snapshot_id == snapshot
+        assert ("saved_plan", strict_request.invocation_id) in store.snapshot_references(snapshot)
+
+        def unexpected_read(*args, **kwargs):
+            raise AssertionError("fenced refresh reopened retained source rows")
+
+        with monkeypatch.context() as patch:
+            patch.setattr(authority, "reopen", unexpected_read)
+            patch.setattr(authority, "_run_image", unexpected_read)
+            receipt = runtime.run_serialized_plan(
+                strict.saved_plan_json,
+                con=con.con,
+                namespace="RUNTIME",
+                request_key=strict.request_key,
+                resolver=resolver,
+                snapshot_authority=authority,
+            )
+        reused = dataset_from_run(
+            SavedPlan.from_json(strict.saved_plan_json),
+            receipt,
+            model=model,
+            namespace="RUNTIME",
+            request_key=strict.request_key,
+            snapshot_authority=authority,
+        )
+        assert reused.manifest == dataset.manifest
+        assert retained_inputs() == before
+
+        scoring = DatasetDefinition(
+            base_design=request.design,
+            view={
+                "kind": "scoring",
+                "features": ["total"],
+                "as_of": "2025-01-02T00:00:00+00:00",
+                "parent_design_hash": request.design.spec_hash,
+            },
+        )
+        for control in (
+            replace(request, invocation_id="view-control", dataset_definition=scoring),
+            replace(request, invocation_id="readiness-control", model=changed_reference),
+            replace(request, invocation_id="legacy-control", changes=ChangeSet((), "revision")),
+        ):
+            prior = retained_inputs()
+            rebuilt = planner.plan(control, con=con.con, namespace="runtime")
+            assert rebuilt.snapshot_id != snapshot, control.invocation_id
+            assert RefreshPlan.deserialize(rebuilt.serialized_plan).tasks
+            captures, artifact_bytes = retained_inputs()
+            assert captures == prior[0] + 1
+            assert artifact_bytes > prior[1]
+
+        newer = dataset.refresh(model, budget=budget)
+        assert newer.manifest.generation != dataset.manifest.generation
+        with pytest.raises(ValueError):
+            runtime.run_serialized_plan(
+                stale.saved_plan_json,
+                con=con.con,
+                namespace="runtime",
+                request_key=stale.request_key,
+                resolver=resolver,
+                snapshot_authority=authority,
+            )
+    finally:
+        con.disconnect()
+    reopened = ibis.duckdb.connect(str(path))
+    try:
+        assert runtime.run_serialized_plan(
+            strict.saved_plan_json,
+            con=reopened.con,
+            namespace="RUNTIME",
+            request_key=strict.request_key,
+        ) == receipt
+    finally:
+        reopened.disconnect()
 
 
 def test_unknown_snapshot_refuses_only_retained_execution_before_source_work(tmp_path, monkeypatch):

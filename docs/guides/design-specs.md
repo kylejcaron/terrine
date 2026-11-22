@@ -44,8 +44,9 @@ Mixed date/timestamp bounds are ordered only after catalog binding resolves the 
 `to_yaml` and `to_json` return portable text with `schema_version: 4`, writing every duration in canonical units (`gap: 1w`, `every: 1mo`, `period: 1h30min`), so `"60min"` and `"1h"` save identically. Schema-4 design documents accept legacy minute text `m` as well as `min`; the same decoder reads embedded designs in definitions, and re-saving writes canonical `min`. `from_yaml` and `from_json` accept text or bytes and only construct the known data types. Text that does not parse refuses with `terrine.design.invalid` (`reason="malformed_document"`); a document from an earlier version refuses with the same code and `reason="unsupported_schema_version"`, with the supplied `schema_version` in context, and there is no migration: construct the design again and save it. Duplicate keys, unknown node tags, extra fields, unsafe YAML tags, and values of the wrong type (including a duration that is not text) refuse with the same code and `reason="malformed_document"`; a node whose value its constructor refuses keeps that constructor's refusal. Canonical JSON recursively sorts mapping keys, uses compact UTF-8 JSON, and is the basis of `Design.spec_hash`; map insertion order does not affect a design hash.
 Dataset definitions also use version 4. Dataset manifests keep their version-1
 outer envelope; saved plans use envelope version 2 with runtime plan definition
-version 3. Nested designs and definitions use version 4. Version-1 saved plans
-remain available for checksum-verified inspection and administrative cleanup,
+version 4 for built-in jobs or version 3 for custom callbacks. Nested designs
+and definitions use version 4. Version-1 saved plans remain available for
+checksum-verified inspection and administrative cleanup,
 but obsolete execution or replay refuses with `terrine.runtime.saved_plan_mismatch`.
 Replan from the saved Design or dataset definition and the current Model
 ([retained execution](materialization-runtime.md)). Catalog documents are

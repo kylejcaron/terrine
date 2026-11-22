@@ -588,6 +588,8 @@ class DatasetTools:
                     for name, value in result.coverage.items()
                     if name in valid.required_sources
                 },
+                # The owner report includes raw column names outside agent column policy.
+                staging_footprint=None,
             )
 
         return self._call("validate", preview)
@@ -613,7 +615,11 @@ class DatasetTools:
             or Path(destination.database).resolve() != authority.owner.state_path.resolve()
         ):
             raise _SCOPE.error(route="Use this owner's database and runtime namespace.")
-        return OwnerPlanner(resolver=self.policy.resolver, snapshot_authority=authority)
+        return OwnerPlanner(
+            resolver=self.policy.resolver,
+            snapshot_authority=authority,
+            execution_mode="design" if self.policy.executor is None else "custom",
+        )
 
     @staticmethod
     def _receipt(invocation: PlanInvocation) -> PlanReceipt:

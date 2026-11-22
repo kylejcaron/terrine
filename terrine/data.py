@@ -1510,6 +1510,41 @@ class _SourceRead:
     reason: str | None
 
 
+@dataclass(frozen=True, slots=True)
+class RetainedUse:
+    """A declaration or integrity-check use and its declared fact coverage, if any."""
+
+    role: Literal["fact", "dimension", "roster", "check"]
+    name: str
+    coverage: CoverageSummary | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class RetainedRoot:
+    """One physical capture root; no SQL text, row sample, or measured size."""
+
+    kind: Literal["table", "sql_result"]
+    catalog: str | None
+    schema: str | None
+    name: str
+    columns: tuple[str, ...] | None
+    row_scope: Literal["all_relation_rows", "all_result_rows"]
+    uses: tuple[RetainedUse, ...]
+    check_only: bool | None
+
+
+@dataclass(frozen=True, slots=True)
+class StagingFootprint:
+    """Metadata about default retained capture, not a staging authorization."""
+
+    status: Literal["described", "unavailable", "unknown"]
+    reason: str | None = None
+    roots: tuple[RetainedRoot, ...] = ()
+    retained_bytes: int | None = None
+    storage: str | None = None
+    release: str | None = None
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Preview:
     planned_rows: int | None
@@ -1526,6 +1561,7 @@ class Preview:
     counted_rows: int | None = None
     count_capped: bool = False
     source_reads: tuple[_SourceRead, ...] = ()
+    staging_footprint: StagingFootprint | None = None
 
     def __post_init__(self) -> None:
         for name in (

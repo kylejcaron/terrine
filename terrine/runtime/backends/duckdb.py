@@ -569,7 +569,7 @@ def _digest_relation(con: Any, schema: str, table_name: str, *, version: int = 2
         [field.with_type(_digest_type(field.type)) for field in reader.schema],
         metadata=reader.schema.metadata,
     )
-    digest = hashlib.sha256(canonical_schema.serialize().to_pybytes())
+    digest = hashlib.sha256(canonical_schema.serialize())
     normalize = canonical_schema != reader.schema
     indices = None
     try:
@@ -579,7 +579,7 @@ def _digest_relation(con: Any, schema: str, table_name: str, *, version: int = 2
             if indices is None or len(indices) < batch.num_rows:
                 indices = pa.array(np.arange(batch.num_rows, dtype=np.int32))
             batch = pc.take(batch, indices.slice(0, batch.num_rows))
-            digest.update(batch.serialize().to_pybytes())
+            digest.update(batch.serialize())
     finally:
         reader.close()
     return "arrow-v2:" + digest.hexdigest()

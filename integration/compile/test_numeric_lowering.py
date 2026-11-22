@@ -428,6 +428,7 @@ def test_revision_one_replay_refuses_and_empty_change_refresh_recomputes(tmp_pat
             definition_hash=design.spec_hash,
             snapshot_id=snapshot.snapshot_id,
             graph=graph,
+            execution_mode="design",
             changes=ChangeSet((), "revision"),
             reuse_base_generation="revision-one",
             reuse_base_revision=revision,

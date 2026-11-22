@@ -107,6 +107,7 @@ def _saved_plan(
         definition_hash=design.spec_hash,
         snapshot_id=snapshot.snapshot_id,
         graph=dependency_graph(model, design, partitions=("all",)),
+        execution_mode="design",
     )
     saved_plan = SavedPlan.create(
         plan_json=plan.serialize(),

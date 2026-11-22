@@ -27,6 +27,35 @@ Keep them within the owner's trust boundary. Agent envelopes deliberately omit
 raw SQL, source snapshots and connection details; that is not permission to log
 arbitrary backend exceptions or Dataset rows.
 
+## What staging keeps
+
+Inspect `preview(design, model).staging_footprint` before staging. Each root
+lists its physical table or admitted result, logical uses, and all columns the
+default capture would retain. A `check_only` root still gets copied. Aliases of
+one physical root share one copy. Fact uses show the **declared** coverage;
+`row_scope` describes what is copied, not which rows are known complete.
+
+Staging copies **all rows of each selected root**, even outside the output
+window or declared coverage. For a user-bound view or SQL result, it copies
+all rows and columns of that result, not the underlying tables. See
+[how to narrow an input](ml-staging.md#narrow-an-input-before-staging).
+`described` does not authorize staging or guarantee the eventual write.
+`unavailable` means staging cannot use the inspected route; `unknown` or a
+`None` field means the preview cannot establish that metadata. Retained and
+scan bytes stay unknown. Preview does not read source rows or create files.
+
+| Artifact | Location and lifetime |
+| --- | --- |
+| Capture Parquet | Temporary transfer files; removed after copying into the input image |
+| Raw snapshot | `inputs.duckdb` and its receipt under the owner's snapshot root; live run, retry, saved-plan and publication pins protect referenced inputs. Unpinned files become eligible for explicit owner GC, not automatic expiry. |
+| Arrow tasks | Owner snapshot storage; bounded intermediates for execution and retry, distinct from raw input capture |
+| Generation tables | Owner DuckDB database; a pinned dataset reads the recorded generation |
+| Verified backup | Separate owner-selected storage and lifecycle; independent of source snapshot GC |
+
+The snapshot root defaults to `<database-parent>/.terrine/snapshots`
+and can be configured through `TERRINE_RUNTIME_SNAPSHOT_ROOT`. Explicit Parquet
+exports are not capture transfers and remain at the export destination.
+
 ## Four different bounds
 
 | Control | Bounds | Does not certify |

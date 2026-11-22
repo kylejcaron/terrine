@@ -34,8 +34,10 @@ Each owner process must install the fresh-planning service; constructing a
 `ControlServer` without `plan_planner` cannot accept orchestration `PlanRequest`s.
 The application's model resolver returns the referenced `Model`. The owner
 persists a `SavedPlan` in the invocation and runs that exact saved plan through
-the built-in `DesignExecutor` by default, reopening retained inputs for compiler
-layers and fenced publication. No application executor is required.
+the built-in `DesignExecutor` by default. Its physical jobs read the retained
+inputs and publish under a generation fence. If the server supplies custom
+callbacks that expect logical tasks, configure `OwnerPlanner` with
+`execution_mode="custom"`.
 
 ```python
 from pathlib import Path

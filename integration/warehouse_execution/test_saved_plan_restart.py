@@ -102,6 +102,7 @@ def test_saved_plan_materializes_retained_model_and_design_in_fresh_process(tmp_
         dataset="study",
         definition_hash=design.spec_hash,
         snapshot_id=snapshot.snapshot_id,
+        execution_mode="design",
         graph=dependency_graph(model, design, sources=("events",), partitions=("all",)),
     )
     saved_plan = SavedPlan.create(
@@ -423,6 +424,7 @@ def test_saved_panel_publication_preserves_ordinary_provenance(column_model, tmp
             dataset="panels",
             definition_hash=design.spec_hash,
             snapshot_id=snapshot.snapshot_id,
+            execution_mode="design",
             graph=dependency_graph(model, design, sources=("events",)),
             budget=budget,
         )
