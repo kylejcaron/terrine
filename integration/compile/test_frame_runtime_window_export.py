@@ -20,6 +20,7 @@ from terrine.spec import (
     Schedule,
     agg,
     asof,
+    eq,
     gt,
 )
 from terrine.spec.trajectory import Trajectory
@@ -409,6 +410,77 @@ def test_row_checks_count_base_candidates_not_shape_rows(con):
 
 _NOON = datetime(2025, 1, 1, 12, tzinfo=UTC)
 _SPEND = {"spend": agg("spend", window=("-1d", "0s"))}
+
+
+def test_calendar_support_keeps_original_cohort_after_adopter_is_excluded(native_inputs):
+    catalog, con = native_inputs
+    con.raw_sql("DELETE FROM events WHERE user_id = 'b'")
+    con.raw_sql("DELETE FROM labels WHERE user_id = 'a'")
+    con.raw_sql("UPDATE labels SET ts = TIMESTAMPTZ '2025-01-01 00:00:00+00'")
+    model = Model.from_catalog(
+        catalog,
+        con=con,
+        readiness={name: Coverage("2024-12-29", "2025-01-31") for name in ("events", "labels")},
+        units={"user": UnitSource("users", "user_id")},
+        event_ids={"events": "event_id"},
+    )
+    design = Design(
+        "user",
+        Schedule("1d", "2025-01-02", "2025-01-04"),
+        outcomes={"y": agg("sessions", window=("0d", "1d"))},
+        eligibility={"has_label": eq(agg("churned", window=("-3d", "0s")), True)},
+        shape=CalendarComparisonSpec(
+            Initiation("session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
+            "never_treated",
+            -1,
+            (0, 1),
+        ),
+    )
+    result = design.build(model).materialize()
+    cohort = datetime(2025, 1, 3, tzinfo=UTC)
+    assert sorted(
+        zip(
+            result.table["unit"].to_pylist(),
+            result.table["cohort"].to_pylist(),
+            result.table["event_period"].to_pylist(),
+            strict=True,
+        )
+    ) == [("b", cohort, -1), ("b", cohort, 0), ("b", cohort, 1)]
+    assert result.provenance.eligibility_summary == EligibilitySummary(6, 3, 0, 3)
+    comparison = result.provenance.calendar_comparison
+    assert comparison is not None and comparison.support is not None
+    assert [
+        (cell.cohort, cell.period, cell.kind, cell.treated, cell.control)
+        for cell in comparison.support
+    ] == [
+        (cohort, -1, "reference", 0, 1),
+        (cohort, 0, "comparison", 0, 1),
+        (cohort, 1, "comparison", 0, 1),
+    ]
+
+    from terrine.export import CalendarContrast, preflight_export, preflight_warehouse
+
+    contrast = CalendarContrast(
+        outcome="y", cohort=cohort, reference_period=-1, comparison_periods=(0, 1)
+    )
+    with pytest.raises(TerrineError) as arrow:
+        preflight_export(result, calendar_contrast=contrast)
+    relation = con.create_table("calendar_export", result.table, temp=True)
+    with (
+        pytest.raises(TerrineError) as warehouse,
+        preflight_warehouse(
+            relation,
+            roles=result.roles,
+            columns=result.columns,
+            provenance=result.provenance,
+            calendar_contrast=contrast,
+        ),
+    ):
+        raise AssertionError("control-only contrast was accepted")
+    assert (
+        arrow.value.code == warehouse.value.code == "terrine.export.calendar_contrast_unsupported"
+    )
+    assert arrow.value.context["arm"] == warehouse.value.context["arm"] == "treated"
 
 
 def _recording(monkeypatch):

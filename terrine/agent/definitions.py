@@ -7,10 +7,10 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator
 
 from terrine._time import utc_instant
-from terrine.agent.design_schema import design_schema
 from terrine.dataset.splits import policy_from_record
 from terrine.errors import TerrineError, parameter_names, thaw
 from terrine.model import Model
+from terrine.spec._design_structure import JSON_SCHEMA_DIALECT, design_definitions
 from terrine.spec.anchors import FixedDate
 from terrine.spec.dataset import INVALID_DEFINITION, SCHEMA_VERSION, DatasetDefinition
 from terrine.spec.io import SCHEMA_VERSION as DESIGN_SCHEMA_VERSION
@@ -130,14 +130,14 @@ def parse_definition(serialized: str, model: Model) -> DatasetDefinition:
 
 
 def definition_schema() -> dict[str, Any]:
-    design = design_schema()
     view = _VIEW.json_schema()
-    definitions = {**design["$defs"], **view.pop("$defs", {})}
+    definitions = design_definitions()
+    definitions.update(view.pop("$defs", {}))
     definitions["ScoringView"]["properties"]["eligibility"] = definitions["Design"]["properties"][
         "eligibility"
     ]
     return {
-        "$schema": design["$schema"],
+        "$schema": JSON_SCHEMA_DIALECT,
         "$defs": definitions,
         "type": "object",
         "additionalProperties": False,

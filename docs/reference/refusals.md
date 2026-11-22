@@ -248,6 +248,7 @@ Satisfy shared preflight and the library shape contract.
 
 | Code | Tier | Message template | Interpolation fields | Declaration |
 | --- | --- | --- | --- | --- |
+| `terrine.export.calendar_contrast_unsupported` | Provisional | <code>Calendar contrast for {outcome!r} in cohort {cohort}, reference {reference_period}, comparison {comparison_period}, lacks {arm} support ({reason}); {route}.</code> | `arm`, `cohort`, `comparison_period`, `outcome`, `reason`, `reference_period`, `route` | [terrine/export/preflight.py](../../terrine/export/preflight.py) |
 | `terrine.export.cluster_required` | Provisional | <code>Repeated rows per independent unit require a valid cluster column; declare the unit cluster.</code> | None | [terrine/export/preflight.py](../../terrine/export/preflight.py) |
 | `terrine.export.grace_baseline_treatment` | Provisional | <code>Grace-defined treatment cannot be exported as a baseline treatment; use a baseline design.</code> | None | [terrine/export/preflight.py](../../terrine/export/preflight.py) |
 | `terrine.export.incomplete_outcome` | Provisional | <code>Outcome windows are incomplete; provide complete data or explicitly drop incomplete rows.</code> | None | [terrine/export/preflight.py](../../terrine/export/preflight.py) |
@@ -308,7 +309,7 @@ Use consistent coverage, roles and representable metadata.
 | `terrine.metadata.invalid_eligibility_summary` | Stable | <code>Eligibility audit did not return one aggregate count record</code> | None | [terrine/execution/gates.py](../../terrine/execution/gates.py) |
 | `terrine.metadata.invalid_eligibility_summary` | Stable | <code>Eligibility counts must be nonnegative and reconcile</code> | None | [terrine/data.py](../../terrine/data.py) |
 | `terrine.metadata.invalid_engine_stamp` | Stable | <code>Engine stamp is {reason} (present fields {fields!r}); re-materialize the Design with the current Terrine version.</code> | `fields`, `reason` | [terrine/data.py](../../terrine/data.py) |
-| `terrine.metadata.missing_columns` | Stable | <code>Arrow table is missing required columns {columns!r}; use lossless Arrow with all observation columns.</code> | `columns` | [terrine/data.py](../../terrine/data.py) |
+| `terrine.metadata.missing_columns` | Stable | <code>Arrow table is missing required columns {columns!r}; use lossless Arrow with all role, value and support columns.</code> | `columns` | [terrine/data.py](../../terrine/data.py) |
 | `terrine.metadata.unrepresentable_coverage` | Stable | <code>Complete days {start!r} through {end!r} cannot be represented in the model&#x27;s local time. Choose days farther from the calendar limits.</code> | `end`, `start` | [terrine/data.py](../../terrine/data.py) |
 | `terrine.metadata.unrepresentable_coverage` | Stable | <code>Complete end day {end!r} leaves no following day to include the whole end day. Choose an earlier last complete day.</code> | `end` | [terrine/data.py](../../terrine/data.py) |
 | `terrine.metadata.unrepresentable_coverage` | Stable | <code>Complete times {start!r} through {end_exclusive!r} cannot be represented in UTC. Choose times farther from the calendar limits.</code> | `end_exclusive`, `start` | [terrine/data.py](../../terrine/data.py) |

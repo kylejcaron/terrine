@@ -25,6 +25,13 @@ recorded-at axis. Point-in-time feature windows and split purging prevent the
 specified temporal leakage; they cannot reconstruct missing historical
 knowledge. Timestamp precision discarded before ingestion cannot be recovered.
 
+For example, a January 31 order inserted after February 1 may appear in a
+complete February 1 trailing window. A current roster without an entry bound
+can also include a March entrant at the February anchor. A current transaction,
+unchanged definition hashes, or retaining the inputs now cannot prove what was
+known at that anchor. Review [training assumptions](ml-staging.md#training-data)
+before exporting.
+
 ## Day boundaries are fixed offsets
 
 `day_boundary` accepts `UTC` or a fixed UTC offset, not an IANA daylight-saving timezone. Daily and monthly snapshots in a daylight-saving zone therefore shift by an hour relative to local midnight at each transition. Choose the standard-time or daylight-time offset for the reporting period that matters most, or use UTC when one fixed boundary across the year is required.

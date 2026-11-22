@@ -22,6 +22,7 @@ from terrine.backends.timestamps import (
     utc_wall_clock,
 )
 from terrine.compile.columns import CompiledStudy, compile_columns
+from terrine.compile.prune import prune_columns
 from terrine.data import ColumnMeta, Roles
 from terrine.errors import RefusalSpec
 from terrine.semantic.bind import filter_source_rows
@@ -131,7 +132,9 @@ def _narrow_bound(value, lower, upper, time_type) -> ir.TimestampValue:
     return cast(ir.TimestampValue, narrowed)
 
 
-def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
+def compile_time_to_event(
+    design: Design, model: Model, *, group_by: tuple[str, ...] = ()
+) -> CompiledStudy:
     """Build an event/censor relation with explicit half-open supported history."""
     if not isinstance(design.shape, TimeToEvent):
         raise TypeError("compile_time_to_event requires a TimeToEvent design")
@@ -382,21 +385,21 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
         event_id="_event_id" if event_id is not None else None,
     )
     checks.append(selected)
-    result = candidates.left_join(
-        selected.table.select(
-            unit=selected.table.unit,
-            anchor_id=selected.table.anchor_id,
-            _event_time=selected.table.first_timestamp,
-        ),
-        [candidates.unit == selected.table.unit, candidates.anchor_id == selected.table.anchor_id],
-    )
-    result = result.left_join(
+    population = candidates.left_join(
         prior.table.select(
             prior_unit=prior.table.unit,
             prior_anchor=prior.table.anchor_id,
             _prior_event_time=prior.table.first_timestamp,
         ),
-        [result.unit == prior.table.unit, result.anchor_id == prior.table.anchor_id],
+        [candidates.unit == prior.table.unit, candidates.anchor_id == prior.table.anchor_id],
+    )
+    result = population.left_join(
+        selected.table.select(
+            unit=selected.table.unit,
+            anchor_id=selected.table.anchor_id,
+            _event_time=selected.table.first_timestamp,
+        ),
+        [population.unit == selected.table.unit, population.anchor_id == selected.table.anchor_id],
     )
     initial_gap = candidates._t0_naive < history_start
     if shape.delayed_entry:
@@ -425,6 +428,20 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
             ibis.ifelse(no_followup, reason_codes.NO_ELIGIBLE_FOLLOWUP, ibis.null().cast("string")),
         ),
     )
+    survival_counts = None
+    # Count before prevalence filtering and binning, only in a shared input view.
+    if model._engine.status == "verified":
+        excluded = population._prior_event_time.notnull()
+        counts = {
+            "__terrine_eligible_subjects": population.unit.nunique(),
+            "__terrine_prevalent_exclusions": population.unit.nunique(where=excluded),
+            "__terrine_retained_records": population.count(where=~excluded),
+        }
+        survival_counts = prune_columns(
+            population.group_by(*group_by).aggregate(**counts)
+            if group_by
+            else population.aggregate(**counts)
+        )
     prevalent = result._prior_event_time.notnull()
     retained = result.filter(~prevalent)
     support_columns = {
@@ -543,4 +560,5 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
         roles=roles,
         columns=columns,
         _checks=tuple(checks),
+        _survival_counts=survival_counts,
     )

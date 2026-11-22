@@ -72,6 +72,68 @@ def sequence_model():
         con.disconnect()
 
 
+def test_sequence_assumptions_report_only_consumed_dimensions(sequence_model, monkeypatch):
+    from terrine import preview
+    from terrine.spec import FunnelSpec, SessionSpec
+
+    con = sequence_model.con
+    con.raw_sql(
+        "CREATE TABLE enrichment (user_id VARCHAR, value VARCHAR, starts TIMESTAMP, ends TIMESTAMP)"
+    )
+    catalog = sequence_model.catalog.model_dump(mode="python")
+    for name in ("region", "transition_label", "funnel_label", "unused"):
+        dimension = f"{name}_binding"
+        catalog["properties"][name] = {
+            "source": "events",
+            "column": "value",
+            "dtype": "string",
+            "as_of": "event_time",
+            "dimension": dimension,
+        }
+        catalog["dimensions"][dimension] = {
+            "relation": {"kind": "table", "name": "enrichment"},
+            "unit": "user",
+            "key": "user_id",
+            "properties": (name,),
+        }
+        if name != "region":
+            catalog["dimensions"][dimension]["validity"] = {
+                "valid_from": "starts",
+                "valid_to": "ends",
+            }
+    catalog["sources"]["events"]["dimensions"] = tuple(catalog["dimensions"])
+    model = Model.from_catalog(
+        catalog, con=con, readiness=sequence_model.readiness, event_ids=sequence_model.event_ids
+    )
+    design = Design(
+        "user",
+        EventAnchor("signup"),
+        shape=EventSequence(
+            "signup",
+            Window("0s", "2h"),
+            max_events=5,
+            properties=("region",),
+            label_property="transition_label",
+            sessions=SessionSpec("1h"),
+            funnel=FunnelSpec("funnel_label", ("view", "purchase")),
+        ),
+    )
+
+    def no_rows(*args, **kwargs):
+        raise AssertionError("metadata preview must not evaluate source rows")
+
+    monkeypatch.setattr(con, "to_pyarrow", no_rows)
+    assert {
+        (use.dimension, use.time_axis)
+        for use in preview(design, model).assumptions.sources
+        if use.dimension is not None
+    } == {
+        ("region_binding", "static"),
+        ("transition_label_binding", "effective_time"),
+        ("funnel_label_binding", "effective_time"),
+    }
+
+
 @pytest.mark.parametrize("representation", ["positions", "arrays"])
 def test_legacy_support_like_property_names_remain_values(sequence_model, representation):
     names = ("kind", "kind_complete")

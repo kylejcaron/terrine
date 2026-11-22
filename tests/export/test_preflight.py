@@ -127,3 +127,37 @@ def test_exclusions_count_rows_per_reason_not_duplicate_outcomes(frame):
     result = preflight_export(candidate, drop_incomplete=True)
     assert result.table["id"].to_pylist() == [2]
     assert result.excluded_counts == {"incomplete_coverage": 1}
+
+
+def test_historical_calendar_metadata_reads_but_does_not_certify_missing_evidence(calendar_frame):
+    from terrine.data import MaterializedFrame
+    from terrine.export import CalendarContrast
+
+    frame = calendar_frame
+    comparison = frame.provenance.calendar_comparison
+    assert comparison is not None
+    # Historical v2 Arrow / v1 JSON had no support member on calendar metadata.
+    historical = replace(
+        frame,
+        provenance=replace(frame.provenance, calendar_comparison=replace(comparison, support=None)),
+    )
+    assert "support" not in historical.to_metadata()["provenance"]["calendar_comparison"]
+    for result in (
+        MaterializedFrame.from_arrow(historical.to_pyarrow()),
+        MaterializedFrame.from_json(historical.to_json()),
+    ):
+        assert result.provenance.calendar_comparison == historical.provenance.calendar_comparison
+        assert preflight_export(result).table.num_rows == 4
+        with pytest.raises(TerrineError) as caught:
+            preflight_export(
+                result,
+                calendar_contrast=CalendarContrast(
+                    outcome="x",
+                    cohort=frame.table["cohort"][0].as_py(),
+                    reference_period=-1,
+                    comparison_periods=(0,),
+                ),
+            )
+        assert caught.value.code == "terrine.export.calendar_contrast_unsupported"
+        assert caught.value.context["reason"] == "unobservable"
+        assert "treated" not in caught.value.context

@@ -1,12 +1,15 @@
 import json
 from dataclasses import replace
+from typing import Any, cast
 
 import pytest
 
+from terrine import Design, FixedDate, agg, asof, eq, gt
 from terrine.agent import DatasetTools
-from terrine.agent.schemas import AgentDatasetReference, PlanReceipt
-from terrine.data import Budget
-from terrine.runtime.saved_plan import DestinationRef, SavedPlan
+from terrine.agent.schemas import AgentDatasetReference, PlanReceipt, Response
+from terrine.data import Budget, Coverage, Preview, UnitSource
+from terrine.model import Model
+from terrine.runtime.saved_plan import DestinationRef, ModelReference, SavedPlan
 from terrine.runtime.schema import ensure_runtime_schema
 from terrine.spec.dataset import DatasetDefinition
 from terrine.spec.io import from_json
@@ -23,25 +26,18 @@ def _unexpected_execution(*args, **kwargs):
 
 
 def test_preview_is_row_free_and_unknown_scan_cost_stays_unknown(owner_tools, monkeypatch):
-    import terrine.compile.cost as cost
+    from terrine.execution import inputs
 
     definition = definition_for(owner_tools)
-    calls = []
-    real = cost.preview
-
-    def preview(*args, **kwargs):
-        calls.append(kwargs.get("bounded_count"))
-        return real(*args, **kwargs)
-
-    monkeypatch.setattr(cost, "preview", preview)
     monkeypatch.setattr(
         owner_tools.policy.snapshot_authority,
         "capture",
         _unexpected_execution,
     )
-    result = owner_tools.preview_dataset(definition)
+    with monkeypatch.context() as metadata_only:
+        metadata_only.setattr(inputs, "open_execution", _unexpected_execution)
+        result = owner_tools.preview_dataset(definition)
     assert result.status == "ok"
-    assert calls == [0]
     assert result.output.planned_rows is None
     assert result.output.scan_bytes is None
     strict = owner_tools.preview_dataset(
@@ -55,13 +51,184 @@ def test_preview_is_row_free_and_unknown_scan_cost_stays_unknown(owner_tools, mo
     owner_tools.policy = replace(owner_tools.policy, preview=True)
     counted = owner_tools.preview_dataset(definition, bounded_count=1)
     assert counted.output.counted_rows == 1
-    assert calls == [0, 1]
     assert (
         owner_tools.preview_dataset(
             definition, bounded_count=owner_tools.policy.max_bounded_count + 1
         ).status
         == "refused"
     )
+
+
+def test_successful_preview_json_preserves_immutable_metadata(owner_tools, monkeypatch):
+    from terrine.execution import _publish
+
+    original = owner_tools.model
+    con = original.con
+    con.raw_sql(
+        "CREATE TABLE private_roster AS SELECT id AS private_key, "
+        "'active' AS status, 'unconsumed' AS private_attribute FROM users"
+    )
+    model = Model.from_catalog(
+        original.catalog,
+        con=con,
+        units={
+            "user": UnitSource(
+                "private_roster", "private_key", attributes=("status", "private_attribute")
+            )
+        },
+        readiness=original.readiness,
+    )
+    reference = ModelReference.from_model(model, owner_key="owner")
+    policy = replace(
+        owner_tools.policy,
+        model_reference=reference,
+        allowed_catalogs=frozenset({reference.catalog_hash}),
+    )
+    tools = DatasetTools(model, policy, namespace=owner_tools.namespace)
+
+    definition = DatasetDefinition(
+        base_design=Design(
+            "user",
+            FixedDate("2025-01-02"),
+            eligibility={
+                "eligible": gt(agg("total", window=("-1d", "0s")), 0),
+                "status_eligible": eq(asof("status"), "active"),
+            },
+        ),
+        view=None,
+    )
+    monkeypatch.setattr(con, "to_pyarrow", _unexpected_execution)
+    monkeypatch.setattr(_publish, "_inspect_capture_roots", _unexpected_execution)
+    result = tools.preview_dataset(definition)
+    assert result.status == "ok"
+    encoded = result.model_dump_json()
+    assert json.loads(encoded) == {
+        "schema_version": 1,
+        "status": "ok",
+        "code": None,
+        "context": {},
+        "suggested_route": None,
+        "output_reference": None,
+        "output": {
+            "planned_rows": None,
+            "output_bytes": None,
+            "scan_bytes": None,
+            "scan_reason": "backend_scan_bound_unavailable",
+            "coverage": {
+                "events": {
+                    "start": "2024-12-01T00:00:00Z",
+                    "end_exclusive": "2025-02-02T00:00:00Z",
+                }
+            },
+            "strategy": {"eligible": "three_valued", "status_eligible": "three_valued"},
+            "budget_warnings": [
+                "Source scan bytes are unknown; output limits do not bound upstream scan or work."
+            ],
+            "candidate_rows": None,
+            "known_false_rows": None,
+            "unknown_rows": None,
+            "eligible_rows": None,
+            "counted_rows": None,
+            "count_capped": False,
+            "staging_footprint": None,
+            "source_reads": [],
+            "assumptions": {
+                "sources": [
+                    {
+                        "source": "events",
+                        "role": "eligibility",
+                        "output": "eligible",
+                        "time_axis": "event_time",
+                        "knowledge": "unknown",
+                        "historical_versions": "unknown",
+                        "dimension": None,
+                    }
+                ],
+                "roster": {
+                    "scope": "current_unbounded",
+                    "entered_at": False,
+                    "exited_at": False,
+                    "observed_from": False,
+                    "observed_until": False,
+                },
+                "native_float_decisions": [],
+                "roster_attributes": [
+                    {
+                        "attribute": "status",
+                        "role": "eligibility",
+                        "output": "status_eligible",
+                        "time_axis": "static",
+                        "knowledge": "unknown",
+                        "historical_versions": "unknown",
+                    }
+                ],
+            },
+        },
+    }
+    decoded = Response[Preview].model_validate_json(encoded)
+    assert decoded.output == result.output
+    assert decoded.model_dump_json() == encoded
+    for output in (result.output, decoded.output):
+        assert output is not None
+        with pytest.raises(TypeError):
+            cast(Any, output.strategy)["eligible"] = "changed"
+        with pytest.raises(TypeError):
+            del cast(Any, output.coverage)["events"]
+
+
+def test_preview_does_not_resolve_a_filtered_off_policy_root(owner_tools):
+    original = owner_tools.model
+    con = original.con
+    con.raw_sql("CREATE TABLE private_events (ts TIMESTAMP, user_id INTEGER, segment VARCHAR)")
+    catalog = original.catalog.model_dump(mode="python")
+    catalog["sources"]["private"] = {
+        "relation": {"kind": "table", "name": "private_events"},
+        "time": "ts",
+        "units": {"user": "user_id"},
+        "events": [],
+        "properties": ["segment"],
+        "dimensions": [],
+        "where": [{"property": "segment", "op": "equals", "values": ["allowed"]}],
+    }
+    catalog["properties"]["segment"] = {
+        "source": "private",
+        "column": "segment",
+        "dtype": "string",
+        "as_of": "event_time",
+    }
+    model = Model.from_catalog(
+        catalog,
+        con=con,
+        units=original.units,
+        readiness={**original.readiness.sources, "private": Coverage("2024-12-01", "2025-02-01")},
+    )
+    reference = ModelReference.from_model(model, owner_key="owner")
+    policy = replace(
+        owner_tools.policy,
+        preview=True,
+        model_reference=reference,
+        allowed_catalogs=frozenset({reference.catalog_hash}),
+    )
+    tools = DatasetTools(model, policy, namespace=owner_tools.namespace)
+    design = Design(
+        "user",
+        FixedDate("2025-01-02"),
+        features={"previous": agg("total", window=("-1d", "0s"))},
+    )
+    definition = DatasetDefinition(base_design=design, view=None)
+    con.raw_sql("DROP TABLE private_events")
+
+    result = tools.preview_dataset(definition)
+    assert result.output is not None
+    assert set(result.output.coverage) == {"events"}
+    assert {use.source for use in result.output.assumptions.sources} == {"events"}
+    counted = tools.preview_dataset(definition, bounded_count=1)
+    assert counted.output is not None and counted.output.counted_rows == 1
+    denied = DatasetDefinition(
+        base_design=replace(design, features={"secret": asof("segment", before="0s")}),
+        view=None,
+    )
+    assert tools.preview_dataset(denied).code == "terrine.agent.scope_denied"
 
 
 def test_prepare_uses_owner_planner_and_refuses_without_reopenable_snapshot(owner_tools):

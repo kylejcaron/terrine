@@ -68,8 +68,8 @@ no input image. Neither artifact sizes nor task counts are physical scan bounds.
 
 ## Runtime shape support
 
-Runtime composition enters through the same `compile_design` dispatcher as
-ordinary Frames. Its supported logical-input matrix is:
+The retained runtime uses the same `compile_design` dispatcher as ordinary
+Frames, but only these shapes can substitute persisted logical inputs:
 
 | Shape | Retained logical inputs |
 | --- | --- |
@@ -79,11 +79,16 @@ ordinary Frames. Its supported logical-input matrix is:
 | `StatePanel` | Verified scheduled output anchors and snapshot inputs for features, binned state periods/endpoints and baseline features; internal endpoint and baseline anchors keep their own domains |
 | Calendar comparisons, event sequences, cohorts, survival and other shapes | Refuse |
 
-Unsupported substitutions refuse before source resolution with
+An `EventAnchor` must have a zero offset for reuse, regardless of shape.
+Shifted anchors and unsupported shapes refuse before source resolution with
 `terrine.compile.runtime_shape_unsupported`, including direct `compile_design`
-calls. The coded refusal carries the shape and the route
-`ordinary Frame materialization or a full rebuild`. Additive windows use the
-same dependency-ready local batch collector as ordinary Frames, with raw
+calls with persisted anchors. When both restrictions apply, the refusal
+reports `shape="EventAnchor.offset"` first. The route is
+`ordinary Frame materialization or a full rebuild`. This matrix does not
+restrict direct Frames without persisted inputs or guarantee that a given
+feature, backend or owner policy allows staging.
+
+Additive windows use the same dependency-ready local batch collector as ordinary Frames, with raw
 contributions or declaration-proven aligned noncumulative day payloads inside
 the retained snapshot. Supplied/generated anchor clocks do not inherit an
 outer schedule's alignment proof. Nonadditive and selector algorithms remain

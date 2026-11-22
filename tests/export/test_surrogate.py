@@ -33,7 +33,8 @@ def test_surrogate_inputs_refuse_with_codes(build, reason):
 
 
 def test_surrogate_arrow_round_trip_preserves_selected_columns_and_provenance(frame):
-    exported = to_surrogate_arrow(frame, features=("x",), outcomes=("y",))
+    enveloped = replace(frame, table=frame.to_pyarrow())
+    exported = to_surrogate_arrow(enveloped, features=("x",), outcomes=("y",))
     restored = ArrowSurrogate.from_arrow(exported.to_arrow())
 
     assert restored.data.equals(exported.data)
@@ -41,6 +42,9 @@ def test_surrogate_arrow_round_trip_preserves_selected_columns_and_provenance(fr
     assert {"id", "anchor", "t0", "x", "y", "complete", "reason"} <= set(restored.data.column_names)
     assert restored.metadata["feature_columns"] == ["x"]
     assert restored.metadata["outcome_columns"] == ["y"]
+    with pytest.raises(ValueError) as error:
+        type(frame).from_arrow(exported.to_arrow())
+    assert type(error.value) is ValueError
 
 
 def test_surrogate_round_trip_retains_selected_event_relative_timing(frame):

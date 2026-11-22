@@ -42,7 +42,9 @@ from terrine.spec.expressions import (
     RetentionMetric,
     _output_leaves,
 )
+from terrine.spec.panels import EventPanelSpec, SequentialSpec
 from terrine.spec.sequence import EventSequence
+from terrine.spec.state_panel import StatePanel
 from terrine.spec.trajectory import CohortSpec, LifeTable, TimeToEvent
 from terrine.windows import Months, Window, _duration, _elapsed
 
@@ -86,17 +88,26 @@ _CALENDAR_COMPARISON_STEP = RefusalSpec(
 )
 
 
+_RUNTIME_SHAPES = ("cross_section", StatePanel, SequentialSpec, EventPanelSpec)
+RUNTIME_SHAPE_NAMES = tuple(
+    shape if isinstance(shape, str) else shape.__name__ for shape in _RUNTIME_SHAPES
+)
+RUNTIME_EVENT_ANCHOR_OFFSET_SECONDS = 0
+
+
 def ensure_runtime_shape_supported(shape: object, *, anchor: object = None) -> None:
     """Apply the canonical persisted-layer supported-shape and anchor matrix."""
-    from terrine.spec.panels import EventPanelSpec, SequentialSpec
-    from terrine.spec.state_panel import StatePanel
-
-    if isinstance(anchor, EventAnchor) and anchor.offset.seconds != 0:
+    if (
+        isinstance(anchor, EventAnchor)
+        and anchor.offset.seconds != RUNTIME_EVENT_ANCHOR_OFFSET_SECONDS
+    ):
         raise _RUNTIME_SHAPE_UNSUPPORTED.error(
             shape="EventAnchor.offset", route="ordinary Frame materialization or a full rebuild"
         )
-    if shape == "cross_section" or isinstance(shape, (SequentialSpec, EventPanelSpec, StatePanel)):
-        return
+    for supported in _RUNTIME_SHAPES:
+        matches = shape == supported if isinstance(supported, str) else isinstance(shape, supported)
+        if matches:
+            return
     name = shape if isinstance(shape, str) else type(shape).__name__
     raise _RUNTIME_SHAPE_UNSUPPORTED.error(
         shape=name, route="ordinary Frame materialization or a full rebuild"

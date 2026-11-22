@@ -14,6 +14,7 @@ from pydantic import (
 )
 
 from terrine.errors import TerrineError, freeze, thaw
+from terrine.spec.validate import RUNTIME_EVENT_ANCHOR_OFFSET_SECONDS
 
 __all__ = [
     "DesignRequest",
@@ -154,7 +155,13 @@ class CatalogOutput(Record):
 
 class CapabilityOutput(Record):
     operations: tuple[str, ...]
-    runtime_shapes: tuple[str, ...]
+    runtime_shapes: tuple[str, ...] = Field(
+        description=(
+            "Shapes eligible for persisted-anchor runtime reuse, not all direct Frame shapes. "
+            f"EventAnchor.offset must be {RUNTIME_EVENT_ANCHOR_OFFSET_SECONDS}s. "
+            "Feature and backend admission are separate."
+        )
+    )
 
 
 class SchemaOutput(Record):

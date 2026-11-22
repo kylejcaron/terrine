@@ -6,6 +6,9 @@
   to reuse metric YAML from Increment Metrics in a Terrine Design. Formulas
   evaluate over the selected window; roster and data completeness stay explicit.
   Existing catalogs and the `Model.from_increment(...)` bridge are unchanged.
+- Report uses of static roster attributes in dataset previews and training
+  assumptions, separately from membership and observation bounds. Historical
+  availability remains unknown.
 
 ## 0.1.0a2
 

@@ -9,7 +9,6 @@ import re
 import secrets
 import threading
 from collections.abc import Callable
-from dataclasses import replace
 from datetime import date
 from pathlib import Path
 from time import monotonic
@@ -63,7 +62,7 @@ from terrine.spec.dataset import INVALID_DEFINITION, DatasetDefinition
 from terrine.spec.describe import describe_design
 from terrine.spec.design import Design
 from terrine.spec.io import from_json, from_yaml, to_json
-from terrine.spec.validate import ensure_runtime_shape_supported, resolve_unit, validate_design
+from terrine.spec.validate import RUNTIME_SHAPE_NAMES, resolve_unit, validate_design
 
 __all__ = ["DatasetTools"]
 
@@ -122,7 +121,13 @@ class DatasetTools:
         self._requests = 0
         self._lock = threading.RLock()
 
-    def _call[T](self, permission: Permission, operation: Callable[[], T]) -> Response[T]:
+    def _call[T](
+        self,
+        permission: Permission,
+        operation: Callable[[], T],
+        *,
+        response_type: type[Response[T]] | None = None,
+    ) -> Response[T]:
         try:
             with self._lock:
                 if self._requests >= self.policy.max_requests:
@@ -142,7 +147,8 @@ class DatasetTools:
                     else ModelReference.from_model(self.model, owner_key="inspection").catalog_hash
                 )
                 self.policy.authorize(permission, catalog=catalog)
-            return Response[T](status="ok", output=operation())
+            response = Response[T] if response_type is None else response_type
+            return response(status="ok", output=operation())
         except TerrineError as error:
             return refusal_response(error)
 
@@ -231,19 +237,6 @@ class DatasetTools:
 
     def list_capabilities(self) -> Response[CapabilityOutput]:
         def capabilities():
-            shapes = []
-            for shape in ("cross_section", "panel", "sequence", "trajectory"):
-                try:
-                    ensure_runtime_shape_supported(shape)
-                except TerrineError:
-                    continue
-                shapes.append(shape)
-            from terrine.spec.state_panel import StateObservations, StatePanel
-
-            ensure_runtime_shape_supported(
-                StatePanel(StateObservations("state", ("a", "b")), periods=2)
-            )
-            shapes.append("StatePanel")
             return CapabilityOutput(
                 operations=(
                     "inspect_catalog",
@@ -269,7 +262,7 @@ class DatasetTools:
                     "get_run_events",
                     "request_cancel",
                 ),
-                runtime_shapes=tuple(shapes),
+                runtime_shapes=RUNTIME_SHAPE_NAMES,
             )
 
         return self._call("inspect", capabilities)
@@ -547,14 +540,6 @@ class DatasetTools:
             self.model,
         )
 
-    def _resolved_definition_design(self, definition: DatasetDefinition) -> Design:
-        try:
-            return definition.build(self.model)._design
-        except TerrineError:
-            raise
-        except (KeyError, TypeError, ValueError, OverflowError) as error:
-            raise INVALID_DEFINITION.error(reason="dataset view cannot be constructed") from error
-
     def preview_dataset(
         self,
         definition: DatasetDefinition | str,
@@ -572,27 +557,37 @@ class DatasetTools:
             ):
                 raise _INVALID.error(route="Use a bounded count within the owner cap.")
             parsed = self._dataset_definition(definition)
-            design = self._resolved_definition_design(parsed)
-            valid = self._validated(design)
+            design = parsed.base_design
+            required = validate_design(design, self.model).required_sources
+            self.policy.authorize("validate", sources=required)
             if bounded_count:
-                self.policy.authorize("preview", sources=valid.required_sources)
+                # Issued inputs can only be revalidated for the entire binding.
+                count_sources = (
+                    tuple(self.model.catalog.sources) if self.model.input_binding else required
+                )
+                self.policy.authorize("preview", sources=count_sources)
             effective = effective_budget(self.policy.budget, budget)
             cost._scan_policy(effective)
-            result = cost.preview(design, self.model, effective, bounded_count=bounded_count)
-            return replace(
-                result,
-                # Physical column names belong to the owner preview.
-                source_reads=(),
-                coverage={
-                    name: value
-                    for name, value in result.coverage.items()
-                    if name in valid.required_sources
-                },
-                # The owner report includes raw column names outside agent column policy.
-                staging_footprint=None,
+            scoped = self.model._for_preview(required)
+            try:
+                frame = parsed.build(scoped)
+            except TerrineError:
+                raise
+            except (KeyError, TypeError, ValueError, OverflowError) as error:
+                raise INVALID_DEFINITION.error(
+                    reason="dataset view cannot be constructed"
+                ) from error
+            return cost._preview_report(
+                design,
+                scoped,
+                frame._compiled,
+                effective,
+                bounded_count=bounded_count,
+                assumptions=frame.assumptions,
+                authorized_sources=required,
             )
 
-        return self._call("validate", preview)
+        return self._call("validate", preview, response_type=Response[Preview])
 
     def _owner_planner(self, destination: DestinationRef) -> OwnerPlanner:
         authority = self.policy.snapshot_authority

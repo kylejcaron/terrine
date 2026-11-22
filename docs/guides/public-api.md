@@ -198,7 +198,7 @@ this facade table.
 | `terrine.reasons` | Stable vocabulary | Missing-value reason vocabulary used in output columns. |
 | `terrine.errors` | Stable names; refusal codes stable only when raised by a stable name | Coded errors and warnings. |
 | `terrine.windows` | Stable except provisional `duration` | `Window`, `Duration` and `Months` are elapsed-window values; `duration` is provisional. |
-| `terrine.export` | Provisional | Shared preflight and Arrow/lifelines/diff-diff hand-offs, with their typed conversion results. See [library hand-offs](library-handoffs.md). |
+| `terrine.export` | Provisional | Shared preflight, explicit `CalendarContrast` support checks, and Arrow/lifelines/diff-diff hand-offs. See [library hand-offs](library-handoffs.md). |
 | `terrine.agent` | Provisional | `AgentPolicy` and `DatasetTools` for the separately authorized [dataset tools](dataset-agent-tools.md). |
 | `terrine.simulate` | Provisional | Seeded raw-source worlds and bounded scale batches, with independent expected-row oracles. See [synthetic worlds](synthetic-worlds.md). |
 | `terrine.adapters`, `terrine.orchestration` | Provisional | Empty facades; select an explicit optional adapter module. Importing the namespace never selects an integration. |

@@ -7,11 +7,11 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pyarrow as pa
-import pyarrow.parquet as pq
 import pytest
 
 from terrine import Budget, agg
 from terrine.data import MaterializedFrame
+from terrine.dataset.export import ExportManifest
 from terrine.dataset.reference import Dataset
 from terrine.dataset.splits import TimeSplit
 from terrine.errors import TerrineError, thaw
@@ -412,12 +412,10 @@ def test_dataset_batches_and_parquet_preserve_typed_metadata(common_scenario, tm
     exported = dataset.export_parquet(destination=str(destination), budget=budget)
     assert exported.generation_id == dataset.manifest.generation.generation_id
     assert exported.schema == tuple((field.name, str(field.type)) for field in expected.schema)
-    readback = pa.concat_tables(
-        [pq.ParquetFile(destination / shard.path).read() for shard in exported.shards]
-    ).sort_by("unit")
-    assert readback.schema.equals(expected.schema, check_metadata=False)
-    assert readback.to_pylist() == expected.to_pylist()
-    restored = MaterializedFrame.from_arrow(readback)
+    saved = ExportManifest.from_json(exported.to_json())
+    restored = saved.read_frame(destination)
+    assert restored.table.schema.equals(expected.schema, check_metadata=False)
+    assert restored.table.to_pylist() == expected.to_pylist()
     assert restored.roles == expected_metadata.roles
     assert restored.columns == expected_metadata.columns
     assert restored.provenance.design_hash == expected_metadata.provenance.design_hash

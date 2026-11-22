@@ -211,7 +211,9 @@ def _compile_design(
             from terrine.compile.shapes.ltv import compile_ltv
 
             return compile_ltv(design, model)
+        group_by = ()
         if isinstance(design.shape, LifeTable):
+            group_by = design.shape.group_by
             shape = design.shape.time_to_event
             design = Design(
                 design.unit,
@@ -227,7 +229,7 @@ def _compile_design(
             )
         from terrine.compile.shapes.time_to_event import compile_time_to_event
 
-        return compile_time_to_event(design, model)
+        return compile_time_to_event(design, model, group_by=group_by)
     return compile_columns(
         design,
         model,

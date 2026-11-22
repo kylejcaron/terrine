@@ -4,9 +4,10 @@ from datetime import UTC, datetime
 
 import pytest
 
-from terrine import Budget, Design, EventAnchor, FixedDate, agg, preview
-from terrine.data import CoverageSummary
+from terrine import Budget, Design, EventAnchor, FixedDate, agg, asof, eq, preview
+from terrine.data import Coverage, CoverageSummary, UnitSource
 from terrine.errors import TerrineError
+from terrine.model import Model
 from terrine.spec import (
     BinnedMetricState,
     CalendarComparisonSpec,
@@ -20,6 +21,75 @@ from terrine.spec import (
 )
 from terrine.windows import Window
 from tests.compile.test_columns import column_model  # noqa: F401
+from tests.fixtures.readme import readme_model
+
+
+def test_preview_distinguishes_roster_values_from_membership_and_observation(
+    column_model, monkeypatch
+):
+    anchor = FixedDate("2025-02-01")
+    features = {"previous": agg("total", window=("-1d", "0s"))}
+    con = column_model.con
+    con.raw_sql(
+        "CREATE TABLE bounded_users AS SELECT id, NULL::TIMESTAMPTZ AS joined, "
+        "NULL::TIMESTAMPTZ AS followed_until, 'active' AS status, 'private' AS unused FROM users"
+    )
+    bounded = Model.from_catalog(
+        column_model.catalog,
+        con=con,
+        readiness={"events": Coverage("2025-01-01", "2025-02-01")},
+        units={
+            "user": UnitSource(
+                "bounded_users",
+                "id",
+                entered_at="joined",
+                observed_until="followed_until",
+                attributes=("status", "unused"),
+            )
+        },
+    )
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("metadata preview must not execute source rows")
+
+    monkeypatch.setattr(con, "to_pyarrow", forbidden)
+    design = Design(
+        "user", anchor, features=features, eligibility={"active": eq(asof("status"), "active")}
+    )
+    report = preview(design, bounded)
+    assert report.coverage["events"].end_exclusive.date().isoformat() == "2025-02-02"
+    (use,) = report.assumptions.sources
+    assert (use.source, use.role, use.output, use.time_axis) == (
+        "events",
+        "feature",
+        "previous",
+        "event_time",
+    )
+    assert use.knowledge == use.historical_versions == "unknown"
+    assert report.assumptions.roster.scope == "bounded"
+    assert report.assumptions.roster.entered_at
+    assert not report.assumptions.roster.exited_at
+    assert not report.assumptions.roster.observed_from
+    assert report.assumptions.roster.observed_until
+    assert [
+        (use.attribute, use.role, use.output, use.time_axis, use.knowledge, use.historical_versions)
+        for use in report.assumptions.roster_attributes
+    ] == [("status", "eligibility", "active", "static", "unknown", "unknown")]
+    unbounded = preview(Design("user", anchor, features=features), column_model)
+    assert unbounded.assumptions.roster.scope == "current_unbounded"
+
+
+def test_event_anchor_without_roster_reports_no_historical_membership(readme_con):
+    from terrine import EventAnchor
+
+    roster_model = readme_model(readme_con)
+    model = Model.from_catalog(
+        roster_model.catalog, con=readme_con, readiness=roster_model.readiness, units={}
+    )
+    event = next(iter(model.sources["orders"].events))
+    report = preview(Design("customer", EventAnchor(event)), model)
+    assert report.assumptions.roster.scope == "event_anchored_no_roster"
+    assert [(use.source, use.role) for use in report.assumptions.sources] == [("orders", "anchor")]
 
 
 def test_compiler_preview_preserves_unknowns_without_source_execution(column_model, monkeypatch):

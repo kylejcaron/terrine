@@ -12,6 +12,8 @@ from terrine.export.lifelines import (
     to_lifelines_km,
 )
 from terrine.export.preflight import (
+    CalendarContrast,
+    CalendarContrastSupport,
     ExportPreflight,
     WarehousePreflight,
     preflight_export,
@@ -21,6 +23,8 @@ from terrine.export.surrogate import ArrowSurrogate, to_surrogate_arrow
 
 __all__ = [
     "ArrowSurrogate",
+    "CalendarContrast",
+    "CalendarContrastSupport",
     "DiffDiffData",
     "ExportPreflight",
     "LifelinesCox",
