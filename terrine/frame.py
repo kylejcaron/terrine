@@ -29,6 +29,9 @@ from terrine.data import (
     Roles,
     SamplingMeta,
     StudyAssumptions,
+    SurvivalFlow,
+    SurvivalGroupFlow,
+    _survival_group_key,
     dataframe_view_preflight,
 )
 from terrine.errors import RefusalSpec, TerrineError
@@ -100,6 +103,68 @@ def _add_life_table_timing(table: pa.Table, synthesized: list[tuple[str, int]]) 
             ),
         )
     return table
+
+
+def _survival_flow(
+    counts: pa.Table,
+    life_table: LifeTable | None,
+    emitted_rows: int,
+    *,
+    input_schema: pa.Schema,
+    winsorizations: tuple[Winsorization, ...],
+) -> SurvivalFlow:
+    group_by = () if life_table is None else life_table.group_by
+    if any(name not in counts.column_names for name in group_by):
+        group_by = ()
+    for name in group_by:
+        column = counts[name]
+        dtype = input_schema.field(name).type
+        if column.type != dtype:
+            index = counts.schema.get_field_index(name)
+            counts = counts.set_column(index, name, column.cast(dtype))
+    group_transforms = tuple(item for item in winsorizations if item.column in group_by)
+    if group_transforms:
+        # Clamp only the compact group keys, using the same Arrow transform as the bins.
+        counts = import_module("terrine.dataset.transforms").apply_winsorization(
+            counts, group_transforms
+        )
+    eligible = excluded = retained = 0
+    groups: dict[tuple[Any, ...], tuple[int, int, int]] = {}
+    for row in counts.to_pylist():
+        subjects = row["__terrine_eligible_subjects"]
+        prevalent = row["__terrine_prevalent_exclusions"]
+        records = row["__terrine_retained_records"]
+        eligible += subjects
+        excluded += prevalent
+        retained += records
+        if group_by:
+            key = _survival_group_key(tuple(row[name] for name in group_by))
+            previous = groups.get(key)
+            # Survival admits one anchor per unit (first/nth event or one fixed
+            # date with a checked unique roster). Feature and first-event joins
+            # preserve that grain, so original groups have disjoint subjects.
+            groups[key] = (
+                (subjects, prevalent, records)
+                if previous is None
+                else (previous[0] + subjects, previous[1] + prevalent, previous[2] + records)
+            )
+    return SurvivalFlow(
+        eligible_subjects=eligible,
+        prevalent_exclusions=excluded,
+        retained_records=retained,
+        emitted_grain="person_records" if life_table is None else "group_bins",
+        emitted_rows=emitted_rows,
+        group_by=group_by,
+        groups=tuple(
+            SurvivalGroupFlow(
+                values=key,
+                eligible_subjects=subjects,
+                prevalent_exclusions=prevalent,
+                retained_records=records,
+            )
+            for key, (subjects, prevalent, records) in groups.items()
+        ),
+    )
 
 
 _INVALID_SPLIT = RefusalSpec(
@@ -842,24 +907,29 @@ class Frame:
         stage_frame = import_module("terrine.dataset.reference").stage_frame
         return stage_frame(self, table, budget=budget)
 
-    def materialize(self, *, budget: Budget | None = None) -> MaterializedFrame:
+    def materialize(
+        self, *, budget: Budget | None = None, include_population: bool = False
+    ) -> MaterializedFrame:
         """Read dataset rows with integrity checks and retain their metadata and completeness.
 
 
         Args:
             budget: Optional limits; None applies no row, output-byte or scan cap.
+            include_population: Read survival counts or calendar cohort support in the
+                same verified view. None is reported for other shapes and unverified views.
 
         Returns:
             A MaterializedFrame containing Arrow rows, roles, column metadata and provenance.
 
         Example: frame.materialize()
         """
-        return self._materialize(budget)
+        return self._materialize(budget, include_population=include_population)
 
     def _materialize(
         self,
         budget: Budget | None = None,
         *,
+        include_population: bool = False,
         transform=None,
         shape: str | None = None,
         cohort_operation: CohortOperationMeta | None = None,
@@ -891,6 +961,11 @@ class Frame:
             # Admit every relation the Frame will run, integrity checks included,
             # so an unsupported primitive refuses before the first source read.
             context.admit(*compiled.reads())
+            survival_counts = compiled._survival_counts if include_population else None
+            calendar_cohorts = compiled.calendar_cohorts if include_population else None
+            for population_read in (survival_counts, calendar_cohorts):
+                if population_read is not None:
+                    context.admit(population_read)
             study = compiled
             compiled = self._project_view(compiled)
             if transform is not None:
@@ -1015,6 +1090,19 @@ class Frame:
             table, split_counts = self._split_output(table, compiled)
             for reason, count in split_counts.items():
                 excluded_counts[reason] = excluded_counts.get(reason, 0) + count
+            # Count from the admitted, eligible population in the same view. Run only
+            # after the checked output reader closes, including its empty-result gate.
+            survival_flow = (
+                _survival_flow(
+                    context.execute(survival_counts),
+                    life_table,
+                    table.num_rows,
+                    input_schema=schema,
+                    winsorizations=self._winsorizations,
+                )
+                if survival_counts is not None
+                else None
+            )
             treatment = self._design.treatment
             treatment_column = compiled.roles.treatment
             baseline_binary = (
@@ -1027,6 +1115,11 @@ class Frame:
                 and pa.types.is_boolean(table.schema.field(treatment_column).type)
             )
             calendar_comparison = _provenance.calendar_comparison_metadata(self._design, model)
+            if calendar_comparison is not None and calendar_cohorts is not None:
+                cohorts = context.execute(calendar_cohorts)["cohort"]
+                calendar_comparison = _provenance.with_calendar_support(
+                    calendar_comparison, cohorts, table
+                )
             panel = _provenance.panel_metadata(self._design, model)
 
             feature_cutoffs = compiled.feature_cutoffs
@@ -1063,6 +1156,7 @@ class Frame:
                 dialect=expression_policy(model),
                 engine_status=model._engine.status,
                 eligibility_summary=summary,
+                survival_flow=survival_flow,
                 treatment_knowledge="retrospective_effective_time"
                 if treatment is not None
                 else None,

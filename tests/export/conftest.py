@@ -98,3 +98,64 @@ def frame():
             treatment_known_at_t0=True,
         ),
     )
+
+
+@pytest.fixture
+def calendar_frame(frame):
+    """One treated and one eligible control per cell, sharing outcome completeness."""
+    from dataclasses import replace
+    from datetime import timedelta
+
+    from terrine.data import CalendarComparisonMeta, CalendarSupportCell
+
+    cohort = datetime(2025, 1, 3, tzinfo=UTC)
+    table = pa.table(
+        {
+            "id": ["C", "C", "T", "T"],
+            "anchor": [1, 2, 1, 2],
+            "t0": [cohort - timedelta(days=1), cohort] * 2,
+            "cohort": [cohort] * 4,
+            "event_period": [-1, 0, -1, 0],
+            "treatment": [False, False, True, True],
+            "control_eligible": [True, True, False, False],
+            "x": [2.0] * 4,
+            "y": [5.0, 7.0, 3.0, None],
+            "complete": [True] * 4,
+            "reason": [None, None, None, "all_values_null"],
+        }
+    )
+    comparison = CalendarComparisonMeta(
+        control="never_treated",
+        cohort_source="events",
+        cohort_property="adoption",
+        history_start=cohort - timedelta(days=2),
+        knowledge="retrospective_effective_time",
+        reference_period=-1,
+        comparison_periods=(0,),
+        anticipation_periods=(),
+        period_seconds=86_400,
+        support=(
+            CalendarSupportCell(cohort=cohort, period=-1, kind="reference", treated=1, control=1),
+            CalendarSupportCell(cohort=cohort, period=0, kind="comparison", treated=1, control=1),
+        ),
+    )
+    return replace(
+        frame,
+        table=table,
+        roles=replace(
+            frame.roles,
+            treatment="treatment",
+            cluster_unit="id",
+            trial="cohort",
+            features=(),
+            outcomes=("x", "y"),
+        ),
+        columns={"x": frame.columns["y"], "y": frame.columns["y"]},
+        provenance=replace(
+            frame.provenance,
+            shape="calendar_comparison",
+            calendar_comparison=comparison,
+            feature_cutoffs={},
+            expression_timings={},
+        ),
+    )

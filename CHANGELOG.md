@@ -10,6 +10,9 @@
   export with its typed schema and provenance, including older list columns.
 - Show static roster attribute assumptions separately from membership and
   observation bounds. Historical availability remains unknown.
+- Request survival population counts or calendar contrast evidence with
+  `Frame.materialize(include_population=True)`. Ordinary materialization
+  does not run the additional population query.
 
 ## 0.1.0a3
 

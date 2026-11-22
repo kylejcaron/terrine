@@ -494,6 +494,8 @@ def test_materialized_frame_arrow_schema_metadata_can_be_recovered():
     assert recovered.table.schema.metadata == frame.table.schema.metadata
     encoded = frame.to_pyarrow().schema.metadata[b"terrine.materialized_frame.v2"]
     assert json.loads(encoded)["version"] == 2
+    assert recovered.provenance.survival_flow is None
+    assert "survival_flow" not in json.loads(encoded)["provenance"]
 
 
 def test_pre_change_arrow_metadata_refuses_with_portable_version_error():
@@ -559,6 +561,8 @@ def test_engine_stamp_round_trips_and_historic_verified_metadata():
         assert historical.table.equals(frame.table)
         assert historical.provenance.execution_revision is None
         assert "execution_revision" not in historical.to_metadata()["provenance"]
+        assert historical.provenance.survival_flow is None
+        assert "survival_flow" not in historical.to_metadata()["provenance"]
 
 
 _ALL_STAMP_FIELDS = ("dialect", "engine_name", "engine_status")

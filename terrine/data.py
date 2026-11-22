@@ -8,7 +8,8 @@ from base64 import b64decode, b64encode
 from collections.abc import Callable, Iterable, Mapping, Sequence, Set
 from dataclasses import dataclass, fields, is_dataclass
 from dataclasses import field as dataclass_field
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
+from decimal import Decimal
 from importlib import import_module
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Annotated, Any, Literal
@@ -35,6 +36,7 @@ __all__ = [
     "BoundCoverage",
     "Budget",
     "CalendarComparisonMeta",
+    "CalendarSupportCell",
     "CohortOperationMeta",
     "ColumnMeta",
     "Coverage",
@@ -55,6 +57,8 @@ __all__ = [
     "SamplingMeta",
     "SequenceMeta",
     "StatePanelMeta",
+    "SurvivalFlow",
+    "SurvivalGroupFlow",
     "TreatmentHistoryMeta",
     "UnitSource",
 ]
@@ -1141,8 +1145,35 @@ class PanelMeta:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class CalendarSupportCell:
+    """Distinct emitted units by arm for one original focal cohort and period."""
+
+    cohort: datetime
+    period: int
+    kind: Literal["reference", "comparison", "anticipation"]
+    treated: int
+    control: int
+
+    def __post_init__(self) -> None:
+        _aware(self.cohort, "cohort")
+        object.__setattr__(self, "cohort", self.cohort.astimezone(UTC))
+        if type(self.period) is not int or self.kind not in (
+            "reference",
+            "comparison",
+            "anticipation",
+        ):
+            raise ValueError("invalid calendar support period")
+        if any(type(count) is not int or count < 0 for count in (self.treated, self.control)):
+            raise ValueError("calendar support counts must be nonnegative integers")
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class CalendarComparisonMeta:
-    """Portable control, cohort and period policy for stacked comparisons."""
+    """Stack policy and optional emitted support, not outcome-specific analysis counts.
+
+    ``support=None`` means no grid was observed; an empty tuple means no focal cohorts.
+    Each observed cohort includes all declared periods, even when neither arm emits rows.
+    """
 
     control: Literal["never_treated", "not_yet_treated"]
     cohort_source: str
@@ -1153,6 +1184,7 @@ class CalendarComparisonMeta:
     comparison_periods: tuple[int, ...]
     anticipation_periods: tuple[int, ...]
     period_seconds: int
+    support: tuple[CalendarSupportCell, ...] | None = None
 
     def __post_init__(self) -> None:
         if self.control not in ("never_treated", "not_yet_treated"):
@@ -1166,6 +1198,30 @@ class CalendarComparisonMeta:
             raise ValueError("period_seconds must be positive")
         for name in ("comparison_periods", "anticipation_periods"):
             object.__setattr__(self, name, tuple(getattr(self, name)))
+        if self.support is not None:
+            kinds = self._period_kinds()
+            observed: dict[datetime, set[int]] = {}
+            for cell in self.support:
+                if not isinstance(cell, CalendarSupportCell) or kinds.get(cell.period) != cell.kind:
+                    raise ValueError("invalid calendar support cell")
+                periods = observed.setdefault(cell.cohort, set())
+                if cell.period in periods:
+                    raise ValueError("duplicate calendar support cell")
+                periods.add(cell.period)
+            if any(periods != kinds.keys() for periods in observed.values()):
+                raise ValueError("incomplete calendar support grid")
+            object.__setattr__(
+                self,
+                "support",
+                tuple(sorted(self.support, key=lambda cell: (cell.cohort, cell.period))),
+            )
+
+    def _period_kinds(self) -> dict[int, Literal["reference", "comparison", "anticipation"]]:
+        return {
+            self.reference_period: "reference",
+            **dict.fromkeys(self.comparison_periods, "comparison"),
+            **dict.fromkeys(self.anticipation_periods, "anticipation"),
+        }
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -1215,6 +1271,91 @@ class EligibilitySummary:
                 retained=self.retained,
             )
 
+
+type _SurvivalGroupValue = JsonScalar | bytes | date | time | Decimal
+
+
+def _survival_group_key(values: tuple[Any, ...]) -> tuple[Any, ...]:
+    """Give every NaN group the same key, distinct from null."""
+    return tuple(
+        math.nan if isinstance(value, float) and math.isnan(value) else value for value in values
+    )
+
+
+def _check_survival_counts(eligible: int, excluded: int, retained: int) -> None:
+    if any(type(count) is not int or count < 0 for count in (eligible, excluded, retained)):
+        raise ValueError("survival counts must be nonnegative integers")
+    if excluded > eligible:
+        raise ValueError("prevalent exclusions cannot exceed eligible subjects")
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SurvivalGroupFlow:
+    """Population counts for one tuple of declared life-table group values."""
+
+    values: tuple[None | bool | int | float | str | bytes | date | time | Decimal, ...]
+    eligible_subjects: int
+    prevalent_exclusions: int
+    retained_records: int
+
+    def __post_init__(self) -> None:
+        _check_survival_counts(
+            self.eligible_subjects, self.prevalent_exclusions, self.retained_records
+        )
+        values = tuple(self.values)
+        if any(
+            value is not None
+            and not isinstance(value, (bool, int, float, str, bytes, date, time, Decimal))
+            for value in values
+        ):
+            raise TypeError("survival group values must be scalars")
+        object.__setattr__(self, "values", _survival_group_key(values))
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SurvivalFlow:
+    """Eligibility and prevalence counts before views or binning, plus final row count."""
+
+    eligible_subjects: int
+    prevalent_exclusions: int
+    retained_records: int
+    emitted_grain: Literal["person_records", "group_bins"]
+    emitted_rows: int
+    group_by: tuple[str, ...] = ()
+    groups: tuple[SurvivalGroupFlow, ...] = ()
+
+    def __post_init__(self) -> None:
+        _check_survival_counts(
+            self.eligible_subjects, self.prevalent_exclusions, self.retained_records
+        )
+        if type(self.emitted_rows) is not int or self.emitted_rows < 0:
+            raise ValueError("emitted_rows must be a nonnegative integer")
+        if self.emitted_grain not in ("person_records", "group_bins"):
+            raise ValueError("invalid survival output grain")
+        if self.emitted_grain == "person_records" and (
+            self.group_by or self.emitted_rows > self.retained_records
+        ):
+            raise ValueError("invalid survival person-record output")
+        names = tuple(self.group_by)
+        for name in names:
+            _nonempty(name, "survival group column")
+        groups = tuple(self.groups)
+        if len(set(names)) != len(names) or (groups and not names):
+            raise ValueError("invalid survival grouping columns")
+        if any(
+            not isinstance(group, SurvivalGroupFlow) or len(group.values) != len(names)
+            for group in groups
+        ) or len({group.values for group in groups}) != len(groups):
+            raise ValueError("invalid survival groups")
+        if names and any(
+            sum(getattr(group, name) for group in groups) != getattr(self, name)
+            for name in ("eligible_subjects", "prevalent_exclusions", "retained_records")
+        ):
+            raise ValueError("survival groups must reconcile to the population counts")
+        object.__setattr__(self, "group_by", names)
+        object.__setattr__(
+            self, "groups", tuple(sorted(groups, key=lambda group: repr(group.values)))
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1358,6 +1499,7 @@ class Provenance:
     ) = None
     dataset_view: DatasetViewMeta | None = None
     execution_revision: int | None = None
+    survival_flow: SurvivalFlow | None = None
 
     def __post_init__(self) -> None:
         if self.execution_revision is not None and (
@@ -1407,6 +1549,14 @@ class Provenance:
             self.eligibility_summary, EligibilitySummary
         ):
             raise TypeError("eligibility_summary must be EligibilitySummary or None")
+        if self.survival_flow is not None:
+            if not isinstance(self.survival_flow, SurvivalFlow):
+                raise TypeError("survival_flow must be SurvivalFlow or None")
+            if (self.shape, self.survival_flow.emitted_grain) not in (
+                ("time_to_event", "person_records"),
+                ("life_table", "group_bins"),
+            ):
+                raise ValueError("survival flow must match the output shape")
         if not isinstance(self.execution_snapshot, ExecutionSnapshot):
             raise TypeError("execution_snapshot must be ExecutionSnapshot")
         _check_engine_stamp(
@@ -1660,6 +1810,40 @@ class Preview:
         object.__setattr__(self, "source_reads", tuple(self.source_reads))
 
 
+def _encode_survival_value(value: _SurvivalGroupValue) -> Any:
+    if isinstance(value, Decimal):
+        return {"$decimal": str(value)}
+    if isinstance(value, bytes):
+        return {"$bytes": b64encode(value).decode("ascii")}
+    if isinstance(value, time):
+        return {"$time": value.isoformat()}
+    if isinstance(value, float) and not math.isfinite(value):
+        return {"$float": str(value)}
+    if isinstance(value, datetime) and getattr(value, "nanosecond", 0):
+        return {"$timestamp_ns": value.isoformat(), "aware": value.utcoffset() is not None}
+    return _encode(value)
+
+
+def _decode_survival_value(value: Any) -> _SurvivalGroupValue:
+    if not isinstance(value, Mapping):
+        return value
+    if "$datetime" in value:
+        return datetime.fromisoformat(value["$datetime"])
+    if "$date" in value:
+        return date.fromisoformat(value["$date"])
+    if "$decimal" in value:
+        return Decimal(value["$decimal"])
+    if "$bytes" in value:
+        return b64decode(value["$bytes"], validate=True)
+    if "$time" in value:
+        return time.fromisoformat(value["$time"])
+    if "$float" in value:
+        return float(value["$float"])
+    if "$timestamp_ns" in value:
+        dtype = pa.timestamp("ns", tz="UTC" if value["aware"] else None)
+        return pa.scalar(value["$timestamp_ns"]).cast(dtype).as_py()
+    raise ValueError("unknown survival group value")
+
 
 def _encode(value: Any) -> Any:
     if isinstance(value, datetime):
@@ -1668,6 +1852,13 @@ def _encode(value: Any) -> Any:
         return {"$date": value.isoformat()}
     if isinstance(value, Window):
         return {"$window": [value.start.seconds, value.end.seconds]}
+    if isinstance(value, SurvivalGroupFlow):
+        return {
+            "values": [_encode_survival_value(item) for item in value.values],
+            "eligible_subjects": value.eligible_subjects,
+            "prevalent_exclusions": value.prevalent_exclusions,
+            "retained_records": value.retained_records,
+        }
     if is_dataclass(value) and not isinstance(value, type):
         return {field.name: _encode(getattr(value, field.name)) for field in fields(value)}
     if isinstance(value, Mapping):
@@ -1772,6 +1963,17 @@ def _decode(value: Any, cls: type) -> Any:
             kwargs[field.name] = {k: _decode(v, CoverageSummary) for k, v in item.items()}
         elif field.name == "execution_snapshot" and item is not None:
             kwargs[field.name] = _decode(item, ExecutionSnapshot)
+        elif field.name == "survival_flow" and item is not None:
+            version = item["version"]
+            if type(version) is not int or version != 1:
+                raise _UNSUPPORTED_METADATA_VERSION.error(version=version)
+            kwargs[field.name] = _decode(
+                {name: val for name, val in item.items() if name != "version"}, SurvivalFlow
+            )
+        elif cls is SurvivalFlow and field.name == "groups":
+            kwargs[field.name] = tuple(_decode(group, SurvivalGroupFlow) for group in item)
+        elif cls is SurvivalGroupFlow and field.name == "values":
+            kwargs[field.name] = tuple(_decode_survival_value(val) for val in item)
         elif field.name == "eligibility_summary" and item is not None:
             kwargs[field.name] = _decode(item, EligibilitySummary)
         elif field.name == "weight_cutoff" and item is not None:
@@ -1808,6 +2010,21 @@ def _decode(value: Any, cls: type) -> Any:
                 anticipation_seconds=item.get("anticipation_seconds", 0),
             )
         elif field.name == "calendar_comparison" and item is not None:
+            encoded_support = item.get("support")
+            support = None
+            if encoded_support is not None:
+                if type(encoded_support["version"]) is not int or encoded_support["version"] != 1:
+                    raise _UNSUPPORTED_METADATA_VERSION.error(version=encoded_support["version"])
+                support = tuple(
+                    CalendarSupportCell(
+                        cohort=datetime.fromisoformat(cell["cohort"]["$datetime"]),
+                        period=cell["period"],
+                        kind=cell["kind"],
+                        treated=cell["treated"],
+                        control=cell["control"],
+                    )
+                    for cell in encoded_support["cells"]
+                )
             kwargs[field.name] = CalendarComparisonMeta(
                 control=item["control"],
                 cohort_source=item["cohort_source"],
@@ -1818,6 +2035,7 @@ def _decode(value: Any, cls: type) -> Any:
                 comparison_periods=tuple(item["comparison_periods"]),
                 anticipation_periods=tuple(item["anticipation_periods"]),
                 period_seconds=item["period_seconds"],
+                support=support,
             )
         elif field.name == "sampling" and item is not None:
             kwargs[field.name] = SamplingMeta(
@@ -1856,8 +2074,17 @@ def _metadata_payload(
     roles: Roles, columns: Mapping[str, ColumnMeta], provenance: Provenance
 ) -> dict[str, Any]:
     encoded_provenance = _encode(provenance)
+    if provenance.survival_flow is None:
+        del encoded_provenance["survival_flow"]
+    else:
+        encoded_provenance["survival_flow"]["version"] = 1
     if provenance.execution_revision is None:
         del encoded_provenance["execution_revision"]
+    comparison = encoded_provenance["calendar_comparison"]
+    if comparison is not None:
+        support = comparison.pop("support")
+        if support is not None:
+            comparison["support"] = {"version": 1, "cells": support}
     return {
         "version": 1,
         "roles": _encode(roles),
@@ -1996,6 +2223,12 @@ def _validate_physical_metadata(
         require(panel.scheduled_to_column, pa.types.is_timestamp)
         require(panel.gap_column, pa.types.is_duration)
         require(panel.terminal_column, pa.types.is_boolean)
+    comparison = provenance.calendar_comparison
+    if comparison is not None and comparison.support is not None:
+        require("cohort", pa.types.is_timestamp)
+        require("event_period", pa.types.is_integer)
+        require("treatment", pa.types.is_boolean)
+        require("control_eligible", pa.types.is_boolean)
     view = provenance.dataset_view
     if view is not None:
         selected = (*view.selected_features, *view.selected_labels)

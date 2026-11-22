@@ -148,6 +148,7 @@ def to_diff_diff(
 
     Zero means no adoption observed in the supplied history, not over a unit's lifetime;
     dated periods need a cadence, and no estimator is fitted.
+    A calendar stack's focal-cohort flag is not persistent adoption.
 
     Args:
         data: MaterializedFrame carrying checked roles, column metadata, completeness and
@@ -221,9 +222,14 @@ def to_diff_diff(
             reason="initiation_not_adoption", route="supply persistent-adoption treatment history"
         )
     metadata_cadence = history.period_seconds if history is not None else None
-    comparison = data.provenance.calendar_comparison
-    if metadata_cadence is None and comparison is not None:
-        metadata_cadence = comparison.period_seconds
+    if (
+        data.provenance.shape == "calendar_comparison"
+        or data.provenance.calendar_comparison is not None
+    ):
+        raise _INVALID.error(
+            reason="stacked_focal_membership",
+            route="supply unstacked persistent-adoption history or use calendar contrast preflight",
+        )
     if (
         period_seconds is not None
         and metadata_cadence is not None

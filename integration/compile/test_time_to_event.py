@@ -1,13 +1,14 @@
-from datetime import UTC, datetime, timedelta
+import math
+from datetime import UTC, datetime, time, timedelta
 
 import pyarrow as pa
 import pytest
 
-from terrine.data import MaterializedFrame
+from terrine.data import Budget, EligibilitySummary, MaterializedFrame
 from terrine.errors import TerrineError
 from terrine.spec import Design, EventAnchor, FixedDate, event_time
 from terrine.spec.design import Treatment
-from terrine.spec.trajectory import TimeToEvent
+from terrine.spec.trajectory import LifeTable, TimeToEvent
 from tests.compile.test_time_to_event import _collect, _model
 
 
@@ -92,9 +93,6 @@ def test_life_table_grouping_features_retain_conservative_surrogate_timing():
 
 
 def test_life_table_caps_aggregated_output_not_subject_records():
-    from terrine.data import Budget
-    from terrine.spec.trajectory import LifeTable
-
     con, model = _model()
     try:
         con.raw_sql(
@@ -128,7 +126,7 @@ def test_prevalent_events_are_excluded_and_cutoff_equality_is_censored():
             shape=TimeToEvent("churn"),
             administrative_cutoff=datetime(2025, 1, 4, tzinfo=UTC),
         )
-        frame = design.build(model).materialize()
+        frame = design.build(model).materialize(include_population=True)
         restored = MaterializedFrame.from_arrow(frame.to_pyarrow())
         rows = restored.table.to_pylist()
         assert sorted(
@@ -137,6 +135,15 @@ def test_prevalent_events_are_excluded_and_cutoff_equality_is_censored():
             ("u1", datetime(2025, 1, 1, tzinfo=UTC), True, True),
             ("u2", None, False, False),
         ]
+        assert restored.provenance.eligibility_summary == EligibilitySummary(3, 0, 0, 3)
+        flow = restored.provenance.survival_flow
+        assert flow is not None
+        assert (flow.eligible_subjects, flow.prevalent_exclusions, flow.retained_records) == (
+            3,
+            1,
+            2,
+        )
+        assert (flow.emitted_grain, flow.emitted_rows) == ("person_records", 2)
         assert all(row["duration"] is not None for row in rows)
         assert pa.types.is_duration(restored.table.schema.field("duration").type)
         assert restored.roles.treatment == "treatment"
@@ -154,6 +161,223 @@ def test_prevalent_events_are_excluded_and_cutoff_equality_is_censored():
     finally:
         con.disconnect()
 
+
+@pytest.mark.parametrize("all_prevalent", [False, True], ids=["excluded_group", "all_prevalent"])
+def test_grouped_life_table_accounts_for_exclusions_before_binning(all_prevalent, monkeypatch):
+    from terrine.execution.inputs import _DuckDBSession
+
+    executed = 0
+    original = _DuckDBSession.execute
+
+    def execute(self, con, query, sql):
+        nonlocal executed
+        executed += 1
+        return original(self, con, query, sql)
+
+    monkeypatch.setattr(_DuckDBSession, "execute", execute)
+    con, model = _model()
+    try:
+        if all_prevalent:
+            con.raw_sql("""
+                INSERT INTO outcomes VALUES
+                    ('u1', TIMESTAMPTZ '2024-12-31 00:00:00+00'),
+                    ('u2', TIMESTAMPTZ '2025-01-01 00:00:00+00')
+            """)
+        view = (
+            Design(
+                "user",
+                EventAnchor("signup"),
+                features={"prior": event_time("churn", window=("-2d", "0s"))},
+                shape=LifeTable(TimeToEvent("churn"), "1d", group_by=("prior",)),
+                administrative_cutoff=datetime(2025, 1, 4, tzinfo=UTC),
+            )
+            .build(model)
+        )
+        budget = Budget(max_rows=0 if all_prevalent else 3)
+        ordinary = view.materialize(budget=budget)
+        assert ordinary.provenance.survival_flow is None
+        ordinary_reads, executed = executed, 0
+        frame = view.materialize(budget=budget, include_population=True)
+        assert executed == ordinary_reads + 1
+        assert frame.table.equals(ordinary.table)
+        assert frame.provenance.eligibility_summary == EligibilitySummary(3, 0, 0, 3)
+        expected_rows = 0 if all_prevalent else 3
+        assert frame.table.num_rows == expected_rows
+        assert frame.table["prior"].to_pylist() == [None] * expected_rows
+        flow = frame.provenance.survival_flow
+        assert flow is not None
+        assert flow.group_by == ("prior",)
+        assert (flow.emitted_grain, flow.emitted_rows) == ("group_bins", expected_rows)
+        assert flow.eligible_subjects == 3
+        assert flow.prevalent_exclusions == (3 if all_prevalent else 1)
+        assert flow.retained_records == (0 if all_prevalent else 2)
+        group_counts = {
+            group.values: (
+                group.eligible_subjects,
+                group.prevalent_exclusions,
+                group.retained_records,
+            )
+            for group in flow.groups
+        }
+        jan_1 = datetime(2025, 1, 1, tzinfo=UTC)
+        if all_prevalent:
+            assert group_counts == {
+                (datetime(2024, 12, 31, tzinfo=UTC),): (1, 1, 0),
+                (jan_1,): (2, 2, 0),
+            }
+        else:
+            assert group_counts == {(None,): (2, 0, 2), (jan_1,): (1, 1, 0)}
+        assert MaterializedFrame.from_arrow(frame.to_pyarrow()).provenance.survival_flow == flow
+        assert MaterializedFrame.from_json(frame.to_json()).provenance.survival_flow == flow
+    finally:
+        con.disconnect()
+
+
+@pytest.mark.parametrize(
+    ("value_sql", "expected"),
+    [
+        ("from_hex('00ff')", b"\x00\xff"),
+        ("TIME '13:24:56'", time(13, 24, 56)),
+        ("'NaN'::DOUBLE", math.nan),
+    ],
+    ids=["binary", "time", "nan"],
+)
+def test_life_table_preserves_roster_group_in_portable_metadata(value_sql, expected):
+    from terrine import Model, UnitSource, asof
+
+    con, model = _model()
+    try:
+        con.raw_sql(f"CREATE TABLE users AS SELECT user_id AS id, {value_sql} AS band FROM anchors")
+        model = Model.from_catalog(
+            model.catalog,
+            con=con,
+            units={"user": UnitSource("users", "id", attributes=("band",))},
+            readiness=model.readiness,
+        )
+        frame = (
+            Design(
+                "user",
+                EventAnchor("signup"),
+                features={"band": asof("band")},
+                shape=LifeTable(TimeToEvent("churn"), "1d", group_by=("band",)),
+                administrative_cutoff=datetime(2025, 1, 4, tzinfo=UTC),
+            )
+            .build(model)
+            .materialize(include_population=True)
+        )
+        flow = frame.provenance.survival_flow
+        assert flow is not None
+        assert {group.values for group in flow.groups} == {(expected,)}
+        assert [row["at_risk"] for row in frame.table.to_pylist() if row["time_bin"] == 0] == [2]
+        assert MaterializedFrame.from_arrow(frame.to_pyarrow()).provenance.survival_flow == flow
+        assert MaterializedFrame.from_json(frame.to_json()).provenance.survival_flow == flow
+    finally:
+        con.disconnect()
+
+
+@pytest.mark.parametrize(
+    ("value_sql", "is_expected_type"),
+    [("[1, 2]", pa.types.is_list), ("INTERVAL '1 month'", pa.types.is_duration)],
+    ids=["list", "interval"],
+)
+def test_empty_grouped_life_table_reports_totals_without_portable_labels(
+    value_sql, is_expected_type
+):
+    from terrine import Model, UnitSource, asof
+
+    con, model = _model()
+    try:
+        con.raw_sql(f"""
+            CREATE TABLE users AS SELECT user_id AS id, {value_sql} AS band FROM anchors;
+            INSERT INTO outcomes
+                SELECT user_id, TIMESTAMPTZ '2024-12-31 00:00:00+00' FROM anchors;
+        """)
+        model = Model.from_catalog(
+            model.catalog,
+            con=con,
+            units={"user": UnitSource("users", "id", attributes=("band",))},
+            readiness=model.readiness,
+        )
+        view = Design(
+            "user",
+            EventAnchor("signup"),
+            features={"band": asof("band")},
+            shape=LifeTable(TimeToEvent("churn"), "1d", group_by=("band",)),
+            administrative_cutoff=datetime(2025, 1, 4, tzinfo=UTC),
+        ).build(model)
+        ordinary = view.materialize()
+        audited = view.materialize(include_population=True)
+        assert ordinary.table.equals(audited.table)
+        assert audited.table.num_rows == 0 and is_expected_type(audited.table["band"].type)
+        flow = audited.provenance.survival_flow
+        assert flow is not None
+        assert (flow.eligible_subjects, flow.prevalent_exclusions, flow.retained_records) == (
+            3,
+            3,
+            0,
+        )
+        assert not flow.group_by and not flow.groups
+    finally:
+        con.disconnect()
+
+
+def test_life_table_population_uses_winsorized_group_keys():
+    from decimal import Decimal
+
+    from examples.trajectories_survival import _model as trajectory_model
+    from terrine import Model, asof
+    from terrine.spec.transforms import Winsorization
+
+    con, model = trajectory_model()
+    try:
+        # u1/u2 are retained, u3 is prevalent and u4 has a null grouping value.
+        con.raw_sql("ALTER TABLE profiles ADD COLUMN band INTEGER")
+        con.raw_sql("UPDATE profiles SET band = right(user_id, 1)::INTEGER")
+        con.raw_sql("""
+            INSERT INTO events VALUES
+                ('u1', TIMESTAMPTZ '2025-01-02 00:00:00+00', 'purchase', 0),
+                ('u4', TIMESTAMPTZ '2025-01-02 00:00:00+00', 'purchase', 0)
+        """)
+        con.raw_sql("INSERT INTO churn_events VALUES ('u3', TIMESTAMPTZ '2025-01-12 00:00:00+00')")
+        catalog = model.catalog.model_dump(mode="python")
+        catalog["sources"]["profiles"]["properties"] = ["region", "band"]
+        catalog["properties"]["band"] = {
+            "source": "profiles",
+            "column": "band",
+            "dtype": "int",
+            "as_of": "event_time",
+        }
+        model = Model.from_catalog(catalog, con=con, units=model.units, readiness=model.readiness)
+        data = (
+            Design(
+                "user",
+                EventAnchor("purchase"),
+                features={"band": asof("band", before="-1d")},
+                shape=LifeTable(TimeToEvent("churn"), "7d", group_by=("band",)),
+                administrative_cutoff=datetime(2025, 1, 14, tzinfo=UTC),
+            )
+            .build(model)
+            .winsorize(Winsorization("band", lower="0", upper="0.5"))
+            .materialize(budget=Budget(max_rows=4), include_population=True)
+        )
+        assert data.table["band"].type == pa.decimal128(1, 1)
+        assert set(data.table["band"].to_pylist()) == {Decimal("0.5"), None}
+        assert data.provenance.eligibility_summary == EligibilitySummary(4, 0, 0, 4)
+        flow = data.provenance.survival_flow
+        assert flow is not None
+        assert {
+            group.values: (
+                group.eligible_subjects,
+                group.prevalent_exclusions,
+                group.retained_records,
+            )
+            for group in flow.groups
+        } == {(Decimal("0.5"),): (3, 1, 2), (None,): (1, 0, 1)}
+        assert all(
+            group.values[0] is None or isinstance(group.values[0], Decimal) for group in flow.groups
+        )
+    finally:
+        con.disconnect()
 
 
 @pytest.mark.parametrize("shape", ["cross_section", TimeToEvent("churn")])
@@ -208,6 +432,19 @@ def test_unobserved_initial_history_is_explained_and_retained():
         assert rows["u1"]["duration__complete"] is False
         assert rows["u1"]["duration__reason"] == "incomplete_initial_history"
         assert rows["u1"]["duration__reason"] in summary
+        training = (
+            design.build(model)
+            .training_set(label="duration")
+            .materialize(include_population=True)
+        )
+        assert training.table["unit"].to_pylist() == ["u2"]
+        view = training.provenance.dataset_view
+        assert view is not None
+        assert view.counts_by_reason == {"incomplete_initial_history": 1}
+        flow = training.provenance.survival_flow
+        assert flow is not None
+        assert flow.retained_records == 2
+        assert flow.emitted_rows == 1
     finally:
         con.disconnect()
 
