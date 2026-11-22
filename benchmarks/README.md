@@ -154,6 +154,13 @@ the compiler's dispatch boundary; deferred execution and Arrow conversion are
 not separable within stream reads. Other unseparated work is explicitly listed.
 Matching SQL digests alone are not proof of duplicate database work.
 
+For each captured study statement, diagnostics replay the submitted SQL
+through DuckDB `EXPLAIN (ANALYZE, FORMAT JSON)`. `diagnostics.json` indexes the
+plans and lists table scans and cardinalities. Stream entries report raw Arrow
+rows, fields and buffer bytes before checks are stripped; `retained_arrow`
+reports the public payload. These are not network transfer or billed bytes.
+Plan replays are excluded from the timing samples.
+
 Captured study statements exclude metadata/admission probes, transaction
 control and catalog introspection. Diagnostic metadata-probe and native
 admission records are labelled separately, and direct-driver admission
