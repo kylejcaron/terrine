@@ -816,7 +816,7 @@ def test_owner_nochange_refresh_pins_existing_inputs_and_replays_exact_generatio
                 dataset.plan_refresh(model, changes=request.changes, budget=limit)
             assert limited.value.code == code
         assert retained_inputs() == before
-        strict = planner.plan(strict_request, con=con.con, namespace="runtime")
+        strict = planner.plan(strict_request, con=con.con, namespace="RUNTIME")
         stale = planner.plan(
             replace(request, invocation_id="stale"), con=con.con, namespace="runtime"
         )
@@ -835,7 +835,7 @@ def test_owner_nochange_refresh_pins_existing_inputs_and_replays_exact_generatio
             receipt = runtime.run_serialized_plan(
                 strict.saved_plan_json,
                 con=con.con,
-                namespace="runtime",
+                namespace="RUNTIME",
                 request_key=strict.request_key,
                 resolver=resolver,
                 snapshot_authority=authority,
@@ -844,7 +844,7 @@ def test_owner_nochange_refresh_pins_existing_inputs_and_replays_exact_generatio
             SavedPlan.from_json(strict.saved_plan_json),
             receipt,
             model=model,
-            namespace="runtime",
+            namespace="RUNTIME",
             request_key=strict.request_key,
             snapshot_authority=authority,
         )
@@ -891,7 +891,7 @@ def test_owner_nochange_refresh_pins_existing_inputs_and_replays_exact_generatio
         assert runtime.run_serialized_plan(
             strict.saved_plan_json,
             con=reopened.con,
-            namespace="runtime",
+            namespace="RUNTIME",
             request_key=strict.request_key,
         ) == receipt
     finally:

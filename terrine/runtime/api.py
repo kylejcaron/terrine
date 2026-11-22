@@ -300,7 +300,27 @@ def run_serialized_plan(
             if isinstance(construction, DatasetDefinition)
             else construction
         )
-        receipt = snapshot_authority.find_retained(plan.snapshot_id, namespace=namespace)
+        receipt_namespace = namespace
+        if not plan.tasks and (base := plan.definition.reuse_base_generation) is not None:
+            # SQL schema names can be aliases; retained artifact paths cannot.
+            store = RuntimeStore(con, namespace=namespace)
+            recipe = con.execute(
+                f"SELECT recipe_json FROM {store._schema}.runtime_dataset_recipes "
+                "WHERE dataset=? AND generation=?",
+                [plan.dataset, base],
+            ).fetchone()
+            if recipe is None:
+                raise _SAVED_PLAN_MISMATCH.error(reason="missing reuse base recipe")
+            original = SavedPlan.from_json(recipe[0])
+            bound = _bind_saved_plan(original, namespace=original.namespace)
+            if (
+                original.namespace.lower() != namespace.lower()
+                or bound.snapshot_id != plan.snapshot_id
+                or bound.dataset != plan.dataset
+            ):
+                raise _SAVED_PLAN_MISMATCH.error(reason="reuse base does not bind the snapshot")
+            receipt_namespace = original.namespace
+        receipt = snapshot_authority.find_retained(plan.snapshot_id, namespace=receipt_namespace)
         if receipt.model_hash != model.model_hash:
             raise RefusalSpec(
                 "terrine.runtime.saved_plan_mismatch",
