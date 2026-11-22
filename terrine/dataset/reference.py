@@ -37,6 +37,7 @@ from terrine.runtime.graph import dependency_graph
 from terrine.runtime.leases import LeaseStore
 from terrine.runtime.owner import RuntimeOwner
 from terrine.runtime.planner import RefreshPlan, admit_execution, plan_refresh
+from terrine.runtime.planning import _plan_no_work
 from terrine.runtime.saved_plan import (
     DestinationRef,
     ModelReference,
@@ -487,22 +488,48 @@ class Dataset:
     def plan_refresh(
         self, model: Any, *, changes: ChangeSet | None = None, budget: Budget | None = None
     ) -> RefreshPlan:
-        """Plan from the saved definition without reading or staging source rows."""
-        if _owner_for(model.con).reference != self.manifest.source_snapshots["owner"]:
+        """Plan a pinned refresh without reading or staging source rows."""
+        from terrine.runtime.api import preflight_runtime_shape
+
+        owner = _owner_for(model.con)
+        if owner.reference != self.manifest.source_snapshots["owner"]:
             raise _GENERATION_INVALID.error()
         if changes is not None and not isinstance(changes, ChangeSet):
             raise _INVALID_REQUEST.error(reason="wrong_type", field="changes")
+        if budget is not None and not isinstance(budget, Budget):
+            raise TypeError("budget must be Budget or None")
+        budget = budget if budget is not None else Budget(strict_scan=False)
+        generation = self.manifest.generation
+        raw = model.con.con
+        backend = DuckDBBackend(raw, namespace=self._namespace)
+        if backend.current_generation(generation.dataset_id) != generation.generation_id:
+            raise _STALE_BASE.error()
+        definition = self.manifest.definition.resolve_unit(model)
+        design = definition.base_design
+        preflight_runtime_shape(design, replace(budget, max_scan_bytes=None))
+        plan = _plan_no_work(
+            RuntimeStore(raw, namespace=self._namespace),
+            SnapshotAuthority(owner),
+            model=model,
+            design=design,
+            definition=definition,
+            dataset=generation.dataset_id,
+            generation=generation.generation_id,
+            changes=changes,
+            budget=budget,
+        )
+        if plan is not None:
+            return plan
         if model.model_hash != self.manifest.model_hash:
             changes = ChangeSet((), "conservative_rebuild")
-        frame = self.manifest.definition.build(model)
         return _plan_frame(
-            frame,
+            definition.build(model),
             namespace=self._namespace,
-            table=self.manifest.generation.dataset_id,
+            table=generation.dataset_id,
             snapshot_id=self.manifest.source_snapshots["snapshot_id"],
-            budget=budget if budget is not None else Budget(strict_scan=False),
+            budget=budget,
             changes=changes,
-            base_generation=self.manifest.generation.generation_id,
+            base_generation=generation.generation_id,
         )
 
     def refresh(
@@ -510,16 +537,11 @@ class Dataset:
     ) -> Dataset:
         """Publish a definition reconstruction while leaving this generation pinned."""
         plan = self.plan_refresh(model, changes=changes, budget=budget)
-        if (
-            DuckDBBackend(model.con.con, namespace=self._namespace).current_generation(
-                self.manifest.generation.dataset_id
-            )
-            != self.manifest.generation.generation_id
-        ):
-            raise _STALE_BASE.error()
         if not plan.tasks:
             admit_execution(plan, namespace=self._namespace)
-            leases = LeaseStore(model.con.con, namespace=self._namespace)
+            raw = model.con.con
+            backend = DuckDBBackend(raw, namespace=self._namespace)
+            leases = LeaseStore(raw, namespace=self._namespace)
             lease = leases.acquire(
                 f"dataset:{plan.dataset}",
                 f"refresh-{uuid.uuid4().hex}",
@@ -527,7 +549,9 @@ class Dataset:
                 now=datetime.now(UTC),
             )
             try:
-                DuckDBBackend(model.con.con, namespace=self._namespace).reuse_generation(
+                if backend.current_generation(plan.dataset) != plan.expected_base_manifest:
+                    raise _STALE_BASE.error()
+                backend.reuse_generation(
                     plan.dataset,
                     expected_manifest=plan.definition.reuse_base_generation,
                     lease=lease,
@@ -561,7 +585,7 @@ def _plan_frame(
         (definition.digest + frame._model.model_hash).encode()
     ).hexdigest()
     base_revision = None
-    if base_generation is not None:
+    if base_generation is not None and (changes is None or changes.changes):
         try:
             base_revision = DuckDBBackend(
                 frame._model.con.con, namespace=namespace
@@ -575,6 +599,7 @@ def _plan_frame(
         snapshot_id=snapshot_id,
         budget=budget,
         changes=changes,
+        execution_mode="design",
         reuse_base_generation=base_generation,
         reuse_base_revision=base_revision,
         graph=dependency_graph(

@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import uuid
 from collections.abc import Callable
+from contextlib import ExitStack
+from dataclasses import replace
 from typing import Any, Protocol
 
 import ibis
@@ -25,7 +27,7 @@ from terrine.runtime.saved_plan import (
     resolve_plan,
 )
 from terrine.runtime.schema import check_runtime_schema
-from terrine.runtime.snapshot import SnapshotAuthority
+from terrine.runtime.snapshot import ReopenableSnapshot, SnapshotAuthority, _SnapshotContext
 from terrine.runtime.state import RuntimeStore
 from terrine.runtime.status import _recover_interrupted_runs, cancel_run, get_run
 
@@ -158,8 +160,9 @@ def run_serialized_plan(
     max_active_runs: int | None = None,
     cancelled: Callable[[], bool] | None = None,
 ) -> RunReceipt:
-    """Verify and execute a plan, reopening owner-retained inputs for saved plans."""
+    """Execute the saved schedule, or replay the exact durable request if already run."""
     document = json.loads(serialized)
+    bound_executor = None
     if isinstance(document, dict) and "plan_json" in document:
         saved_plan = SavedPlan.from_json(serialized)
         embedded_plan = _bind_saved_plan(saved_plan, namespace=namespace)
@@ -203,6 +206,15 @@ def run_serialized_plan(
                 )
         elif destination is not None:
             raise ValueError("destination is only used with a request_key")
+        built_in = executor is None
+        if built_in and embedded_plan.tasks and embedded_plan.definition.execution_mode != "design":
+            raise _SAVED_PLAN_MISMATCH.error(
+                reason="physical_jobs_required",
+                route=(
+                    "Replan with execution_mode='design' to use the built-in executor, "
+                    "or supply the custom executor for the recorded task schedule."
+                ),
+            )
         if resolver is None or snapshot_authority is None:
             raise ValueError("saved plans require an owner resolver and snapshot authority")
         plan, model, construction, _saved_plan_destination = resolve_plan(
@@ -215,7 +227,27 @@ def run_serialized_plan(
             if isinstance(construction, DatasetDefinition)
             else construction
         )
-        receipt = snapshot_authority.find_retained(plan.snapshot_id, namespace=namespace)
+        receipt_namespace = namespace
+        if not plan.tasks and (base := plan.definition.reuse_base_generation) is not None:
+            # SQL schema names can be aliases; retained artifact paths cannot.
+            store = RuntimeStore(con, namespace=namespace)
+            recipe = con.execute(
+                f"SELECT d.recipe_json FROM {store._schema}.runtime_dataset_recipes d "
+                f"JOIN {store._schema}.runtime_snapshot_manifests s USING(dataset, generation) "
+                "WHERE d.dataset=? AND d.generation=? AND s.snapshot_id=?",
+                [plan.dataset, base, plan.snapshot_id],
+            ).fetchone()
+            if recipe is not None:
+                original = SavedPlan.from_json(recipe[0])
+                bound = _bind_saved_plan(original, namespace=original.namespace)
+                if (
+                    original.namespace.lower() != namespace.lower()
+                    or bound.snapshot_id != plan.snapshot_id
+                    or bound.dataset != plan.dataset
+                ):
+                    raise _SAVED_PLAN_MISMATCH.error(reason="reuse base does not bind the snapshot")
+                receipt_namespace = original.namespace
+        receipt = snapshot_authority.find_retained(plan.snapshot_id, namespace=receipt_namespace)
         if receipt.model_hash != model.model_hash:
             raise RefusalSpec(
                 "terrine.runtime.saved_plan_mismatch",
@@ -225,10 +257,15 @@ def run_serialized_plan(
         from terrine.execution.gates import enforce_shape_budget
 
         enforce_shape_budget(design.shape, plan.budget)
-        if executor is None:
+        snapshot_executor = executor
+        if built_in:
             _preflight_design_partitions(plan)
-            preflight_runtime_shape(design, plan.budget)
-            executor = DesignExecutor(
+            budget = plan.budget
+            if not plan.tasks and budget is not None and budget.max_scan_bytes is not None:
+                # Admission above already verified the reuse fence. This path reads no sources.
+                budget = replace(budget, max_scan_bytes=None)
+            preflight_runtime_shape(design, budget)
+            snapshot_executor = DesignExecutor(
                 model,
                 design,
                 plan,
@@ -237,32 +274,60 @@ def run_serialized_plan(
                 dataset_definition=saved_plan.restore_dataset_definition(),
                 output_root=snapshot_authority.owner.snapshot_root / namespace / "outputs",
             )
-        if not callable(getattr(executor, "run_snapshot_task", None)):
+        if not callable(getattr(snapshot_executor, "run_snapshot_task", None)):
             raise ValueError("saved plans require an executor with run_snapshot_task")
-        executor = _SnapshotBoundExecutor(executor, snapshot_authority, receipt, con, namespace)
+        bound_executor = _SnapshotBoundExecutor(
+            snapshot_executor, snapshot_authority, receipt, con, namespace, use_image=built_in
+        )
     else:
         plan = RefreshPlan.deserialize(serialized)
-    return run_plan(
-        plan,
-        con=con,
-        namespace=namespace,
-        request_key=request_key,
-        destination=destination,
-        executor=executor,
-        max_active_runs=max_active_runs,
-        cancelled=cancelled,
-    )
+    try:
+        return run_plan(
+            plan,
+            con=con,
+            namespace=namespace,
+            request_key=request_key,
+            destination=destination,
+            executor=bound_executor if bound_executor is not None else executor,
+            max_active_runs=max_active_runs,
+            cancelled=cancelled,
+        )
+    finally:
+        if bound_executor is not None:
+            bound_executor.close()
 
 
 class _SnapshotBoundExecutor:
     def __init__(
-        self, executor: Any, authority: SnapshotAuthority, receipt: Any, con: Any, namespace: str
+        self,
+        executor: Any,
+        authority: SnapshotAuthority,
+        receipt: ReopenableSnapshot,
+        con: Any,
+        namespace: str,
+        *,
+        use_image: bool,
     ) -> None:
         self.executor = executor
         self.authority = authority
         self.receipt = receipt
         self.con = con
         self.namespace = namespace
+        self._image = ExitStack() if use_image else None
+        self._reader: Callable[[], _SnapshotContext] | None = None
+
+    def close(self) -> None:
+        if self._image is not None:
+            self._image.close()
+
+    def _context(self) -> _SnapshotContext:
+        if self._image is None:
+            return self.authority.reopen(self.receipt, con=self.con, namespace=self.namespace)
+        if self._reader is None:
+            self._reader = self._image.enter_context(
+                self.authority._run_image(self.receipt, con=self.con, namespace=self.namespace)
+            )
+        return self._reader()
 
     def authorize_scan(self, plan: RefreshPlan) -> ScanAuthorization:
         authorize = getattr(self.executor, "authorize_scan", None)
@@ -271,13 +336,15 @@ class _SnapshotBoundExecutor:
         return authorize(plan)
 
     def run_task(self, task: Any, dependencies: Any) -> Any:
-        context = self.authority.reopen(self.receipt, con=self.con, namespace=self.namespace)
-        try:
+        with self._context() as context:
             return self.executor.run_snapshot_task(context, task, dependencies)
-        finally:
-            context.close()
 
     def publish(self, plan: RefreshPlan, outputs: Any, lease: Any, run_id: str) -> Any:
+        if self._image is not None and self._reader is None and plan.tasks:
+            # A retry can reach publication with every output already persisted.
+            # Verify retained input again on the new attempt, even without a pending job.
+            with self._context():
+                pass
         return self.executor.publish(plan, outputs, lease, run_id)
 
 
@@ -420,8 +487,7 @@ class DesignExecutor:
         dataset_definition: Any = None,
         output_root: Any = None,
     ) -> None:
-        from threading import RLock
-
+        from terrine.compile.layers import LayerKey
         from terrine.runtime.backends.duckdb import DuckDBBackend
         from terrine.spec.validate import resolve_unit
 
@@ -431,10 +497,8 @@ class DesignExecutor:
         admit_execution(plan, namespace=namespace)
         self.design = resolve_unit(design, model)
         self._plan = plan
-        self._keys: tuple[Any, ...] | None = None
+        self._anchor_key: LayerKey | None = None
         self._backend = DuckDBBackend(con, namespace=namespace)
-        self._layers: dict[str, dict[Any, Any]] = {}
-        self._lock = RLock()
         self._frame = (
             dataset_definition.build(model)
             if dataset_definition is not None
@@ -447,50 +511,36 @@ class DesignExecutor:
         self._output_root = output_root
 
     def run_snapshot_task(self, context: Any, task: Any, dependencies: Any):
-        import uuid
-
         import pyarrow as pa
 
         from terrine.compile.layers import build_layer, plan_layers
         from terrine.data import MaterializedFrame, Provenance
 
-        if task.layer in {
-            "roster",
-            "selector",
-            "state_point",
-            "state_period",
-            "baseline",
-        }:
-            return pa.table({"_terrine_empty": pa.array([], type=pa.int8())})
+        if task.layer not in {"anchor", "frame"}:
+            raise ValueError(f"unsupported runtime task layer: {task.layer}")
         execution_model = self._execution_model(context)
-        with self._lock:
-            if self._keys is None:
-                self._keys = plan_layers(self.design, execution_model).keys
-            layer_keys = self._keys
+        if self._anchor_key is None and (task.layer == "anchor" or dependencies):
+            key = plan_layers(self.design, execution_model).keys[0]
+            self._anchor_key = replace(key, snapshot_id=self._plan.snapshot_id)
         if task.layer == "anchor":
-            key = self._with_snapshot(layer_keys[0], self._plan.snapshot_id)
+            key = self._anchor_key
+            assert key is not None
             relation = build_layer(
                 self.design, execution_model, key, relation_resolver=context.resolve
             )
             context.admit(relation)
-            result = self._stream_layer(relation, context)
-            with self._lock:
-                self._layers.setdefault(task.partition, {})[key] = result
-            return result
-        if task.layer != "frame":
-            raise ValueError(f"unsupported runtime task layer: {task.layer}")
+            return self._stream_layer(relation, context)
 
         from terrine.runtime.materialize import compose_runtime_frame
 
         persisted = {}
-        registered = []
-        with self._lock:
-            layer_outputs = dict(self._layers.get(task.partition, {}))
-        for key, arrow in layer_outputs.items():
+        name = None
+        if dependencies:
+            key = self._anchor_key
+            assert key is not None
+            (arrow,) = dependencies.values()
             name = f"_terrine_runtime_layer_{uuid.uuid4().hex}"
-            relation = _restore_persisted_layer(context, arrow, name)
-            registered.append(name)
-            persisted[key] = relation
+            persisted[key] = _restore_persisted_layer(context, arrow, name)
         spooled = None
         try:
             compiled = compose_runtime_frame(
@@ -655,7 +705,7 @@ class DesignExecutor:
         finally:
             if spooled is not None:
                 spooled.path.unlink(missing_ok=True)
-            for name in registered:
+            if name is not None:
                 context.con.drop_table(name, force=True)
 
     def _stream_layer(self, relation: Any, context: Any):
@@ -673,15 +723,7 @@ class DesignExecutor:
             context, source_names=required_sources, unit_name=self.design.unit
         )
 
-    @staticmethod
-    def _with_snapshot(key: Any, snapshot_id: str):
-        from dataclasses import replace
-
-        return replace(key, snapshot_id=snapshot_id)
-
     def publish(self, plan: Any, outputs: Any, lease: Any, run_id: str):
-        from contextlib import ExitStack
-
         from terrine.runtime.arrow import ArrowOutput
         from terrine.runtime.backends.base import StagedGeneration
 

@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
 import uuid
+from collections.abc import Buffer
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -28,6 +30,17 @@ def _checksum(path: Path) -> str:
     return digest.hexdigest()
 
 
+class _HashedWriter(io.BufferedWriter):
+    def __init__(self, path: Path) -> None:
+        super().__init__(path.open("wb", buffering=0))
+        self.digest = hashlib.sha256()
+
+    def write(self, buffer: Buffer, /) -> int:
+        size = super().write(buffer)
+        self.digest.update(buffer)
+        return size
+
+
 @dataclass(frozen=True, slots=True)
 class ArrowOutput:
     path: Path
@@ -42,7 +55,7 @@ class ArrowOutput:
         temporary = path.with_suffix(".tmp")
         rows = size = 0
         try:
-            with temporary.open("wb") as stream:
+            with _HashedWriter(temporary) as stream:
                 with pa.ipc.new_stream(stream, reader.schema) as writer:
                     for batch in reader:
                         if not batch.schema.equals(reader.schema, check_metadata=True):
@@ -61,7 +74,7 @@ class ArrowOutput:
                 stream.flush()
                 os.fsync(stream.fileno())
             temporary.replace(path)
-            return cls(path, _checksum(path), rows, size)
+            return cls(path, stream.digest.hexdigest(), rows, size)
         finally:
             reader.close()
             temporary.unlink(missing_ok=True)

@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- DuckDB staging uses separate anchor and Frame jobs. Low-level built-in
+  runners must pass `execution_mode="design"` to `plan_refresh`; drain queued
+  built-in work on its original version before upgrading. Custom callbacks
+  retain their existing task schedule.
+
 ## 0.1.0a3
 
 - Install `terrine[metric-definitions]` and call `Model.from_metric_definitions(...)`

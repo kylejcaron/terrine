@@ -322,6 +322,7 @@ def test_saved_runtime_correction_matches_clean_rebuild_of_new_generation(
                 definition_hash=design.spec_hash,
                 snapshot_id=snapshot.snapshot_id,
                 graph=graph,
+                execution_mode="design",
                 changes=changes,
                 budget=budget,
                 reuse_base_generation=expected_manifest,

@@ -3,14 +3,18 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import os
 import re
 import shutil
 import uuid
-from collections.abc import Mapping
-from dataclasses import asdict, dataclass, fields, is_dataclass, replace
+from collections.abc import Callable, Generator
+from contextlib import ExitStack, closing, contextmanager
+from dataclasses import asdict, dataclass, fields, replace
 from datetime import UTC, datetime, timedelta
+from functools import partial
 from pathlib import Path
-from typing import Any
+from tempfile import TemporaryDirectory
+from typing import Any, BinaryIO
 
 from terrine.data import Budget, UnitSource
 from terrine.errors import RefusalSpec, TerrineError
@@ -18,10 +22,10 @@ from terrine.execution._metadata import metadata_operation
 from terrine.execution.inputs import (
     ExecutionContext,
     PublishedInputs,
+    _bind_native_inputs,
     _capture_native_inputs,
     _catalog_hash,
     _native,
-    _reopen_native_inputs,
     open_execution,
     verify_immutable_inputs,
 )
@@ -30,16 +34,8 @@ from terrine.runtime.owner import RuntimeOwner
 from terrine.runtime.schema import check_runtime_schema
 from terrine.runtime.state import RuntimeStore
 from terrine.semantic.io import catalog_payload, validate_catalog
-from terrine.spec.anchors import EventAnchor
+from terrine.spec._capture import _design_root_names as _design_root_names
 from terrine.spec.design import Design
-from terrine.spec.expressions import (
-    ApproxMetricDistinct,
-    AttributeAsOf,
-    EventTime,
-    MetricAgg,
-    MetricQuantile,
-    RetentionMetric,
-)
 
 __all__ = ["ReopenableSnapshot", "SnapshotAuthority"]
 
@@ -63,10 +59,12 @@ def _canonical(value: Any) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
 
 
-def _file_hash(path: Path) -> str:
+def _file_hash(path: Path, *, copy_to: BinaryIO | None = None) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            if copy_to is not None:
+                copy_to.write(chunk)
             digest.update(chunk)
     return digest.hexdigest()
 
@@ -377,6 +375,54 @@ class SnapshotAuthority:
 
     @metadata_operation()
     def reopen(self, snapshot: ReopenableSnapshot, *, con: Any, namespace: str) -> _SnapshotContext:
+        import duckdb
+
+        restored, artifact = self._retained_artifact(snapshot, namespace)
+        if not artifact.is_file() or _file_hash(artifact) != restored.artifact_hash:
+            raise _INVALID.error(reason="retained artifact is absent or changed")
+        catalog, units = _retained_declarations(restored)
+        raw = duckdb.connect(str(artifact), read_only=True)
+        return _open_snapshot_context(restored, catalog, units, raw)
+
+    @contextmanager
+    def _run_image(
+        self, snapshot: ReopenableSnapshot, *, con: Any, namespace: str
+    ) -> Generator[Callable[[], _SnapshotContext]]:
+        """Retain one detached, read-only database backing for this attempt."""
+        import duckdb
+
+        if os.name == "posix":
+            restored, artifact = self._retained_artifact(snapshot, namespace)
+            with ExitStack() as resources:
+                try:
+                    private = resources.enter_context(TemporaryDirectory(prefix="terrine-run-"))
+                    image = Path(private) / "inputs.duckdb"
+                    with image.open("xb") as stream:
+                        digest = _file_hash(artifact, copy_to=stream)
+                except OSError:
+                    # No private image: keep checking the retained artifact at every open.
+                    pass
+                else:
+                    if digest != restored.artifact_hash:
+                        raise _INVALID.error(reason="retained artifact is absent or changed")
+                    catalog, units = _retained_declarations(restored)
+                    raw = resources.enter_context(
+                        closing(duckdb.connect(str(image), read_only=True))
+                    )
+                    try:
+                        image.unlink()
+                    except OSError:
+                        pass
+                    else:
+                        # The hashed bytes were written to a private copy. Its only
+                        # remaining handle is read-only, and cursors have separate temp state.
+                        yield lambda: _open_snapshot_context(restored, catalog, units, raw.cursor())
+                        return
+        yield partial(self.reopen, snapshot, con=con, namespace=namespace)
+
+    def _retained_artifact(
+        self, snapshot: ReopenableSnapshot, namespace: str
+    ) -> tuple[ReopenableSnapshot, Path]:
         if not isinstance(snapshot, ReopenableSnapshot):
             raise TypeError("snapshot must be ReopenableSnapshot")
         restored = ReopenableSnapshot.from_json(snapshot.to_json())
@@ -395,56 +441,58 @@ class SnapshotAuthority:
             artifact.relative_to(self.owner.snapshot_root)
         except ValueError as exc:
             raise _INVALID.error(reason="snapshot artifact is outside the owner root") from exc
-        if not artifact.is_file() or _file_hash(artifact) != restored.artifact_hash:
-            raise _INVALID.error(reason="retained artifact is absent or changed")
-        try:
-            catalog = validate_catalog(json.loads(restored.catalog_json))
-        except ValueError as exc:
-            raise _INVALID.error(reason="source declarations cannot be reconstructed") from exc
-        try:
-            units = {
-                name: UnitSource(**unit) for name, unit in json.loads(restored.units_json).items()
-            }
-            event_ids = json.loads(restored.event_ids_json)
-            if not isinstance(event_ids, dict) or not all(
-                isinstance(key, str) and isinstance(value, str) for key, value in event_ids.items()
-            ):
-                raise ValueError("event ID declarations are malformed")
-        except TerrineError:
-            raise
-        except (ValueError, TypeError, KeyError) as exc:
-            raise _INVALID.error(reason="source declarations cannot be reconstructed") from exc
-        if (
-            _catalog_hash(catalog)
-            != hashlib.sha256(_canonical(json.loads(restored.catalog_json))).hexdigest()
+        return restored, artifact
+
+
+def _retained_declarations(restored: ReopenableSnapshot) -> tuple[Any, dict[str, UnitSource]]:
+    try:
+        catalog = validate_catalog(json.loads(restored.catalog_json))
+    except ValueError as exc:
+        raise _INVALID.error(reason="source declarations cannot be reconstructed") from exc
+    try:
+        units = {name: UnitSource(**unit) for name, unit in json.loads(restored.units_json).items()}
+        event_ids = json.loads(restored.event_ids_json)
+        if not isinstance(event_ids, dict) or not all(
+            isinstance(key, str) and isinstance(value, str) for key, value in event_ids.items()
         ):
-            raise _INVALID.error(reason="Catalog declaration is not canonical")
-        published = _reopen_native_inputs(
-            catalog,
-            units=units,
-            path=artifact,
-            roots=restored.roots,
-        )
+            raise ValueError("event ID declarations are malformed")
+    except TerrineError:
+        raise
+    except (ValueError, TypeError, KeyError) as exc:
+        raise _INVALID.error(reason="source declarations cannot be reconstructed") from exc
+    if (
+        _catalog_hash(catalog)
+        != hashlib.sha256(_canonical(json.loads(restored.catalog_json))).hexdigest()
+    ):
+        raise _INVALID.error(reason="Catalog declaration is not canonical")
+    return catalog, units
+
+
+@metadata_operation()
+def _open_snapshot_context(
+    restored: ReopenableSnapshot, catalog: Any, units: dict[str, UnitSource], raw: Any
+) -> _SnapshotContext:
+    published = _bind_native_inputs(catalog, units=units, raw=raw, roots=restored.roots)
+    try:
         binding = verify_immutable_inputs(
             catalog, published.con, units=units, relations=published.relations
         )
         manager = open_execution(catalog, published.con, units=units, input_binding=binding)
-        try:
-            context = manager.__enter__()
-        except Exception:
-            published.close()
-            raise
-        context.snapshot = replace(
-            context.snapshot,
-            snapshot_id=restored.snapshot_id,
-            input_binding_id=restored.snapshot_id,
-            source_generations={
-                key: hashlib.sha256(f"{restored.artifact_hash}:{key}".encode()).hexdigest()
-                for key in context.snapshot.source_generations
-            },
-            replay_equivalence="verified",
-        )
-        return _SnapshotContext(context, manager, published)
+        context = manager.__enter__()
+    except BaseException:
+        published.close()
+        raise
+    context.snapshot = replace(
+        context.snapshot,
+        snapshot_id=restored.snapshot_id,
+        input_binding_id=restored.snapshot_id,
+        source_generations={
+            key: hashlib.sha256(f"{restored.artifact_hash}:{key}".encode()).hexdigest()
+            for key in context.snapshot.source_generations
+        },
+        replay_equivalence="verified",
+    )
+    return _SnapshotContext(context, manager, published)
 
 
 class _SnapshotContext(ExecutionContext):
@@ -465,84 +513,10 @@ class _SnapshotContext(ExecutionContext):
 
     def close(self) -> None:
         manager, self._manager = self._manager, None
-        if manager is not None:
-            manager.__exit__(None, None, None)
-        published, self._published = self._published, None
-        if published is not None:
-            published.close()
-
-
-def _design_root_names(
-    model: Model, design: Design
-) -> tuple[frozenset[str], frozenset[str], frozenset[str]]:
-    from terrine.spec.validate import resolve_unit, validate_design
-
-    design = resolve_unit(design, model)
-    sources: set[str] = (
-        set(validate_design(design, model).required_sources)
-        if design.unit in model.units
-        else set()
-    )
-    properties: set[str] = set()
-
-    def visit(value: Any) -> None:
-        if isinstance(value, (EventAnchor, EventTime)):
-            event = model.catalog.events.get(value.event)
-            if event is not None:
-                sources.add(event.source)
-            if isinstance(value, EventTime):
-                if value.label_property is not None:
-                    properties.add(value.label_property)
-                if value.relative_to is not None:
-                    visit(value.relative_to)
-        elif isinstance(value, RetentionMetric):
-            event = model.catalog.events.get(value.event)
-            if event is not None:
-                sources.add(event.source)
-            properties.add(value.label_property)
-        elif isinstance(value, AttributeAsOf):
-            properties.add(value.attribute)
-            if value.relative_to is not None:
-                visit(value.relative_to)
-        elif isinstance(value, (MetricAgg, MetricQuantile, ApproxMetricDistinct)):
-            metric = model.catalog.metrics.get(value.metric)
-            if metric is not None:
-                for measure_name in (metric.measure, metric.numerator, metric.denominator):
-                    if measure_name is None:
-                        continue
-                    measure = model.catalog.measures.get(measure_name)
-                    if measure is not None:
-                        event = model.catalog.events.get(measure.event)
-                        if event is not None:
-                            sources.add(event.source)
-            if isinstance(value, MetricAgg) and value.relative_to is not None:
-                visit(value.relative_to)
-        elif isinstance(value, Mapping):
-            for child in value.values():
-                visit(child)
-        elif isinstance(value, (tuple, list)):
-            for child in value:
-                visit(child)
-        elif is_dataclass(value) and not isinstance(value, type):
-            for item in fields(value):
-                visit(getattr(value, item.name))
-
-    for role in ("features", "outcomes", "eligibility"):
-        visit(getattr(design, role, {}))
-    visit(design.anchor)
-    visit(design.treatment)
-    visit(design.shape)
-    dimension_names: set[str] = set()
-    for property_name in properties:
-        prop = model.catalog.properties.get(property_name)
-        if prop is None:
-            continue
-        sources.add(prop.source)
-        if prop.dimension is not None:
-            dimension_names.add(prop.dimension)
-    for source_name in sources:
-        source = model.catalog.sources.get(source_name)
-        if source is not None:
-            dimension_names.update(source.dimensions)
-    unit_names = {design.unit} if design.unit in model.units else set()
-    return frozenset(sources), frozenset(dimension_names), frozenset(unit_names)
+        try:
+            if manager is not None:
+                manager.__exit__(None, None, None)
+        finally:
+            published, self._published = self._published, None
+            if published is not None:
+                published.close()

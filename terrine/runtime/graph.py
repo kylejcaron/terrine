@@ -35,6 +35,29 @@ class DependencyGraph:
         return tuple(ordered)
 
 
+def _design_jobs(
+    graph: DependencyGraph, selected: tuple[LayerNode, ...]
+) -> dict[LayerNode, dict[LayerNode, None]]:
+    """Project a selected logical graph onto the compiler's jobs per partition."""
+    parents: dict[LayerNode, list[LayerNode]] = {node: [] for node in selected}
+    for source, target in graph.edges:
+        if source in parents and target in parents:
+            parents[target].append(source)
+    representatives: dict[tuple[str, str], LayerNode] = {}
+    frontier: dict[LayerNode, tuple[LayerNode, ...]] = {}
+    jobs: dict[LayerNode, dict[LayerNode, None]] = {}
+    for node in selected:
+        dependencies = dict.fromkeys(job for parent in parents[node] for job in frontier[parent])
+        if node.layer in {"anchor", "frame"}:
+            # Each Design compiles the whole layer, not a separate layer per fact.
+            job = representatives.setdefault((node.layer, node.partition), node)
+            jobs.setdefault(job, {}).update(dependencies)
+            frontier[node] = (job,)
+        else:
+            frontier[node] = tuple(dependencies)
+    return jobs
+
+
 def dependency_graph(
     model: object | None = None,
     design: object | None = None,
