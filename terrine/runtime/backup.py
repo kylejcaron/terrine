@@ -193,18 +193,24 @@ class _Inventory:
         if prior is not None and prior.path is not None:
             relative = _relative(prior.path)
         else:
-            directory = location / namespace
-            # Legacy state records have a snapshot ID but no filename. Read only
-            # the receipt at that exact ID, never unrelated or temporary files.
-            _require(directory.resolve() == directory, "unsafe_path")
-            candidates = [
-                item.name
-                for item in directory.iterdir()
-                if item.name.endswith(f"-{snapshot_id}")
-                and re.fullmatch(r"[A-Za-z0-9_.-]+", item.name)
-            ]
+            # Legacy state records have a snapshot ID but no filename. Match
+            # only that ID under DuckDB aliases of this schema.
+            candidates = []
+            for directory in location.iterdir():
+                if directory.name.lower() != namespace.lower():
+                    continue
+                _require(not directory.is_symlink(), "unsafe_path")
+                candidates.extend(
+                    Path(directory.name, item.name, "receipt.json")
+                    for item in directory.iterdir()
+                    if item.name.endswith(f"-{snapshot_id}")
+                    and re.fullmatch(r"[A-Za-z0-9_.-]+", item.name)
+                )
             _require(len(candidates) == 1, "missing_or_ambiguous_snapshot")
-            relative = _ROOT / namespace / candidates[0] / "receipt.json"
+            with _open_regular(location, candidates[0]) as stream:
+                stored_namespace = ReopenableSnapshot.from_json(stream.read()).namespace
+            _require(stored_namespace.lower() == namespace.lower(), "invalid_snapshot_binding")
+            relative = _ROOT / stored_namespace / candidates[0].parent.name / "receipt.json"
 
         def verify(encoded: bytes) -> None:
             receipt = ReopenableSnapshot.from_json(encoded)
@@ -214,9 +220,9 @@ class _Inventory:
                 "unsupported_snapshot_format",
             )
             _, original_root = _owner_parts(receipt.owner_reference)
-            expected = Path(namespace, f"{receipt.run_id}-{snapshot_id}")
+            expected = Path(receipt.namespace, f"{receipt.run_id}-{snapshot_id}")
             _require(
-                receipt.namespace == namespace
+                receipt.namespace.lower() == namespace.lower()
                 and receipt.snapshot_id == snapshot_id
                 and re.fullmatch(r"[A-Za-z0-9_.-]+", receipt.run_id) is not None
                 and relative == _ROOT / expected / "receipt.json"
@@ -272,7 +278,8 @@ class _Inventory:
 
     def saved(self, value: str, namespace: str) -> tuple[SavedPlan, RefreshPlan]:
         saved = SavedPlan.from_json(value)
-        plan = _bind_saved_plan(saved, namespace=namespace)
+        _require(saved.namespace.lower() == namespace.lower(), "plan_scope_mismatch")
+        plan = _bind_saved_plan(saved, namespace=saved.namespace)
         self.plan_record(namespace, saved.plan_hash, saved.destination.database)
         return saved, plan
 
@@ -342,7 +349,9 @@ class _Inventory:
                     _digest(digest)
                     and invocation.invocation_id == invocation_id
                     and invocation.request_key
-                    == _hash(_json((namespace, invocation_id, invocation.destination.to_dict())))
+                    == _hash(
+                        _json((plan.namespace, invocation_id, invocation.destination.to_dict()))
+                    )
                     and (
                         invocation.serialized_plan,
                         invocation.destination,
@@ -353,7 +362,7 @@ class _Inventory:
                 )
                 requests[invocation.request_key] = saved, plan
             _require(
-                plan.namespace == namespace and plan.snapshot_id == snapshot_id,
+                plan.namespace.lower() == namespace.lower() and plan.snapshot_id == snapshot_id,
                 "plan_scope_mismatch",
             )
             plans[plan.definition.fingerprint] = plan
@@ -437,13 +446,13 @@ class _Inventory:
                 f"FROM {schema}.runtime_tasks WHERE output_blob IS NOT NULL"
             )
             while (task := task_cursor.fetchone()) is not None:
-                self.task(namespace, task, runs, plans)
+                self.task(task, runs, plans)
         finally:
             task_cursor.close()
 
         self.publications(con, namespace, query, runs, requests, snapshots, collected)
 
-    def task(self, namespace, task, runs, plans) -> None:
+    def task(self, task, runs, plans) -> None:
         run_id, _, payload, _, _ = task
         _require(run_id in runs, "orphan_task_output")
         run = runs[run_id]
@@ -457,7 +466,7 @@ class _Inventory:
             plan = plans.get(run[1])
             if plan is None:
                 raise _INVALID.error(reason="missing_arrow_plan")
-            self.arrow(namespace, task, run, plan)
+            self.arrow(plan.namespace, task, run, plan)
         else:
             with pa.ipc.open_stream(payload) as reader:
                 for batch in reader:

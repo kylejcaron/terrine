@@ -44,6 +44,58 @@ def _owner_cli(*args):
     )
 
 
+def test_offline_backup_preserves_mixed_case_namespace_generations(tmp_path, monkeypatch):
+    from terrine import Dataset, UnitSource
+    from terrine.runtime.backup import backup_owner, restore_owner
+    from terrine.runtime.owner import RuntimeOwner
+    from terrine.runtime.snapshot import SnapshotAuthority
+
+    monkeypatch.setenv("TERRINE_RUNTIME_NAMESPACE", "runtime")
+    monkeypatch.delenv("TERRINE_RUNTIME_SNAPSHOT_ROOT", raising=False)
+    state = tmp_path / "source.duckdb"
+    con = ibis.duckdb.connect(str(state))
+    owner = RuntimeOwner.from_connection(con)
+    try:
+        con.raw_sql(
+            "CREATE TABLE events AS SELECT TIMESTAMP '2025-01-01 09:00:00' AS ts, "
+            "1::INTEGER AS user_id, 3::INTEGER AS value"
+        )
+        con.raw_sql("CREATE TABLE users AS SELECT 1::INTEGER AS id")
+        model = Model.from_catalog(
+            _catalog(),
+            con=con,
+            readiness={"events": Coverage("2025-01-01", "2025-02-01")},
+            units={"user": UnitSource("users", "id")},
+        )
+        frame = Design(
+            "user", FixedDate("2025-01-02"), features={"total": agg("total", window=("-1d", "0s"))}
+        ).build(model)
+        lower = frame.stage("lower")
+        monkeypatch.setenv("TERRINE_RUNTIME_NAMESPACE", "RUNTIME")
+        upper = frame.stage("upper")
+        con.raw_sql("CHECKPOINT")
+    finally:
+        con.disconnect()
+
+    bundle = tmp_path / "backup"
+    inventory = backup_owner(state, owner.snapshot_root, bundle)
+    restored = restore_owner(bundle, inventory["digest"], tmp_path / "restored")
+    con = ibis.duckdb.connect(restored["state_path"])
+    try:
+        authority = SnapshotAuthority(RuntimeOwner.from_connection(con))
+        for name, namespace, original in (("lower", "runtime", lower), ("upper", "RUNTIME", upper)):
+            generation = original.manifest.generation.generation_id
+            opened = Dataset.open_generation(name, generation, con=con, namespace="runtime")
+            assert opened.to_pyarrow()["total"].to_pylist() == [3.0]
+            snapshot = authority.find_retained(
+                original.manifest.source_snapshots["snapshot_id"], namespace=namespace
+            )
+            assert snapshot.namespace == namespace
+            assert snapshot.receipt_hash == original.manifest.source_snapshots["receipt_hash"]
+    finally:
+        con.disconnect()
+
+
 def test_offline_backup_restores_only_selected_owner_and_exact_request(tmp_path, monkeypatch):
     import shutil
     from pathlib import Path

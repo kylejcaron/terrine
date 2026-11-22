@@ -38,8 +38,9 @@ def _hash(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def _key(kind: str, *parts: str) -> str:
-    return _json((kind, *parts)).decode()
+def _key(kind: str, namespace: str, *parts: str) -> str:
+    # DuckDB folds schema identifiers, even when quoted. Artifact paths do not.
+    return _json((kind, namespace.lower(), *parts)).decode()
 
 
 def _relative(value: str) -> Path:
