@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any
 
 import ibis
 import pyarrow as pa
@@ -22,8 +23,72 @@ from terrine.spec import (
     event_time,
 )
 from terrine.spec.trajectory import Trajectory
-from tests.semantic.test_from_tables import WINDOW, create_tables, orders, rich_model
+from tests.conftest import readme_con as readme_con
+from tests.fixtures.readme import readme_design, readme_model
+from tests.semantic.test_from_tables import WINDOW, _snapshot, create_tables, orders, rich_model
 from tests.semantic.test_from_tables import con as con
+from tests.semantic.test_from_tables import nullable_pandas_model as nullable_pandas_model
+
+README_ROWS = {
+    ("alice", "2025-02-01"): (2, 75.0, 25.0, None),
+    ("bob", "2025-02-01"): (1, 80.0, 0.0, None),
+    ("carol", "2025-02-01"): (0, 0.0, 0.0, None),
+    ("alice", "2025-03-01"): (1, 25.0, None, "incomplete_coverage"),
+    ("bob", "2025-03-01"): (0, 0.0, None, "incomplete_coverage"),
+    ("carol", "2025-03-01"): (0, 0.0, None, "incomplete_coverage"),
+}
+
+
+def _readme_rows(model: Model) -> dict[tuple[str, str], tuple[Any, ...]]:
+    table = readme_design().build(model).to_pyarrow().to_pydict()
+    return {
+        (unit, t0.date().isoformat()): (orders_30d, spend_30d, spend_next_30d, reason)
+        for unit, t0, orders_30d, spend_30d, spend_next_30d, reason in zip(
+            table["unit"],
+            table["t0"],
+            table["orders_30d"],
+            table["spend_30d"],
+            table["spend_next_30d"],
+            table["spend_next_30d__reason"],
+            strict=True,
+        )
+    }
+
+
+def test_readme_model_builds_the_readme_rows(readme_con):
+    assert _readme_rows(readme_model(readme_con)) == README_ROWS
+
+
+def test_in_memory_readme_model_builds_the_readme_rows():
+    pytest.importorskip("pandas")
+    model = readme_model()
+    try:
+        assert _readme_rows(model) == README_ROWS
+    finally:
+        model.con.disconnect()
+
+
+def test_nullable_dataframe_fields_reach_window_selection_and_reasons(nullable_pandas_model):
+    model = nullable_pandas_model
+    rows = _snapshot(
+        model,
+        "2025-01-10",
+        features={
+            "n": agg("n", window=("-9d", "0s")),
+            "qty": agg("qty", window=("-9d", "0s")),
+            "paid": agg("paid", window=("-9d", "0s")),
+            "last_status": asof("status", before="0s"),
+            "last_flag": asof("flag", before="0s"),
+            "last_qty": asof("qty", before="0s"),
+        },
+    )
+    assert rows["n"] == {"alice": 2, "bob": 2}
+    assert rows["qty"] == {"alice": 1, "bob": 7}
+    assert rows["paid"] == {"alice": 1, "bob": 2}
+    assert rows["last_status"] == {"alice": "refunded", "bob": "paid"}
+    assert rows["last_flag"] == {"alice": None, "bob": True}
+    assert rows["last_flag__reason"] == {"alice": "all_values_null", "bob": None}
+    assert rows["last_qty"] == {"alice": None, "bob": 4}
 
 
 def _rebound(model: Model) -> Model:

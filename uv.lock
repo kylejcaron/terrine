@@ -6137,7 +6137,7 @@ requires-dist = [
     { name = "ibis-framework", extras = ["duckdb"], marker = "extra == 'duckdb'", specifier = ">=11,<13" },
     { name = "ibis-framework", extras = ["postgres"], marker = "extra == 'postgres'", specifier = ">=12,<13" },
     { name = "ibis-framework", extras = ["snowflake"], marker = "extra == 'snowflake'", specifier = ">=12,<13" },
-    { name = "increment", marker = "extra == 'increment'", specifier = ">=0.1.0a2,<0.2" },
+    { name = "increment", marker = "extra == 'increment'", specifier = "==0.1.0a2" },
     { name = "increment-metrics", marker = "extra == 'metric-definitions'", specifier = ">=0.1.0a1,<0.2" },
     { name = "lifelines", marker = "extra == 'lifelines'", specifier = ">=0.30,<1" },
     { name = "numpy", specifier = ">=2.1,<3" },

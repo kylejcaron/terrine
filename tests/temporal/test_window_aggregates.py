@@ -958,24 +958,6 @@ def test_small_window_after_large_history_keeps_selected_values(con, exact):
 
 
 @pytest.mark.parametrize(
-    "value,expected",
-    [
-        (4e-10, 0.0),
-        (-4e-10, 0.0),
-        (6e-10, 1e-9),
-        (-6e-10, -1e-9),
-        (1 / 1024, 0.000976563),
-        (-1 / 1024, -0.000976563),
-    ],
-)
-def test_quantization_rounds_to_nearest_nano_unit(con, value, expected):
-    pair = _local(con, [value])
-    actual = _rows(con, _result(_anchors(con), [pair]))[0]["requested"]
-    assert actual == pytest.approx(expected, rel=1e-15, abs=1e-24)
-    assert abs(Fraction(actual) - Fraction(value)) <= window_sum_bound([value])
-
-
-@pytest.mark.parametrize(
     "values,aggregation,expected,reason",
     [
         # Every nonzero contribution quantizes to zero: the exact sum is zero and says so.

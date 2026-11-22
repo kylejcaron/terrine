@@ -199,10 +199,12 @@ administrative compatibility does not permit obsolete execution or replay
   a manifest, Arrow/Parquet metadata, a receipt and the expected output schema
   and roles of each stored Design. A [unit test](../../tests/test_artifact_corpus.py)
   decodes every document and verifies its recorded digests and checksums; an
-  [integration test](../../integration/test_artifact_corpus_schema.py) compiles
-  current-generation Designs with the current code and requires their recorded
-  schema and roles, then regenerates that corpus without changing historical
-  generations. Historical documents retain separate decoding and identity checks.
+  [integration test](../../integration/test_artifact_corpus_schema.py) checks
+  current-generation schemas and roles. Each recipe's JSON Design, YAML Design,
+  and dataset definition are decoded independently and must agree before sharing
+  a materialization. The three distinct root definitions are materialized
+  separately. Regeneration must match the recorded bytes without changing any
+  saved generation.
 - Release tags in the 0.x series require a successful CI run. Release candidates
   and final tags require successful CI, PostgreSQL, and scale jobs; the scale
   tier includes the release-upgrade test. BigQuery and Snowflake are advisory

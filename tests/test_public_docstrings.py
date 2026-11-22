@@ -3,8 +3,6 @@ import re
 from collections.abc import Iterator
 from textwrap import dedent
 
-import pytest
-
 import terrine
 import terrine.dataset
 import terrine.export
@@ -55,22 +53,28 @@ def _public_objects() -> Iterator[tuple[str, object]]:
 
 def _example_blocks(doc: str) -> Iterator[str]:
     for section in re.split(r"^Example:[ \t]*", doc, flags=re.M)[1:]:
-        inline, *following = section.splitlines()
+        inline, _, following = section.partition("\n")
         body = []
-        for line in following:
+        for line in following.splitlines():
             if line and not line.startswith("    "):
                 break
             body.append(line)
         yield "\n".join((inline, dedent("\n".join(body)))).strip()
 
 
-@pytest.mark.parametrize(("name", "obj"), list(_public_objects()))
-def test_public_names_document_themselves_with_an_example(name: str, obj: object):
-    doc = inspect.getdoc(obj)
-    assert doc, name
-    examples = list(_example_blocks(doc))
-    assert examples, name
-    assert all(examples), name
+def test_public_names_document_themselves_with_an_example():
+    failures = []
+    for name, obj in _public_objects():
+        doc = inspect.getdoc(obj)
+        if not doc:
+            failures.append(f"{name}: missing docstring")
+            continue
+        examples = list(_example_blocks(doc))
+        if not examples:
+            failures.append(f"{name}: missing example")
+        elif not all(examples):
+            failures.append(f"{name}: empty example block")
+    assert not failures, "\n".join(failures)
 
 
 def test_public_callables_document_every_parameter():
