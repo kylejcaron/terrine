@@ -76,30 +76,20 @@ def preview(
         raise ValueError("bounded_count must be a nonnegative integer")
     if budget is not None and not isinstance(budget, Budget):
         raise TypeError("budget must be Budget or None")
-    from terrine.compile.dispatch import compile_design
-    from terrine.spec.validate import resolve_unit, validate_design
+    from terrine.compile.dispatch import _bind_study, _prepare_study
 
-    design = resolve_unit(design, model)
-    planned = compile_design(design, model)
+    # Planning and private execution must observe metadata in separate scopes.
+    requirements, planned = _prepare_study(design, model)
+    source_reads = planned.source_reads
     warnings = (_SCAN_WARNING,)
     counts: dict[str, Any] = {}
     if bounded_count:
         _scan_policy(budget)
-        from terrine.execution.inputs import open_execution
-
-        with open_execution(
-            model.catalog,
-            model.con,
-            units=model.units,
-            input_binding=model.input_binding,
-            engine=model._engine,
-        ) as context:
-            execution_model = model._for_execution(
-                context,
-                source_names=set(validate_design(design, model).required_sources),
-                unit_name=design.unit,
-            )
-            compiled = compile_design(design, execution_model)
+        with model._study_execution(
+            lambda: set(requirements.required_sources), unit_name=requirements.design.unit
+        ) as (context, execution_model):
+            compiled = _bind_study(requirements, model, execution_model, prune_output=True)
+            source_reads = compiled.source_reads
             # Admit every relation the count will run, integrity checks included,
             # so an unsupported primitive refuses before the first source read.
             context.admit(*compiled.reads())
@@ -127,5 +117,6 @@ def preview(
         },
         strategy=planned.strategy,
         budget_warnings=warnings,
+        source_reads=source_reads,
         **counts,
     )

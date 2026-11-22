@@ -25,6 +25,13 @@ value is `m_0 + ... + m_a`, the total in `[t0, t0 + (a+1)*p)`.
 after it. An event declared by
 [`Model.from_tables`](temporal-engine.md#binding-event-tables) can be the origin.
 
+On DuckDB, a trajectory with a native UTC microsecond clock and an unfiltered
+SUM measure can assign each event directly to one age per origin. The query
+keeps empty ages. Trajectories with baseline features, eligibility, treatment,
+keyed or dimension-backed sources, or other time axes use the regular window
+compiler. This does not change age boundaries, arithmetic policy, or support metadata.
+Native floating-point sums remain order-dependent.
+
 Supported options are `features`, `eligibility`, `treatment`, `anchor_range`,
 `gap="0d"`, and `administrative_cutoff=None`. Other optional inputs default to
 `None`. Arbitrary `outcomes` are not accepted: the trajectory defines the value
@@ -213,6 +220,15 @@ Delayed entry contributes to the risk set starting at its actual entry bin;
 events and censoring are recorded in their terminal-time bin. Censor reasons
 remain explicit counts in `censored_by_reason`; no incomplete record is
 zero-filled or reclassified as an event.
+
+Each group emits all bins from zero through its last terminal bin, including
+bins before anyone enters. `Budget.max_rows` and `Budget.max_output_bytes`
+apply to the final life table, not the individual follow-up records. Frame
+materialization can reduce those records in batches, but the budget does not
+cap process memory. For bounded reads of an ordinary pinned dataset, use
+[`Dataset.to_arrow_batches`](ml-staging.md). Event and censor rates are null
+wherever no one is at risk.
+
 Every risk-set value has its own adjacent support columns, such as
 `events__complete` and `events__reason`. The latter is `list<string>` and retains
 all distinct exact incompleteness reasons for the trajectory, not just one.

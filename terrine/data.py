@@ -1501,6 +1501,15 @@ class CoverageSummary:
         object.__setattr__(self, "end_exclusive", end)
 
 
+@dataclass(frozen=True, slots=True)
+class _SourceRead:
+    family: str
+    source: str
+    event_span: CoverageSummary | None
+    physical_key: str | None
+    reason: str | None
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Preview:
     planned_rows: int | None
@@ -1516,6 +1525,7 @@ class Preview:
     eligible_rows: int | None = None
     counted_rows: int | None = None
     count_capped: bool = False
+    source_reads: tuple[_SourceRead, ...] = ()
 
     def __post_init__(self) -> None:
         for name in (
@@ -1544,6 +1554,9 @@ class Preview:
         ):
             raise TypeError("budget_warnings must be a tuple of strings")
         object.__setattr__(self, "budget_warnings", tuple(self.budget_warnings))
+        if not all(isinstance(use, _SourceRead) for use in self.source_reads):
+            raise TypeError("source_reads must contain source-read summaries")
+        object.__setattr__(self, "source_reads", tuple(self.source_reads))
 
 
 def _encode(value: Any) -> Any:

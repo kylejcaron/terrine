@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Generator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
 from datetime import date, datetime
 from difflib import get_close_matches
+from functools import cache
 from importlib import import_module
 from pathlib import Path
 from types import MappingProxyType
@@ -17,7 +19,7 @@ import pyarrow as pa
 
 from terrine.backends.registry import Engine, resolve_engine
 from terrine.data import BoundCoverage, Coverage, EventMetric, Events, History, Ratio, UnitSource
-from terrine.errors import RefusalSpec
+from terrine.errors import RefusalSpec, TerrineError
 from terrine.execution._metadata import metadata_operation
 from terrine.execution._native import _ascii_key
 from terrine.metrics import _filters
@@ -45,6 +47,7 @@ if TYPE_CHECKING:
     from increment_metrics import Catalog as SharedCatalog
 
     from terrine.execution.inputs import ExecutionContext, VerifiedInputBinding
+
 __all__ = ["Catalog", "EventMetric", "Model", "Ratio", "Readiness"]
 
 _INVALID = RefusalSpec(
@@ -430,6 +433,7 @@ class Model:
         )
 
     @classmethod
+    @metadata_operation()
     def from_tables(
         cls,
         con: Any | None = None,
@@ -897,6 +901,56 @@ class Model:
     def _relation(self, relation: RelationSpec) -> Any:
         return self._resolver(relation)
 
+    def _execution_inputs(
+        self, source_names: set[str], unit_name: str | None
+    ) -> tuple[Mapping[str, UnitSource], tuple[RelationSpec, ...]]:
+        units = (
+            self.units
+            if unit_name is None
+            else ({unit_name: self.units[unit_name]} if unit_name in self.units else {})
+        )
+        dimension_names = {
+            name for source in source_names for name in self.catalog.sources[source].dimensions
+        }
+        relations = (
+            *(self.catalog.sources[name].relation for name in sorted(source_names)),
+            *(self.catalog.dimensions[name].relation for name in sorted(dimension_names)),
+            *(TableRef(kind="table", name=unit.table) for unit in units.values()),
+        )
+        return units, relations
+
+    @contextmanager
+    def _study_execution(
+        self, source_names: Callable[[], set[str]], *, unit_name: str | None
+    ) -> Generator[tuple[ExecutionContext, Model]]:
+        from terrine.execution.inputs import open_execution
+
+        select_sources = cache(source_names)
+
+        def study_roots() -> tuple[RelationSpec, ...] | None:
+            try:
+                selected = select_sources()
+            except TerrineError:
+                # A later design refusal must not precede full input admission.
+                return None
+            return self._execution_inputs(selected, unit_name)[1]
+
+        with (
+            metadata_operation(),
+            open_execution(
+                self.catalog,
+                self.con,
+                units=self.units,
+                input_binding=self.input_binding,
+                engine=self._engine,
+                _study_roots=study_roots,
+            ) as context,
+        ):
+            yield (
+                context,
+                self._for_execution(context, source_names=select_sources(), unit_name=unit_name),
+            )
+
     @metadata_operation()
     def _for_execution(
         self,
@@ -906,19 +960,7 @@ class Model:
         unit_name: str | None = None,
     ) -> Model:
         selected_sources = set(self.catalog.sources) if source_names is None else source_names
-        units = (
-            self.units
-            if unit_name is None
-            else ({unit_name: self.units[unit_name]} if unit_name in self.units else {})
-        )
-        dimension_names = {
-            name for source in selected_sources for name in self.catalog.sources[source].dimensions
-        }
-        relations = (
-            *(self.catalog.sources[name].relation for name in sorted(selected_sources)),
-            *(self.catalog.dimensions[name].relation for name in sorted(dimension_names)),
-            *(TableRef(kind="table", name=unit.table) for unit in units.values()),
-        )
+        units, relations = self._execution_inputs(selected_sources, unit_name)
         for relation in relations:
             declared = self._relation(relation).schema()
             retained = context.resolve(relation).schema()

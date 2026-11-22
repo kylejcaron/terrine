@@ -4,11 +4,13 @@ import ibis
 import pyarrow as pa
 import pytest
 
-from terrine.data import Budget, Coverage, EligibilitySummary, UnitSource
+from terrine.data import Budget, Coverage, EligibilitySummary, Events, UnitSource
 from terrine.errors import TerrineError
+from terrine.metrics import count
 from terrine.model import Model
 from terrine.semantic.models import Catalog
 from terrine.spec import (
+    AnchorRange,
     CalendarComparisonSpec,
     CohortSpec,
     Design,
@@ -17,6 +19,7 @@ from terrine.spec import (
     Initiation,
     Schedule,
     agg,
+    asof,
     gt,
 )
 from terrine.spec.trajectory import Trajectory
@@ -135,6 +138,65 @@ def _refusal(design, model):
     return error.value
 
 
+@pytest.mark.parametrize(
+    ("anchor", "unit", "spend"),
+    [
+        (EventAnchor("amount", "first"), "b", 5.0),
+        (EventAnchor("amount", "nth", n=3), "a", 4.0),
+    ],
+)
+def test_ranked_anchor_preserves_history_with_a_window_on_the_same_facts(con, anchor, unit, spend):
+    february = datetime(2025, 2, 1, tzinfo=UTC)
+    model = _orders_model(
+        con,
+        [
+            _order("a", datetime(2025, 1, 10, tzinfo=UTC), amount=2.0),
+            _order("a", datetime(2025, 1, 20, tzinfo=UTC), amount=3.0),
+            _order("a", february, amount=4.0),
+            _order("b", february, amount=5.0),
+        ],
+    )
+    design = Design(
+        "user",
+        anchor,
+        anchor_range=AnchorRange(start="2025-02-01"),
+        outcomes={"spend": agg("spend", window=("0s", "1h"))},
+    )
+    rows = design.build(model).materialize().table.to_pylist()
+    assert [(row["unit"], row["t0"], row["spend"]) for row in rows] == [(unit, february, spend)]
+
+
+def test_materialize_checks_out_of_window_filter_membership_with_no_anchors(con):
+    con.raw_sql("""
+        CREATE TABLE users AS SELECT 'a' AS user_id;
+        CREATE TABLE orders AS
+        SELECT 'a' AS user_id, TIMESTAMPTZ '2025-01-01' AS ts, NULL::DOUBLE AS score;
+    """)
+    model = Model.from_tables(
+        con,
+        units={"user": UnitSource("users", "user_id")},
+        events={
+            "purchase": Events(
+                "orders",
+                time="ts",
+                key="user_id",
+                where={"score__gt": 0},
+                complete=("2025-01-01", "2025-01-31"),
+                metrics={"orders": count()},
+            )
+        },
+    )
+    design = Design(
+        "user",
+        FixedDate("2025-01-03"),
+        anchor_range=AnchorRange(start="2025-01-05"),
+        features={"orders": agg("orders", window=("-1h", "0s"))},
+    )
+    error = _refusal(design, model)
+    assert error.code == "terrine.compile.anchor_integrity"
+    assert error.context["check_key"] == "unknown_event_filter_value"
+
+
 @pytest.mark.parametrize("order", ["metric_first", "nonadditive_first"])
 def test_first_refusal_follows_registration_order_across_check_kinds(con, order):
     """An unrelated valid additive output must not reorder interleaved refusals."""
@@ -166,14 +228,17 @@ def test_first_refusal_follows_registration_order_across_check_kinds(con, order)
 
 
 @pytest.mark.parametrize(
-    ("history_first", "conversion"),
+    ("history_first", "conversion", "as_of"),
     [
-        pytest.param(False, False, id="earlier_numeric"),
-        pytest.param(True, False, id="own_history_before_numeric"),
-        pytest.param(True, True, id="conversion_without_row_checks"),
+        pytest.param(False, False, False, id="earlier_numeric"),
+        pytest.param(True, False, False, id="own_history_before_numeric"),
+        pytest.param(True, True, False, id="conversion_without_row_checks"),
+        pytest.param(False, False, True, id="later_asof_can_multiply_candidates"),
     ],
 )
-def test_source_history_refusal_follows_first_consuming_output(con, history_first, conversion):
+def test_source_history_refusal_follows_first_consuming_output(
+    con, history_first, conversion, as_of
+):
     model = _orders_model(
         con, [_order("a", datetime(2025, 1, 1, 12, tzinfo=UTC), amount=float("nan"))]
     )
@@ -235,7 +300,7 @@ def test_source_history_refusal_follows_first_consuming_output(con, history_firs
         readiness={name: Coverage("2024-12-01", "2025-02-01") for name in ("orders", "other")},
     )
     invalid = agg("spend", window=("-1d", "0s"))
-    history = agg("other_spend", window=("-1d", "0s"))
+    history = asof("tier", before="0s") if as_of else agg("other_spend", window=("-1d", "0s"))
     features = (
         {"a_history": history, "b_invalid": invalid}
         if history_first
@@ -247,6 +312,8 @@ def test_source_history_refusal_follows_first_consuming_output(con, history_firs
         if history_first
         else "terrine.temporal.float64_precision"
     )
+    if not history_first:
+        assert error.context["failed_count"] == 1
 
 
 def test_metric_refusal_precedes_shape_refusal():
@@ -345,37 +412,57 @@ _SPEND = {"spend": agg("spend", window=("-1d", "0s"))}
 
 
 def _recording(monkeypatch):
-    """Record the SQL of every statement a materialization executes or streams."""
-    from terrine.execution.inputs import ExecutionContext
+    """Record the SQL submitted for each study read, excluding provider setup."""
+    from terrine.execution.inputs import _DuckDBSession
 
     executed, streamed = [], []
-    execute, to_arrow_batches = ExecutionContext.execute, ExecutionContext.to_arrow_batches
+    execute, batches = _DuckDBSession.execute, _DuckDBSession.batches
 
-    def recording_execute(self, query):
-        executed.append(ibis.to_sql(query, dialect="duckdb"))
-        return execute(self, query)
+    def recording_execute(self, con, query, sql):
+        executed.append(sql)
+        return execute(self, con, query, sql)
 
-    def recording_batches(self, query, **kwargs):
-        streamed.append(ibis.to_sql(query, dialect="duckdb"))
-        return to_arrow_batches(self, query, **kwargs)
+    def recording_batches(self, con, query, sql, **kwargs):
+        streamed.append(sql)
+        return batches(self, con, query, sql, **kwargs)
 
-    monkeypatch.setattr(ExecutionContext, "execute", recording_execute)
-    monkeypatch.setattr(ExecutionContext, "to_arrow_batches", recording_batches)
+    monkeypatch.setattr(_DuckDBSession, "execute", recording_execute)
+    monkeypatch.setattr(_DuckDBSession, "batches", recording_batches)
     return executed, streamed
 
 
-def test_materialize_issues_one_output_statement(con, monkeypatch):
-    """With no check that must run in place, the anchor checks are the only
-    separate statements: every window check and the eligibility summary ride
-    on the one output statement, whose gate columns never reach the result."""
-    model = _orders_model(con, [_order("a", _NOON, amount=1.0), _order("b", _NOON, amount=2.0)])
+@pytest.mark.parametrize(("label_count", "statements"), [(0, 2), (1, 3), (4, 3)])
+def test_materialize_batches_independent_checks(con, monkeypatch, label_count, statements):
+    model = _orders_model(
+        con,
+        [
+            _order("a", _NOON, amount=1.0),
+            _order("b", _NOON, amount=2.0),
+            _order("a", _NOON.replace(day=2), amount=None),
+            _order("b", _NOON.replace(day=2), amount=3.0),
+        ],
+    )
+    labels = tuple(f"label_{i}" for i in range(4))
+    frame = Design(
+        "user",
+        FixedDate("2025-01-02"),
+        features=_SPEND,
+        outcomes={name: agg("spend", window=("0s", "1d")) for name in labels},
+    ).build(model)
+    if label_count:
+        frame = frame.training_set(label=labels[:label_count])
     executed, streamed = _recording(monkeypatch)
-    result = Design("user", FixedDate("2025-01-02"), features=_SPEND).build(model).materialize()
-    assert result.table.num_rows == 2
+    result = frame.materialize()
+    if label_count:
+        assert result.table["unit"].to_pylist() == ["b"]
+        assert result.provenance.dataset_view is not None
+        assert result.provenance.dataset_view.counts_by_reason == {"all_values_null": label_count}
+    else:
+        assert result.table.num_rows == 2
+    assert len(executed) + len(streamed) == statements
     assert not any(name.startswith("__terrine_gate_") for name in result.table.column_names)
     assert len(streamed) == 1
     assert "__terrine_gate_check_" in streamed[0] and "__terrine_gate_retained" in streamed[0]
-    assert executed and all("invalid_count" in sql for sql in executed)
     assert not any("__terrine_gate_" in sql for sql in executed)
 
 
@@ -400,6 +487,32 @@ def test_materialize_gates_an_empty_output(con):
     assert error.code == "terrine.temporal.float64_precision"
     assert error.context["reason"] == "nonfinite_input"
     assert error.context["failed_count"] == 1
+
+
+def test_training_output_prunes_unread_payload_without_pruning_candidate_check(con, monkeypatch):
+    model = _orders_model(
+        con,
+        [
+            _order("a", _NOON, amount=float("nan"), channel="store"),
+            _order("b", _NOON, amount=2.0),
+        ],
+    )
+    distinct = agg("web_distinct", window=("-1d", "0s"))
+    frame = Design(
+        "user",
+        FixedDate("2025-01-02"),
+        features=_SPEND,
+        outcomes={"label": agg("web_distinct", window=("0s", "1d"))},
+        eligibility={"web": gt(distinct, 0)},
+    ).build(model).training_set(label="label", features=(), incomplete_labels="keep")
+    _, streamed = _recording(monkeypatch)
+    with pytest.raises(TerrineError) as error:
+        frame.materialize()
+    assert error.value.code == "terrine.temporal.float64_precision"
+    assert error.value.context["failed_count"] == 1
+    assert len(streamed) == 1
+    carries_payload = 'AS "spend"' in streamed[0]
+    assert not carries_payload
 
 
 def test_materialize_reports_the_summary_when_no_rows_are_retained(con):

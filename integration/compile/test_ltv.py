@@ -1,5 +1,6 @@
 from decimal import Decimal
 
+import ibis
 import pytest
 
 from terrine.compile.shapes.ltv import compile_ltv
@@ -30,6 +31,22 @@ def test_ltv_period_and_cumulative_values_match_hand_sum():
         ]
         u2 = [row for row in rows if row["unit"] == "u2"]
         assert all(row["period_value"] == 0 and row["cumulative_value"] == 0 for row in u2)
+    finally:
+        con.disconnect()
+
+
+def test_ltv_sql_budget_does_not_grow_with_ages():
+    con, model = _trajectory_model()
+    try:
+        for periods in (10, 100):
+            design = Design(
+                "user",
+                EventAnchor("purchase"),
+                shape=CohortSpec(
+                    "purchase", Trajectory("net_revenue", "1d", periods, cumulative=True)
+                ),
+            )
+            assert len(ibis.to_sql(design.build(model).expr)) <= 30_000
     finally:
         con.disconnect()
 

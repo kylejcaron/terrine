@@ -4,7 +4,13 @@ Terrine builds immutable datasets from a `Design` and a bound `Model`; it does n
 
 ## Training data
 
-Select outcome labels and, optionally, a subset of declared features. The default incomplete-label policy drops rows with unavailable or known-null labels; `keep` preserves null values and their reason metadata. Excluded-label and unassigned-split reason counts survive ordinary materialization, staged Arrow metadata, and `DatasetManifest.frame_metadata`.
+Select outcome labels and, optionally, a subset of declared features. The default
+incomplete-label policy drops rows with unavailable or known-null labels. Before
+assigning splits, Terrine counts each dropped label occurrence by reason: two
+unusable labels on one row count twice, and a missing reason counts as `unknown`.
+`keep` preserves null values and their reason metadata without counting them as
+drops. Excluded-label and unassigned-split reason counts survive ordinary
+materialization, staged Arrow metadata, and `DatasetManifest.frame_metadata`.
 
 Choose an explicit output budget and reuse it for materialization, staging,
 fitting and Parquet export. Omitting it is intentionally unbounded output, not a

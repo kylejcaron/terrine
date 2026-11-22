@@ -511,14 +511,21 @@ in the DuckDB runtime).
 
 Each materialization opens a private session on a new client built from the
 caller's credentials and project and runs `BEGIN TRANSACTION` there, so every
-query sees one snapshot of the tables it reads. The caller's client, and any
-session or job configuration it holds, is never used. Tables, table snapshots,
-views and admitted SQL relations bind with an identity fingerprint (type,
-creation time, schema and view text), so a replaced table or changed view
-refuses after binding. A view that calls a dataset-qualified routine (a
-persistent UDF or remote function) refuses with
-`terrine.execution.snapshot_unavailable`; built-in functions inside a view are
-evaluated on each query; external tables are not admitted.
+query sees one snapshot of the tables it reads. Study queries do not use the
+caller's session or job configuration.
+
+Model binding and `catalog.required_relations(con)` check the entire declared
+catalog. Materialization and bounded preview recheck only the study's sources,
+their dimensions and its roster, including inputs needed for integrity checks.
+Each check shares dependency metadata within that admission only. The private
+session checks its own metadata rather than reusing the caller's observations.
+
+Each bound relation's fingerprint covers the type, creation time, schema and
+view SQL of its dependencies. A replaced table, changed view or changed indirect
+dependency refuses with `terrine.execution.invalid_input_binding`. A view that
+calls a dataset-qualified routine (a persistent UDF or remote function) refuses
+with `terrine.execution.snapshot_unavailable`; built-in functions inside a view
+are evaluated on each query. External tables are not admitted.
 
 Supported, matching the DuckDB reference ([live probes][bigquery]): everything
 listed for PostgreSQL above, with the same tolerance contract for averages,
