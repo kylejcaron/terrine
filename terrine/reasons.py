@@ -83,7 +83,9 @@ REASONS: Mapping[str, str] = MappingProxyType(
         NULL_COMPARISON: "A predicate comparison cannot be resolved because an operand is null.",
         REASON_UNAVAILABLE: "An unavailable outcome has no recorded reason.",
         SEQUENCE_WINDOW_END_BEFORE_DEADLINE: "The sequence ends before the funnel deadline.",
-        SOURCE_COVERAGE: "Sequence coverage is incomplete, or source coverage censors follow-up.",
+        SOURCE_COVERAGE: (
+            "Incomplete sequence coverage, or follow-up reached a source or unit observation limit."
+        ),
         SPLIT_MISMATCH: "The temporal split differs from the group-preserving split assignment.",
         STATE_VALUE_NULL: "A state observation exists but its state value is null.",
         UNIT_OBSERVATION: "The sequence window is outside the unit's observation bounds.",

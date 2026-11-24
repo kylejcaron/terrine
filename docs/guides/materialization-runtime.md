@@ -283,15 +283,18 @@ Status, event pages, and cancellation are projections of durable owner state. Ev
 
 Executed runs expose durable task progress (`completed_tasks`, `running_tasks`, `total_tasks`), an execution/publication or terminal phase, the captured source readiness bounds, and a stable failure code. Capture accounting records the retained artifact's byte size, root count, and snapshot identity; `scan_bytes` remains unknown rather than being reported as zero. These projections and event pages read runtime metadata only, never customer source tables. Legacy records without capture or task accounting retain unknown values.
 
-Status freshness describes whether the persisted attempt lease is current or stale, not proof that a backend query is alive or stopped. After an interrupted owner loses its lease, a recovery owner records `terrine.runtime.owner_interrupted` and can resume the same saved request from completed task outputs. Consumers can redeliver event pages safely by deduplicating on `(run_id, sequence)` and advancing only the acknowledged exclusive cursor.
+Status freshness describes the persisted attempt lease, not whether a backend query is alive. When a lease expires without a committed publication or cancellation request, recovery records `terrine.runtime.owner_interrupted`; the owner can resume the same saved request from completed task outputs. Consumers can redeliver event pages safely by deduplicating on `(run_id, sequence)` and advancing only the acknowledged exclusive cursor.
 
 Committed publication recovery verifies the matching saved plan from an owner
 invocation, dataset request or fingerprint-bound direct execution record. Direct
 execution persists that identity atomically with its fenced running transition in
 the existing metadata tables. Recovery checks execution revision and any no-change
-reuse-base restriction. If that identity cannot be verified, the interrupted
-run becomes terminal with `terrine.runtime.saved_plan_mismatch`; recovery never
-infers a revision from installed code or leaves an unverified commit running.
+reuse-base restriction. A verified publication wins even if someone requested
+cancellation: the run ends `succeeded`. If the publication cannot be verified,
+the run ends `failed` with `terrine.runtime.saved_plan_mismatch` unless a direct
+cancellation request was already recorded. In that case it ends `cancelled`
+without an error code, just as it does when cancellation precedes recovery and
+there is no publication. A `cancelled` status does not verify or undo a commit.
 
 Recovery releases active-run snapshot pins only after the fenced terminal
 transition. Failed runs retain retry inputs unless their exact checksummed
