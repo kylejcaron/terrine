@@ -55,6 +55,13 @@ _CHOICE = RefusalSpec("terrine.design.invalid", "Design input {field} must be on
 _KNOWLEDGE = ("recorded_at", "retrospective_effective_time")
 
 
+def _validate_period_index(value: int, field: str) -> None:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise _INVALID.error(reason="wrong_type", field=field)
+    if not -(2**63) <= value < 2**63:
+        raise _INVALID.error(reason="out_of_range", field=field)
+
+
 def _event_name(value: str) -> None:
     if not isinstance(value, str) or not value.strip():
         raise _INVALID.error(reason="empty_name", field="event")
@@ -312,13 +319,13 @@ class EventPanelSpec:
     """Describe elapsed periods around an event, including a named reference period.
 
     Args:
-        periods: Tuple of integer event-relative indexes to emit.
+        periods: Tuple of signed 64-bit integer event-relative indexes to emit.
         period: Positive elapsed duration string (see `terrine.windows`) or Duration defining one
             period.
         reference_period: Integer reference index that must be included in periods.
 
     Attributes:
-        periods: Tuple of integer event-relative indexes to emit.
+        periods: Tuple of signed 64-bit integer event-relative indexes to emit.
         period: Positive event-relative period width as a Duration.
         reference_period: Integer reference index that must be included in periods.
 
@@ -337,13 +344,14 @@ class EventPanelSpec:
         periods = tuple(periods)
         if not periods:
             raise _INVALID.error(reason="empty", field="periods")
-        if any(isinstance(value, bool) or not isinstance(value, int) for value in periods):
-            raise _INVALID.error(reason="wrong_type", field="periods")
+        for value in periods:
+            _validate_period_index(value, "periods")
         if len(set(periods)) != len(periods):
             raise _INVALID.error(reason="duplicate_names", field="periods")
         width = duration(period, field="period")
         if width.seconds <= 0:
             raise _INVALID.error(reason="not_positive", field="period")
+        _validate_period_index(reference_period, "reference_period")
         if reference_period not in periods:
             raise _INVALID.error(reason="undeclared_name", field="reference_period")
         object.__setattr__(self, "periods", periods)
