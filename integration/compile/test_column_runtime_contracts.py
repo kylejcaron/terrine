@@ -2,12 +2,13 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from importlib.metadata import version
 
+import ibis
 import pandas as pd
 import pyarrow as pa
 import pytest
 
 import terrine as tr
-from terrine.data import Coverage
+from terrine.data import Budget, Coverage
 from terrine.errors import TerrineError
 from terrine.model import Model
 from terrine.semantic.models import Catalog
@@ -27,6 +28,7 @@ from terrine.spec import (
 from terrine.windows import Duration
 from tests.compile.test_columns import _compile
 from tests.compile.test_columns import column_model as column_model  # noqa: F401
+from tests.compile.test_event_sequence import sequence_model as sequence_model  # noqa: F401
 
 
 @pytest.fixture
@@ -86,6 +88,79 @@ def test_selector_identity_ignores_repeated_helper_like_payload(column_model):
         frame.materialize()
     assert error.value.code == "terrine.compile.anchor_integrity"
     assert error.value.context["check_key"] == "duplicate_event_id"
+
+
+@pytest.mark.parametrize("representation", ["positions", "arrays"])
+def test_sequence_preserves_id_and_helper_like_properties(sequence_model, representation):
+    from terrine.semantic.models import Property, TableRef
+    from terrine.spec import Design, EventAnchor, EventSequence
+    from terrine.windows import Window
+
+    sequence_model.con.create_table(
+        "alias_events",
+        ibis.memtable(
+            {
+                "user_id": ["u"],
+                "ts": [datetime(2025, 1, 1, 12, tzinfo=UTC)],
+                "event_id": ["a"],
+                "_SEQUENCE_RAW_TIMESTAMP": ["preserve-me"],
+                "__TERRINE_SEQUENCE_EVENT_ID": ["base-decoy"],
+                "__TERRINE_SEQUENCE_EVENT_ID_1": ["fallback-decoy"],
+            }
+        ),
+    )
+    source = sequence_model.catalog.sources["events"].model_copy(
+        update={
+            "relation": TableRef(kind="table", name="alias_events"),
+            "properties": ("raw", "payload"),
+        }
+    )
+    catalog = sequence_model.catalog.model_copy(
+        update={
+            "sources": {"events": source},
+            "properties": {
+                "raw": Property(
+                    source="events",
+                    column="_SEQUENCE_RAW_TIMESTAMP",
+                    dtype="string",
+                    as_of="event_time",
+                ),
+                "payload": Property(
+                    source="events",
+                    column="__TERRINE_SEQUENCE_EVENT_ID_1",
+                    dtype="string",
+                    as_of="event_time",
+                ),
+            },
+        }
+    )
+    model = Model.from_catalog(
+        catalog,
+        con=sequence_model.con,
+        readiness=sequence_model.readiness,
+        event_ids=sequence_model.event_ids,
+    )
+    design = Design(
+        "user",
+        EventAnchor("signup"),
+        shape=EventSequence(
+            "signup",
+            Window("0s", "2h"),
+            max_events=5,
+            properties=("raw", "payload"),
+            representation=representation,
+        ),
+    )
+    result = design.build(model).materialize(budget=Budget(max_rows=10, max_output_bytes=10_000))
+    rows = result.table.to_pylist()
+    children = (
+        [row for row in rows if row["is_event"]]
+        if representation == "positions"
+        else rows[0]["event_values"]
+    )
+    assert [(row["event_id"], row["raw"], row["payload"]) for row in children] == [
+        ("a", "preserve-me", "fallback-decoy")
+    ]
 
 
 def test_named_windows_asof_treatment_and_independent_completeness(column_model_fixture):
