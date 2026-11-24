@@ -125,6 +125,7 @@ def _design_definitions() -> dict[str, Any]:
     text = {"type": "string"}
     number = {"type": "number"}
     integer = {"type": "integer"}
+    period_index = {"type": "integer", "minimum": -(2**63), "maximum": 2**63 - 1}
     boolean = {"type": "boolean"}
     scalar = {"type": ["string", "number", "boolean", "null"]}
     duration = {
@@ -301,9 +302,9 @@ def _design_definitions() -> dict[str, Any]:
             "reference_period": duration,
         },
         "EventPanelSpec": {
-            "periods": array(integer),
+            "periods": array(period_index),
             "period": duration,
-            "reference_period": integer,
+            "reference_period": period_index,
         },
         "CalendarComparisonSpec": {
             "cohort": ref("Initiation"),

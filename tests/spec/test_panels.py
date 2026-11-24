@@ -1,3 +1,4 @@
+import json
 from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
@@ -64,10 +65,33 @@ def test_calendar_panel_is_canonical_sequential_composition():
 
 def test_event_panel_emits_only_declared_relative_periods():
     base = Design("customer_id", EventAnchor("purchase", "first"))
-    panel = EventPanel(base, periods=(-1, 0, 2), period="1d")
+    periods = (-(2**63), -1, 0, 2, 2**63 - 1)
+    panel = EventPanel(base, periods=periods, period="1d")
 
     assert isinstance(panel.shape, EventPanelSpec)
-    assert panel.shape.periods == (-1, 0, 2)
+    assert panel.shape.periods == periods
+    restored = from_json(to_json(panel))
+    assert restored.shape == panel.shape
+    assert restored.spec_hash == panel.spec_hash
+
+
+def test_event_panel_rejects_noninteger_reference_even_when_equal_to_declared_index():
+    design = Design("user", EventAnchor("visit"), shape=EventPanelSpec((-1, 0, 1), "1s", 0))
+    document = json.loads(to_json(design))
+    for invalid in (False, True, 1.0):
+        document["design"]["shape"]["reference_period"] = invalid
+        with pytest.raises(TerrineError) as refused:
+            from_json(json.dumps(document))
+        assert refused.value.code == "terrine.design.invalid"
+        assert refused.value.context["field"] == "reference_period"
+
+
+def test_event_panel_refuses_period_indices_outside_signed_64_bits_before_build():
+    for invalid in (-(2**63) - 1, 2**63):
+        with pytest.raises(TerrineError) as refused:
+            EventPanelSpec((-1, invalid), "1s", -1)
+        assert refused.value.code == "terrine.design.invalid"
+        assert refused.value.context["field"] == "periods"
 
 
 def test_event_panel_keeps_administrative_cutoff_and_treatment():
