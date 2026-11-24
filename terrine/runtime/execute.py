@@ -20,6 +20,7 @@ from terrine.runtime.events import event_transaction, record_run_event
 from terrine.runtime.leases import Lease, LeaseStore
 from terrine.runtime.planner import RefreshPlan, TaskSpec, admit_execution
 from terrine.runtime.saved_plan import DestinationRef
+from terrine.runtime.schema import _runtime_namespace
 from terrine.runtime.state import RuntimeStore
 from terrine.runtime.status import _recover_interrupted_runs
 from terrine.runtime.synchronization import run_publication_lock
@@ -693,8 +694,9 @@ def _reconcile_committed_publication(
 def _check_expected_base_manifest(plan: RefreshPlan, *, con: Any, namespace: str) -> None:
     if not plan.expected_base_manifest_bound and plan.definition.reuse_base_generation is None:
         return
+    schema = _runtime_namespace(con, namespace).sql
     current = con.execute(
-        f'SELECT generation FROM "{namespace}".runtime_manifests WHERE dataset=?',
+        f"SELECT generation FROM {schema}.runtime_manifests WHERE dataset=?",
         [plan.dataset],
     ).fetchone()
     actual = current[0] if current is not None else None

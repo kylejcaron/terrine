@@ -11,7 +11,7 @@ previous owner has drained or recovered every non-terminal run.
 from __future__ import annotations
 
 import threading
-from typing import Any
+from typing import Any, NamedTuple
 
 from terrine.errors import RefusalSpec
 
@@ -137,6 +137,19 @@ _METADATA_TABLES = frozenset({table for table, _ in _TABLES} | {"runtime_schema_
 _CREATION = threading.Lock()
 
 
+class _RuntimeNamespace(NamedTuple):
+    catalog: str
+    schema: str
+
+    @property
+    def sql(self) -> str:
+        return f"{_quote(self.catalog)}.{_quote(self.schema)}"
+
+
+def _runtime_namespace(con: Any, namespace: str) -> _RuntimeNamespace:
+    return _RuntimeNamespace(con.execute("SELECT current_database()").fetchone()[0], namespace)
+
+
 def ensure_runtime_schema(con: Any, namespace: str) -> None:
     """Create a namespace's runtime metadata at the supported version, refusing other schemas.
 
@@ -148,12 +161,13 @@ def ensure_runtime_schema(con: Any, namespace: str) -> None:
         con: DuckDB connection of the runtime owner.
         namespace: Runtime schema name.
     """
-    if _initialized(con, namespace):
+    location = _runtime_namespace(con, namespace)
+    if _initialized(con, location):
         return
     with _CREATION:
-        if _initialized(con, namespace):
+        if _initialized(con, location):
             return
-        schema = _quote(namespace)
+        schema = location.sql
         con.execute("BEGIN TRANSACTION")
         try:
             con.execute(f"CREATE SCHEMA IF NOT EXISTS {schema}")
@@ -181,17 +195,17 @@ def check_runtime_schema(con: Any, namespace: str) -> None:
         con: DuckDB connection of the runtime owner.
         namespace: Runtime schema name.
     """
-    _initialized(con, namespace)
+    _initialized(con, _runtime_namespace(con, namespace))
 
 
-def _initialized(con: Any, namespace: str) -> bool:
+def _initialized(con: Any, location: _RuntimeNamespace) -> bool:
     """True at the supported version, False without metadata tables; otherwise refuse."""
     tables = _METADATA_TABLES.intersection(
         name
         for (name,) in con.execute(
             "SELECT lower(table_name) FROM information_schema.tables "
-            "WHERE table_catalog=current_database() AND lower(table_schema)=lower(?)",
-            [namespace],
+            "WHERE table_catalog=? AND lower(table_schema)=lower(?)",
+            [location.catalog, location.schema],
         ).fetchall()
     )
     if not tables:
@@ -199,13 +213,13 @@ def _initialized(con: Any, namespace: str) -> bool:
     found = None
     if "runtime_schema_version" in tables:
         found = con.execute(
-            f"SELECT max(version) FROM {_quote(namespace)}.runtime_schema_version"
+            f"SELECT max(version) FROM {location.sql}.runtime_schema_version"
         ).fetchone()[0]
     if found == RUNTIME_SCHEMA_VERSION:
         return True
     newer = isinstance(found, int) and found > RUNTIME_SCHEMA_VERSION
     raise SCHEMA_UNSUPPORTED.error(
-        namespace=namespace,
+        namespace=location.schema,
         reason="newer" if newer else "unversioned",
         found_version=found,
         supported_version=RUNTIME_SCHEMA_VERSION,

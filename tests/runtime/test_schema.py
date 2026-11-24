@@ -80,6 +80,21 @@ def test_fresh_namespace_initializes_version_one():
     assert _versions(con) == [(1,)]
 
 
+def test_matching_catalog_and_schema_initialize_without_using_an_attached_version(tmp_path):
+    with duckdb.connect(str(tmp_path / "owner.duckdb")) as con:
+        con.execute("ATTACH ':memory:' AS other")
+        con.execute("CREATE SCHEMA other.owner")
+        con.execute("CREATE TABLE other.owner.runtime_schema_version AS SELECT 99 AS version")
+        ensure_runtime_schema(con, "owner")
+        ensure_runtime_schema(con, "owner")
+        assert con.execute("SELECT version FROM owner.owner.runtime_schema_version").fetchall() == [
+            (RUNTIME_SCHEMA_VERSION,)
+        ]
+        assert con.execute("SELECT version FROM other.owner.runtime_schema_version").fetchone() == (
+            99,
+        )
+
+
 def test_unrelated_runtime_prefixed_table_does_not_block_initialization():
     con = duckdb.connect(":memory:")
     con.execute("CREATE TABLE main.runtime_metrics (metric VARCHAR, value BIGINT)")

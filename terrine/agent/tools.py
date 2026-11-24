@@ -55,7 +55,7 @@ from terrine.runtime.saved_plan import (
     SavedPlan,
     _bind_saved_plan,
 )
-from terrine.runtime.schema import check_runtime_schema
+from terrine.runtime.schema import _runtime_namespace, check_runtime_schema
 from terrine.runtime.state import RuntimeStore
 from terrine.spec.anchors import EventAnchor, FixedDate
 from terrine.spec.dataset import INVALID_DEFINITION, DatasetDefinition
@@ -374,7 +374,7 @@ class DatasetTools:
             item[0]
             for item in con.execute(
                 "SELECT table_name FROM information_schema.tables "
-                "WHERE lower(table_schema)=lower(?)",
+                "WHERE table_catalog=current_database() AND lower(table_schema)=lower(?)",
                 [self.namespace],
             ).fetchall()
         }
@@ -691,14 +691,15 @@ class DatasetTools:
         con = self.model.con.con
         check_runtime_schema(con, self.namespace)
         exists = con.execute(
-            "SELECT 1 FROM information_schema.tables WHERE lower(table_schema)=lower(?) "
-            "AND table_name='runtime_plan_invocations'",
+            "SELECT 1 FROM information_schema.tables WHERE table_catalog=current_database() "
+            "AND lower(table_schema)=lower(?) AND table_name='runtime_plan_invocations'",
             [self.namespace],
         ).fetchone()
         if exists is None:
             raise _RECEIPT.error()
+        schema = _runtime_namespace(con, self.namespace).sql
         for (payload,) in con.execute(
-            f'SELECT invocation_json FROM "{self.namespace}".runtime_plan_invocations'
+            f"SELECT invocation_json FROM {schema}.runtime_plan_invocations"
         ).fetchall():
             document = json.loads(payload)
             identity = json.dumps(document, sort_keys=True, separators=(",", ":"))
@@ -762,8 +763,9 @@ class DatasetTools:
 
     def _publication(self, dataset: Dataset) -> str:
         generation = dataset.manifest.generation
+        schema = _runtime_namespace(self.model.con.con, self.namespace).sql
         record = self.model.con.con.execute(
-            f'SELECT manifest_json FROM "{self.namespace}".runtime_dataset_recipes '
+            f"SELECT manifest_json FROM {schema}.runtime_dataset_recipes "
             "WHERE dataset=? AND generation=?",
             [generation.dataset_id, generation.generation_id],
         ).fetchone()
@@ -802,14 +804,15 @@ class DatasetTools:
         con = self.model.con.con
         check_runtime_schema(con, self.namespace)
         exists = con.execute(
-            "SELECT 1 FROM information_schema.tables WHERE lower(table_schema)=lower(?) "
-            "AND table_name='runtime_dataset_recipes'",
+            "SELECT 1 FROM information_schema.tables WHERE table_catalog=current_database() "
+            "AND lower(table_schema)=lower(?) AND table_name='runtime_dataset_recipes'",
             [self.namespace],
         ).fetchone()
         if exists is None:
             raise _RECEIPT.error()
+        schema = _runtime_namespace(con, self.namespace).sql
         record = con.execute(
-            f'SELECT recipe_json,manifest_json FROM "{self.namespace}".runtime_dataset_recipes '
+            f"SELECT recipe_json,manifest_json FROM {schema}.runtime_dataset_recipes "
             "WHERE dataset=? AND generation=?",
             [reference.dataset, reference.generation],
         ).fetchone()

@@ -44,7 +44,12 @@ from terrine.runtime.saved_plan import (
     SavedPlan,
     _bind_saved_plan,
 )
-from terrine.runtime.schema import check_runtime_schema, ensure_runtime_schema
+from terrine.runtime.schema import (
+    _quote,
+    _runtime_namespace,
+    check_runtime_schema,
+    ensure_runtime_schema,
+)
 from terrine.runtime.snapshot import SnapshotAuthority
 from terrine.runtime.state import RuntimeStore
 from terrine.spec.dataset import DatasetDefinition
@@ -134,7 +139,7 @@ class Dataset:
     Example: frame.stage("customer_spend")
     """
 
-    __slots__ = ("_con", "_raw", "_namespace", "_manifest", "_receipt")
+    __slots__ = ("_con", "_raw", "_namespace", "_schema", "_manifest", "_receipt")
 
     def __init__(self, manifest: DatasetManifest, *, con: Any, namespace: str) -> None:
         if not isinstance(manifest, DatasetManifest):
@@ -142,6 +147,7 @@ class Dataset:
         _require_runtime_reader(con)
         self._con, self._raw = con, con.con
         self._namespace, self._manifest = namespace, manifest
+        self._schema = _runtime_namespace(self._raw, namespace).sql
         self._verify_publication()
 
     def __repr__(self) -> str:
@@ -169,8 +175,9 @@ class Dataset:
             raise _GENERATION_INVALID.error()
         _require_runtime_reader(con)
         check_runtime_schema(con.con, namespace)
+        schema = _runtime_namespace(con.con, namespace).sql
         record = con.con.execute(
-            f'SELECT manifest_json FROM "{namespace}".runtime_dataset_recipes '
+            f"SELECT manifest_json FROM {schema}.runtime_dataset_recipes "
             "WHERE dataset=? AND generation=?",
             [dataset, generation],
         ).fetchone()
@@ -178,6 +185,7 @@ class Dataset:
             raise _GENERATION_INVALID.error()
         instance = cls.__new__(cls)
         instance._con, instance._raw = con, con.con
+        instance._schema = schema
         instance._namespace, instance._manifest = namespace, DatasetManifest.from_json(record[0])
         if (
             instance.manifest.generation.dataset_id != dataset
@@ -196,7 +204,7 @@ class Dataset:
     def _partition_table(self, partition: str, checksum: str) -> str:
         generation = self._manifest.generation
         stored = self._raw.execute(
-            f'SELECT digest,table_name FROM "{self._namespace}".runtime_partitions '
+            f"SELECT digest,table_name FROM {self._schema}.runtime_partitions "
             "WHERE dataset=? AND generation=? AND partition=?",
             [generation.dataset_id, generation.generation_id, partition],
         ).fetchone()
@@ -211,9 +219,9 @@ class Dataset:
         check_runtime_schema(self._raw, namespace)
         record = self._raw.execute(
             "SELECT d.manifest_json,p.version,r.state "
-            f'FROM "{namespace}".runtime_dataset_recipes d '
-            f'JOIN "{namespace}".runtime_runs r ON r.request_key=d.request_key '
-            f'JOIN "{namespace}".runtime_run_publications p ON p.run_id=r.run_id '
+            f"FROM {self._schema}.runtime_dataset_recipes d "
+            f"JOIN {self._schema}.runtime_runs r ON r.request_key=d.request_key "
+            f"JOIN {self._schema}.runtime_run_publications p ON p.run_id=r.run_id "
             "WHERE d.dataset=? AND d.generation=? AND p.dataset=d.dataset "
             "AND p.generation=d.generation AND r.published_generation=d.generation",
             [generation.dataset_id, generation.generation_id],
@@ -242,7 +250,7 @@ class Dataset:
             table_name = self._partition_table(partition, checksum)
             if (
                 _digest_relation(
-                    self._raw, f'"{namespace}"', table_name, version=_digest_version(checksum)
+                    self._raw, self._schema, table_name, version=_digest_version(checksum)
                 )
                 != checksum
             ):
@@ -251,7 +259,7 @@ class Dataset:
             if tuple((field.name, str(field.type)) for field in schema) != expected_schema:
                 raise _GENERATION_INVALID.error()
             rows += self._raw.execute(
-                f'SELECT count(*) FROM "{namespace}"."{table_name}"'
+                f"SELECT count(*) FROM {self._schema}.{_quote(table_name)}"
             ).fetchone()[0]
         if rows != generation.row_count:
             raise _GENERATION_INVALID.error()
@@ -678,7 +686,7 @@ def stage_frame(
     )
     saved.pin_snapshot(store)
     raw.execute(
-        f'INSERT INTO "{namespace}".runtime_dataset_requests VALUES (?,?)',
+        f"INSERT INTO {store._schema}.runtime_dataset_requests VALUES (?,?)",
         [request_key, saved.to_json()],
     )
     receipt = run_serialized_plan(
@@ -722,9 +730,10 @@ def dataset_from_run(
     table, raw = saved.destination.dataset, model.con.con
     plan = _bind_saved_plan(saved, namespace=namespace)
     ensure_runtime_schema(raw, namespace)
+    runtime_schema = _runtime_namespace(raw, namespace).sql
     record = raw.execute(
         f"SELECT dataset,state,published_generation,request_key,fingerprint,destination_json "
-        f'FROM "{namespace}".runtime_runs WHERE run_id=?',
+        f"FROM {runtime_schema}.runtime_runs WHERE run_id=?",
         [receipt.run_id],
     ).fetchone()
     if record is None or (
@@ -741,7 +750,7 @@ def dataset_from_run(
     ):
         raise _GENERATION_INVALID.error()
     prior = raw.execute(
-        f'SELECT manifest_json FROM "{namespace}".runtime_dataset_recipes '
+        f"SELECT manifest_json FROM {runtime_schema}.runtime_dataset_recipes "
         "WHERE dataset=? AND generation=?",
         [table, receipt.published_generation],
     ).fetchone()
@@ -755,8 +764,8 @@ def dataset_from_run(
     backend = DuckDBBackend(raw, namespace=namespace)
     required_sources = validate_design(definition.base_design, model).required_sources
     partitions = raw.execute(
-        f'SELECT p.partition,p.digest,p.table_name FROM "{namespace}".runtime_partitions p '
-        f'JOIN "{namespace}".runtime_run_results r ON r.partition=p.partition '
+        f"SELECT p.partition,p.digest,p.table_name FROM {runtime_schema}.runtime_partitions p "
+        f"JOIN {runtime_schema}.runtime_run_results r ON r.partition=p.partition "
         "WHERE r.run_id=? AND p.dataset=? AND p.generation=? ORDER BY p.partition",
         [receipt.run_id, table, receipt.published_generation],
     ).fetchall()
@@ -766,7 +775,7 @@ def dataset_from_run(
     schema = backend._partition_schema(published, partitions[0][0])
     metadata = MaterializedFrame.from_arrow(pa.Table.from_batches([], schema=schema))
     row_count = sum(
-        raw.execute(f'SELECT count(*) FROM "{namespace}"."{item[2]}"').fetchone()[0]
+        raw.execute(f"SELECT count(*) FROM {runtime_schema}.{_quote(item[2])}").fetchone()[0]
         for item in partitions
     )
     coverage = {
@@ -809,7 +818,7 @@ def dataset_from_run(
         frame_metadata=metadata.to_metadata(),
     )
     raw.execute(
-        f'INSERT INTO "{namespace}".runtime_dataset_recipes VALUES (?,?,?,?,?) '
+        f"INSERT INTO {runtime_schema}.runtime_dataset_recipes VALUES (?,?,?,?,?) "
         "ON CONFLICT DO NOTHING",
         [
             table,

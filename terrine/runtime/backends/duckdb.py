@@ -27,7 +27,7 @@ from terrine.runtime.backends.base import (
 from terrine.runtime.cost import ScanEvidence
 from terrine.runtime.leases import _INVALID_NAMESPACE, LeaseStore
 from terrine.runtime.planner import TaskSpec
-from terrine.runtime.schema import ensure_runtime_schema
+from terrine.runtime.schema import _runtime_namespace, ensure_runtime_schema
 from terrine.runtime.state import RuntimeStore, snapshot_manifest_reference
 
 __all__ = ["DuckDBBackend"]
@@ -48,7 +48,8 @@ class DuckDBBackend:
             raise _INVALID_NAMESPACE.error(reason="invalid_namespace", field="namespace")
         self.con = con
         self.namespace = namespace
-        self._schema = f'"{namespace}"'
+        self._location = _runtime_namespace(con, namespace)
+        self._schema = self._location.sql
         self.fault_injector: Callable[[str], None] | None = None
         self._ibis_backend: Any | None = None
         self.initialize()
@@ -482,7 +483,7 @@ class DuckDBBackend:
                     escaped_timezone = timezone.replace("'", "''")
                     self.con.execute(f"SET TimeZone = '{escaped_timezone}'")
             backend = self._ibis_backend
-        relation = backend.table(row[0], database=self.namespace)
+        relation = backend.table(row[0], database=self._location)
         restored = {}
         for field in schema:
             if pa.types.is_duration(field.type):

@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 from terrine.data import BoundCoverage
 from terrine.runtime.leases import _INVALID_NAMESPACE, Lease, LeaseStore
-from terrine.runtime.schema import ensure_runtime_schema
+from terrine.runtime.schema import _runtime_namespace, ensure_runtime_schema
 
 __all__ = [
     "DefinitionVersion",
@@ -82,7 +82,7 @@ class RuntimeStore:
             raise _INVALID_NAMESPACE.error(reason="invalid_namespace", field="namespace")
         self.con = con
         self.namespace = namespace
-        self._schema = '"' + namespace.replace('"', '""') + '"'
+        self._schema = _runtime_namespace(con, namespace).sql
 
     def initialize(self) -> None:
         """Create the namespace's runtime metadata, refusing unsupported schema versions."""
