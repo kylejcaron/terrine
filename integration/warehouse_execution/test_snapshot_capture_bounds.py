@@ -4,6 +4,7 @@ import tracemalloc
 
 import duckdb
 import ibis
+import pytest
 
 from terrine import preview
 from terrine.data import Budget, Coverage, UnitSource
@@ -12,6 +13,51 @@ from terrine.runtime.owner import RuntimeOwner
 from terrine.runtime.snapshot import SnapshotAuthority
 from terrine.semantic.models import Catalog
 from terrine.spec import Design, FixedDate, agg
+
+
+def test_interrupted_capture_releases_only_its_own_transaction(monkeypatch):
+    import terrine as tr
+    from terrine.execution import _publish
+    from terrine.execution.inputs import publish_native_inputs
+
+    con = ibis.duckdb.connect()
+    try:
+        con.raw_sql("CREATE TABLE users AS SELECT 1 AS id")
+        con.raw_sql("CREATE TABLE events AS SELECT 1 AS id, TIMESTAMP '2025-01-01' AS ts, 7 AS n")
+        model = Model.from_tables(
+            con, units={"user": UnitSource("users", "id")},
+            events={"event": tr.Events(
+                "events", key="id", time="ts", metrics={"n": tr.sum("n")},
+                complete=("2025-01-01", "2025-01-03"),
+            )},
+        )
+        design = Design(
+            "user", FixedDate("2025-01-02"), features={"v": agg("n", window=("-1d", "0s"))}
+        )
+        admit = _publish._admit_roots
+
+        def interrupt_inside_transaction(catalog, origin, units, roots):
+            admit(catalog, origin, units, roots)
+            sql = "SELECT current_transaction_id()"
+            if origin.execute(sql).fetchone() == origin.execute(sql).fetchone():
+                raise KeyboardInterrupt
+
+        with monkeypatch.context() as patch:
+            patch.setattr(_publish, "_admit_roots", interrupt_inside_transaction)
+            with pytest.raises(KeyboardInterrupt):
+                publish_native_inputs(model.catalog, con=con, units=model.units)
+        assert design.build(model).materialize().table["v"].to_pylist() == [7]
+
+        con.raw_sql("BEGIN")
+        con.raw_sql("UPDATE events SET n=70")
+        with pytest.raises(tr.TerrineError) as refused:
+            publish_native_inputs(model.catalog, con=con, units=model.units)
+        assert refused.value.code == "terrine.execution.snapshot_unavailable"
+        assert con.con.execute("SELECT n FROM events").fetchone() == (70,)
+        con.raw_sql("ROLLBACK")
+        assert con.con.execute("SELECT n FROM events").fetchone() == (7,)
+    finally:
+        con.disconnect()
 
 
 def test_capture_keeps_client_buffers_bounded_as_source_rows_increase(tmp_path, monkeypatch):

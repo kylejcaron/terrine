@@ -5,6 +5,7 @@ import io
 import json
 import re
 from collections.abc import Callable, Generator
+from contextlib import contextmanager, suppress
 from dataclasses import replace
 from typing import Any
 
@@ -36,6 +37,18 @@ _LAZY_DURATION_UNSUPPORTED = RefusalSpec(
     "terrine.runtime.lazy_duration_unsupported",
     "DuckDB lazy reads cannot represent duration unit {unit!r} in column {column!r}; use {route}.",
 )
+
+
+@contextmanager
+def _publication_transaction(con) -> Generator[None]:
+    con.execute("BEGIN TRANSACTION")
+    try:
+        yield
+        con.execute("COMMIT")
+    except BaseException:
+        with suppress(BaseException):
+            con.execute("ROLLBACK")
+        raise
 
 
 class DuckDBBackend:
@@ -100,19 +113,13 @@ class DuckDBBackend:
                 raise ValueError("retry snapshot identity does not match published generation")
             receipt = self._matching_receipt(stage)
             if stage.run_id is not None:
-                self.con.execute("BEGIN TRANSACTION")
-                try:
+                with _publication_transaction(self.con):
                     self._record_run_publication(stage, receipt.manifest_version)
-                    self.con.execute("COMMIT")
-                except Exception:
-                    self.con.execute("ROLLBACK")
-                    raise
             return receipt
         if current != expected_manifest:
             raise ValueError("expected manifest does not match current publication")
 
-        self.con.execute("BEGIN TRANSACTION")
-        try:
+        with _publication_transaction(self.con):
             locked_current = self._current_generation(stage.dataset)
             if locked_current != expected_manifest:
                 raise ValueError("expected manifest does not match current publication")
@@ -169,7 +176,11 @@ class DuckDBBackend:
                             f"CREATE TABLE {self._schema}.{_quote(table_name)} AS "
                             "SELECT * FROM __terrine_partition"
                         )
-                    finally:
+                    except BaseException:
+                        with suppress(BaseException):
+                            self.con.unregister("__terrine_partition")
+                        raise
+                    else:
                         self.con.unregister("__terrine_partition")
                     digest = _digest_relation(self.con, self._schema, table_name)
                     self.con.execute(
@@ -248,14 +259,6 @@ class DuckDBBackend:
                 )
             if self.fault_injector is not None:
                 self.fault_injector("before_commit")
-            self.con.execute("COMMIT")
-        except Exception:
-            try:
-                self.con.unregister("__terrine_partition")
-            except Exception:
-                pass
-            self.con.execute("ROLLBACK")
-            raise
         if self.fault_injector is not None:
             self.fault_injector("after_commit")
         return PublicationReceipt(stage.dataset, stage.generation, version, tuple(stored))
@@ -273,8 +276,7 @@ class DuckDBBackend:
         if lease.resource != f"dataset:{dataset}":
             raise ValueError("lease resource does not match dataset")
         leases = LeaseStore(self.con, namespace=self.namespace)
-        self.con.execute("BEGIN TRANSACTION")
-        try:
+        with _publication_transaction(self.con):
             leases.guard_publication(lease)
             current = self.con.execute(
                 f"SELECT generation,version,snapshot_id FROM {self._schema}.runtime_manifests "
@@ -310,10 +312,6 @@ class DuckDBBackend:
             leases.guard_publication(lease)
             if self.fault_injector is not None:
                 self.fault_injector("before_commit")
-            self.con.execute("COMMIT")
-        except Exception:
-            self.con.execute("ROLLBACK")
-            raise
         if self.fault_injector is not None:
             self.fault_injector("after_commit")
         return PublicationReceipt(dataset, generation, version, tuple(row[0] for row in partitions))
