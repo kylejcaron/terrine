@@ -88,6 +88,88 @@ def _requires_bigquery():
     pytest.importorskip("ibis.backends.bigquery")
 
 
+@pytest.mark.parametrize(
+    "phase", ["storage", "submit", "result", "no_session", "config", "install", "success"]
+)
+def test_startup_releases_only_acquired_private_clients(monkeypatch, phase):
+    from google.auth.credentials import AnonymousCredentials
+    from google.cloud import bigquery, bigquery_storage_v1
+
+    owner = bigquery.Client(project="billing", credentials=AnonymousCredentials())
+    live = set()
+    sessions = {"unrelated-session"}
+    fault = RuntimeError(phase)
+    make_config = bigquery.QueryJobConfig
+
+    def fail_at(point):
+        if phase == point:
+            raise fault
+
+    class Client:
+        def __init__(self, **kwargs):
+            live.add("query")
+
+        def query(self, sql, *, job_config=None):
+            if sql != "BEGIN TRANSACTION":
+                if sql == "CALL BQ.ABORT_SESSION()":
+                    properties = job_config.connection_properties if job_config else ()
+                    target = next((p.value for p in properties if p.key == "session_id"), None)
+                    sessions.discard(target or "unrelated-session")
+                return SimpleNamespace(result=lambda: None)
+            fail_at("submit")
+            info = None if phase == "no_session" else SimpleNamespace(session_id="new-session")
+
+            def begin():
+                fail_at("result")
+                if info is not None:
+                    sessions.add(info.session_id)
+
+            return SimpleNamespace(result=begin, session_info=info)
+
+        @property
+        def default_query_job_config(self):
+            return None
+
+        @default_query_job_config.setter
+        def default_query_job_config(self, value):
+            fail_at("install")
+
+        def close(self):
+            live.remove("query")
+            raise OSError("query transport close failed")
+
+    def storage(**kwargs):
+        fail_at("storage")
+        live.add("storage")
+        return SimpleNamespace(transport=SimpleNamespace(close=lambda: live.remove("storage")))
+
+    def config(**kwargs):
+        if "default_dataset" in kwargs:
+            fail_at("config")
+        return make_config(**kwargs)
+
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(bigquery, "Client", Client)
+            patch.setattr(bigquery_storage_v1, "BigQueryReadClient", storage)
+            patch.setattr(bigquery, "QueryJobConfig", config)
+            con = SimpleNamespace(client=owner, dataset="events", data_project="source")
+            if phase == "success":
+                session = _bigquery.owned_session(con)
+                assert live == {"query", "storage"}
+                session.close()
+            else:
+                with pytest.raises(TerrineError) as caught:
+                    _bigquery.owned_session(con)
+                assert caught.value.code == "terrine.execution.snapshot_unavailable"
+                if phase != "no_session":
+                    assert caught.value.__cause__ is fault
+            assert not live
+            assert sessions == {"unrelated-session"}
+    finally:
+        owner.close()
+
+
 _EVENTS = ibis.schema({"amount": "decimal(38,9)", "ts": "timestamp('UTC')"})
 _AMOUNT = Decimal("12345678901234567890.123456789")
 _INSTANT = datetime(2025, 1, 2, 3, 4, 5, 678901, tzinfo=UTC)

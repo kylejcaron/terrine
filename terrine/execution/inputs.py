@@ -844,13 +844,12 @@ def _open_bigquery_execution(
     """Read in a private session transaction so the caller's client is never touched."""
     from terrine.execution import _bigquery
 
-    client, storage, session_id = _bigquery.owned_session(con)
-    session = _bigquery.BigQuerySession(client, storage, session_id)
+    session = _bigquery.owned_session(con)
     context = None
     try:
         private = ibis.bigquery.from_connection(
-            client,
-            storage_client=storage,
+            session.client,
+            storage_client=session.storage,
             dataset_id=f"{con.data_project}.{con.dataset}" if con.dataset else "",
         )
         resolver = provider.bind_resolver(
