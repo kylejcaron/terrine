@@ -1066,6 +1066,7 @@ def test_stale_claim_during_running_takeover_preserves_newer_run_fence(monkeypat
 
 
 def test_stale_task_claim_cannot_replace_takeover_task_fence():
+    import re
     import threading
     from datetime import UTC, datetime, timedelta
 
@@ -1082,8 +1083,8 @@ def test_stale_task_claim_cannot_replace_takeover_task_fence():
 
     class PausingConnection:
         def execute(self, query, *args, **kwargs):
-            if threading.get_ident() == old_thread_id[0] and query.startswith(
-                'INSERT INTO "owner".runtime_tasks'
+            if threading.get_ident() == old_thread_id[0] and re.match(
+                r"INSERT INTO \S+\.runtime_tasks\b", query
             ):
                 old_claim_at_task_insert.set()
                 assert resume_old_task_insert.wait(timeout=HANG_GUARD_SECONDS)
