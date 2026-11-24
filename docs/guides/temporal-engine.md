@@ -646,8 +646,9 @@ there is no public switch or cached validation. The separately pinned state
 comparison reduced SQL compilation but increased construction/public-call
 medians, not an established query-runtime speedup.
 
-Execution revision 2 identifies this compiler. A checksummed revision-1 plan
-cannot execute or replay, and a no-change refresh from revision 1 recomputes.
+Execution revision 3 is required to execute or replay a saved plan. Even with
+no reported input changes, a revision-1 or revision-2 generation cannot serve
+as the result of a new refresh. Replan from the definition and current Model.
 Explicit historical reads preserve the old generation's values and metadata.
 Exact declarations and specialized cumulative/cohort arithmetic safeguards are
 unchanged.

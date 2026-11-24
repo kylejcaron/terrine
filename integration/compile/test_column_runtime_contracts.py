@@ -2,12 +2,13 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from importlib.metadata import version
 
+import ibis
 import pandas as pd
 import pyarrow as pa
 import pytest
 
 import terrine as tr
-from terrine.data import Coverage
+from terrine.data import Budget, Coverage
 from terrine.errors import TerrineError
 from terrine.model import Model
 from terrine.semantic.models import Catalog
@@ -27,11 +28,139 @@ from terrine.spec import (
 from terrine.windows import Duration
 from tests.compile.test_columns import _compile
 from tests.compile.test_columns import column_model as column_model  # noqa: F401
+from tests.compile.test_event_sequence import sequence_model as sequence_model  # noqa: F401
 
 
 @pytest.fixture
 def column_model_fixture(column_model):
     yield column_model
+
+
+@pytest.mark.parametrize("unit,amount", [("id", "_UNIT"), ("_UNIT", "amount_raw")])
+def test_reserved_unit_name_only_identifies_the_selected_key(unit, amount):
+    events = pa.table({unit: [1], "ts": [datetime(2025, 1, 2, tzinfo=UTC)], amount: [10]})
+    model = Model.from_tables(
+        units={"user": tr.UnitSource(pa.table({"id": [1]}), "id")},
+        events={
+            "activity": tr.Events(
+                events, time="ts", key=unit, metrics={"amount": tr.sum(amount)},
+                complete=("2025-01-01", "2025-01-10"),
+            )
+        },
+    )
+    try:
+        design = Design(
+            "user", FixedDate("2025-01-03"), features={"total": agg("amount", window=("-2d", "0s"))}
+        )
+        if amount == "_UNIT":
+            with pytest.raises(TerrineError) as error:
+                design.build(model).materialize()
+            assert error.value.code == "terrine.semantic.ambiguous_column"
+            assert error.value.context["column"] == "_unit"
+        else:
+            row, = design.build(model).materialize().table.to_pylist()
+            assert (row["unit"], row["total"], row["total__complete"]) == (1, 10, True)
+    finally:
+        model.con.disconnect()
+
+
+def test_selector_identity_ignores_repeated_helper_like_payload(column_model):
+    con = column_model.con
+    con.raw_sql("ALTER TABLE events RENAME COLUMN tier TO __TERRINE_SELECTOR_EVENT_ID")
+    con.raw_sql("UPDATE events SET __TERRINE_SELECTOR_EVENT_ID='decoy'")
+    con.raw_sql("ALTER TABLE events ADD COLUMN actual_id INTEGER")
+    con.raw_sql("UPDATE events SET actual_id=coalesce(amount, 0)")
+    catalog = column_model.catalog.model_dump(mode="python")
+    catalog["properties"]["tier"]["column"] = "__TERRINE_SELECTOR_EVENT_ID"
+    model = Model.from_catalog(
+        Catalog.model_validate(catalog), con=con, units=column_model.units,
+        readiness=column_model.readiness, event_ids={"events": "actual_id"},
+    )
+    design = Design(
+        "user", FixedDate("2025-01-03"),
+        features={"first": event_time("amount", window=("-1d", "0s"))},
+    )
+    frame = design.build(model)
+    row = next(row for row in frame.materialize().table.to_pylist() if row["unit"] == "a")
+    assert row["first"] == datetime(2025, 1, 2, 11, 59, 59, tzinfo=UTC)
+    con.raw_sql("UPDATE events SET actual_id=1 WHERE user_id='a'")
+    with pytest.raises(TerrineError) as error:
+        frame.materialize()
+    assert error.value.code == "terrine.compile.anchor_integrity"
+    assert error.value.context["check_key"] == "duplicate_event_id"
+
+
+@pytest.mark.parametrize("representation", ["positions", "arrays"])
+def test_sequence_preserves_id_and_helper_like_properties(sequence_model, representation):
+    from terrine.semantic.models import Property, TableRef
+    from terrine.spec import Design, EventAnchor, EventSequence
+    from terrine.windows import Window
+
+    sequence_model.con.create_table(
+        "alias_events",
+        ibis.memtable(
+            {
+                "user_id": ["u"],
+                "ts": [datetime(2025, 1, 1, 12, tzinfo=UTC)],
+                "event_id": ["a"],
+                "_SEQUENCE_RAW_TIMESTAMP": ["preserve-me"],
+                "__TERRINE_SEQUENCE_EVENT_ID": ["base-decoy"],
+                "__TERRINE_SEQUENCE_EVENT_ID_1": ["fallback-decoy"],
+            }
+        ),
+    )
+    source = sequence_model.catalog.sources["events"].model_copy(
+        update={
+            "relation": TableRef(kind="table", name="alias_events"),
+            "properties": ("raw", "payload"),
+        }
+    )
+    catalog = sequence_model.catalog.model_copy(
+        update={
+            "sources": {"events": source},
+            "properties": {
+                "raw": Property(
+                    source="events",
+                    column="_SEQUENCE_RAW_TIMESTAMP",
+                    dtype="string",
+                    as_of="event_time",
+                ),
+                "payload": Property(
+                    source="events",
+                    column="__TERRINE_SEQUENCE_EVENT_ID_1",
+                    dtype="string",
+                    as_of="event_time",
+                ),
+            },
+        }
+    )
+    model = Model.from_catalog(
+        catalog,
+        con=sequence_model.con,
+        readiness=sequence_model.readiness,
+        event_ids=sequence_model.event_ids,
+    )
+    design = Design(
+        "user",
+        EventAnchor("signup"),
+        shape=EventSequence(
+            "signup",
+            Window("0s", "2h"),
+            max_events=5,
+            properties=("raw", "payload"),
+            representation=representation,
+        ),
+    )
+    result = design.build(model).materialize(budget=Budget(max_rows=10, max_output_bytes=10_000))
+    rows = result.table.to_pylist()
+    children = (
+        [row for row in rows if row["is_event"]]
+        if representation == "positions"
+        else rows[0]["event_values"]
+    )
+    assert [(row["event_id"], row["raw"], row["payload"]) for row in children] == [
+        ("a", "preserve-me", "fallback-decoy")
+    ]
 
 
 def test_named_windows_asof_treatment_and_independent_completeness(column_model_fixture):

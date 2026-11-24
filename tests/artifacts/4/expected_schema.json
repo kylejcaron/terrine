@@ -1,0 +1,273 @@
+{
+  "design.json": [
+    {
+      "name": "unit",
+      "type": "string",
+      "role": "unit"
+    },
+    {
+      "name": "anchor_id",
+      "type": "string",
+      "role": "anchor"
+    },
+    {
+      "name": "t0",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "t0"
+    },
+    {
+      "name": "first_refund",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "feature"
+    },
+    {
+      "name": "first_refund__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "first_refund__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
+      "name": "last_status",
+      "type": "string",
+      "role": "feature"
+    },
+    {
+      "name": "last_status__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "last_status__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
+      "name": "orders_30d",
+      "type": "int64",
+      "role": "feature"
+    },
+    {
+      "name": "orders_30d__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "orders_30d__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
+      "name": "refunds_30d",
+      "type": "int64",
+      "role": "feature"
+    },
+    {
+      "name": "refunds_30d__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "refunds_30d__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
+      "name": "spend_30d",
+      "type": "double",
+      "role": "feature"
+    },
+    {
+      "name": "spend_30d__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "spend_30d__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
+      "name": "spend_next_14d",
+      "type": "double",
+      "role": "outcome"
+    },
+    {
+      "name": "spend_next_14d__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "spend_next_14d__reason",
+      "type": "string",
+      "role": "output"
+    }
+  ],
+  "design.yaml": [
+    {
+      "name": "unit",
+      "type": "string",
+      "role": "unit"
+    },
+    {
+      "name": "anchor_id",
+      "type": "string",
+      "role": "anchor"
+    },
+    {
+      "name": "t0",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "t0"
+    },
+    {
+      "name": "orders_30d",
+      "type": "int64",
+      "role": "feature"
+    },
+    {
+      "name": "orders_30d__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "orders_30d__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
+      "name": "spend_next_30d",
+      "type": "double",
+      "role": "outcome"
+    },
+    {
+      "name": "spend_next_30d__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "spend_next_30d__reason",
+      "type": "string",
+      "role": "output"
+    }
+  ],
+  "definition.json": [
+    {
+      "name": "unit",
+      "type": "string",
+      "role": "unit"
+    },
+    {
+      "name": "anchor_id",
+      "type": "string",
+      "role": "anchor"
+    },
+    {
+      "name": "t0",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "t0"
+    },
+    {
+      "name": "first_refund",
+      "type": "timestamp[us, tz=UTC]",
+      "role": "feature"
+    },
+    {
+      "name": "first_refund__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "first_refund__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
+      "name": "last_status",
+      "type": "string",
+      "role": "feature"
+    },
+    {
+      "name": "last_status__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "last_status__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
+      "name": "orders_30d",
+      "type": "decimal128(1, 0)",
+      "role": "feature"
+    },
+    {
+      "name": "orders_30d__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "orders_30d__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
+      "name": "refunds_30d",
+      "type": "int64",
+      "role": "feature"
+    },
+    {
+      "name": "refunds_30d__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "refunds_30d__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
+      "name": "spend_30d",
+      "type": "double",
+      "role": "feature"
+    },
+    {
+      "name": "spend_30d__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "spend_30d__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
+      "name": "spend_next_14d",
+      "type": "double",
+      "role": "outcome"
+    },
+    {
+      "name": "spend_next_14d__complete",
+      "type": "bool",
+      "role": "output"
+    },
+    {
+      "name": "spend_next_14d__reason",
+      "type": "string",
+      "role": "output"
+    },
+    {
+      "name": "__terrine_split",
+      "type": "string",
+      "role": "output"
+    },
+    {
+      "name": "__terrine_split_reason",
+      "type": "string",
+      "role": "output"
+    }
+  ]
+}

@@ -15,7 +15,7 @@ from scripts.write_artifact_corpus import (
 from terrine.spec import DatasetDefinition, from_json, from_yaml
 
 ARTIFACTS = Path(__file__).parents[1] / "tests" / "artifacts"
-CORPUS = ARTIFACTS / "3"
+CORPUS = ARTIFACTS / "4"
 
 DESIGNS = sorted(CORPUS.rglob("design.json"))
 
@@ -66,7 +66,7 @@ def test_corpus_generator_is_deterministic_without_mutating_baseline(tmp_path):
     baseline = CORPUS
     regenerated = tmp_path / "generation"
     manifest = json.loads((baseline / "manifest.json").read_text(encoding="utf-8"))
-    assert manifest["frame_metadata"]["provenance"].get("execution_revision") == 2
+    assert manifest["frame_metadata"]["provenance"]["execution_revision"] == 3
 
     def contents(directory: Path) -> dict[Path, bytes]:
         return {
@@ -76,7 +76,7 @@ def test_corpus_generator_is_deterministic_without_mutating_baseline(tmp_path):
         }
 
     expected = contents(baseline)
-    historical = {name: contents(ARTIFACTS / name) for name in ("1", "2")}
+    historical = {name: contents(ARTIFACTS / name) for name in ("1", "2", "3")}
     write_generation(regenerated)
 
     actual = contents(regenerated)

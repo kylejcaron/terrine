@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import unicodedata
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import ibis
 import pyarrow as pa
 
+from terrine._names import available_name, canonical_name
 from terrine.compile.anchors import (
     AnchorTable,
     _null_check,
@@ -26,7 +26,12 @@ from terrine.compile.columns import (
 from terrine.data import Roles, SequenceMeta
 from terrine.semantic.bind import normalize_events
 from terrine.spec.design import Design
-from terrine.spec.sequence import _UNSUPPORTED_SHAPE, EventSequence
+from terrine.spec.sequence import (
+    _UNSUPPORTED_SHAPE,
+    EventSequence,
+    _property_fields,
+    _reserved_sequence_fields,
+)
 from terrine.temporal.attributes import _enriched_property_columns, enrich_events
 from terrine.temporal.sequence import SequenceResult, event_sequence
 
@@ -86,45 +91,11 @@ def _identity_checks(
 
 
 def _validate_sequence_column_names(design: Design, sequence: EventSequence) -> None:
-    generated = {
-        "unit",
-        "anchor_id",
-        "t0",
-        "is_event",
-        "sequence_position",
-        "event_id",
-        "event_time",
-        "event_count",
-        "sequence_complete",
-        "sequence_reason",
-        "event_values",
-        "funnel_attempts",
-        "funnel_attempts_complete",
-        "funnel_attempts_reason",
-        *sequence.properties,
-        *(f"{name}_reason" for name in sequence.properties),
-    }
-    if sequence.sessions is not None:
-        generated.update(
-            {
-                "session_index",
-                "session_event_count",
-                "session_start_time",
-                "session_end_time",
-                "previous_event_id",
-                "previous_event_time",
-                "transition_reason",
-                "transition",
-                "transition_from",
-                "transition_to",
-                "sessions",
-                "sessions_complete",
-                "sessions_reason",
-            }
-        )
-    canonical = {unicodedata.normalize("NFC", name).casefold() for name in generated}
+    canonical = _reserved_sequence_fields(sequence.sessions is not None).union(
+        map(canonical_name, _property_fields(sequence.properties, sequence.representation))
+    )
     for name in (*design.features, *design.outcomes, *design.eligibility):
-        if unicodedata.normalize("NFC", name).casefold() in canonical:
+        if canonical_name(name) in canonical:
             raise _RESERVED_NAME.error(name=name)
 
 
@@ -156,11 +127,9 @@ def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
     physical_unit = source.units[design.unit]
     configured_id = model.event_ids.get(source.name)
     raw = model._relation(source.relation)
-    identity_alias = "__terrine_sequence_event_id"
-    suffix = 0
-    while identity_alias in raw.columns:
-        suffix += 1
-        identity_alias = f"__terrine_sequence_event_id_{suffix}"
+    identity_alias = available_name(
+        "__terrine_sequence_event_id", set(map(canonical_name, raw.columns))
+    )
     normalized = normalize_events(
         raw,
         source,
@@ -172,11 +141,9 @@ def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
     timestamp_check = _precision_check(
         model, normalized, "_timestamp", source_column=source.time_column
     )
-    timestamp_alias = "_sequence_raw_timestamp"
-    suffix = 0
-    while timestamp_alias in normalized.columns:
-        suffix += 1
-        timestamp_alias = f"_sequence_raw_timestamp_{suffix}"
+    timestamp_alias = available_name(
+        "_sequence_raw_timestamp", set(map(canonical_name, normalized.columns))
+    )
     normalized = normalized.mutate(**{timestamp_alias: normalized["_timestamp"]}).drop("_timestamp")
     normalized = _utc_column(model, normalized, timestamp_alias, "_timestamp")
 
@@ -188,34 +155,7 @@ def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
         for name in dict.fromkeys(internal_names)
         if name is not None and name not in sequence.properties
     )
-    generated_sequence_names = {
-        "unit",
-        "anchor_id",
-        "t0",
-        "is_event",
-        "sequence_position",
-        "event_id",
-        "event_time",
-        "event_count",
-        "sequence_complete",
-        "sequence_reason",
-        "event_values",
-        "funnel_attempts",
-        "funnel_attempts_complete",
-        "funnel_attempts_reason",
-        "sessions",
-        "sessions_complete",
-        "sessions_reason",
-        "session_index",
-        "session_event_count",
-        "session_start_time",
-        "session_end_time",
-        "previous_event_id",
-        "previous_event_time",
-        "transition_reason",
-        "transition",
-        "transition_from",
-        "transition_to",
+    generated_sequence_names = _reserved_sequence_fields(True) | {
         "_sequence_unit",
         "_sequence_anchor",
         "_sequence_t0",
@@ -225,19 +165,16 @@ def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
         "_funnel_sequence_end",
         "__terrine_funnel_event_property",
     }
-    reserved_property_names = (
-        set(normalized.columns) | set(sequence.properties) | set(internal_properties)
-    )
+    bound_names = generated_sequence_names.union(map(canonical_name, normalized.columns))
+    reserved_property_names = set(bound_names)
+    properties = tuple(dict.fromkeys((*sequence.properties, *internal_properties)))
+    reserved_property_names.update(map(canonical_name, properties))
     property_aliases = {}
-    for index, name in enumerate(dict.fromkeys((*sequence.properties, *internal_properties))):
+    for index, name in enumerate(properties):
         alias = name
-        if name in normalized.columns or name in generated_sequence_names:
-            alias = f"__terrine_sequence_property_{index}"
-            suffix = 0
-            while alias in reserved_property_names:
-                suffix += 1
-                alias = f"__terrine_sequence_property_{index}_{suffix}"
-            reserved_property_names.add(alias)
+        if canonical_name(name) in bound_names:
+            alias = available_name(f"__terrine_sequence_property_{index}", reserved_property_names)
+            reserved_property_names.add(canonical_name(alias))
         property_aliases[name] = alias
     property_columns = {name: property_aliases[name] for name in sequence.properties}
     label_property_column = (

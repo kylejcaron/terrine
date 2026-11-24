@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
+from terrine._names import value_columns
 from terrine.spec.panels import CalendarComparisonSpec, EventPanelSpec, SequentialSpec
-from terrine.spec.sequence import EventSequence
+from terrine.spec.sequence import SESSION_VALUES, TRANSITION_LABELS, EventSequence
 from terrine.spec.state_panel import StateObservations, StatePanel
 from terrine.spec.trajectory import CohortSpec, LifeTable, TimeToEvent
 
@@ -55,23 +55,6 @@ STATE_PANEL = (
 )
 STATE_VALUES = ("from_state", "to_state")
 SEQUENCE = ("is_event", "sequence_position", "event_id", "event_time", "event_count")
-SESSION_VALUES = (
-    "session_index",
-    "session_event_count",
-    "session_start_time",
-    "session_end_time",
-    "previous_event_id",
-    "previous_event_time",
-    "transition",
-)
-TRANSITION_LABELS = ("transition_from", "transition_to")
-
-
-def value_columns(names: Iterable[str]) -> tuple[str, ...]:
-    """Expand values into their published value, completeness and reason triples."""
-    return tuple(
-        column for name in names for column in (name, f"{name}__complete", f"{name}__reason")
-    )
 
 
 def design_columns(design: Design) -> tuple[str, ...]:
