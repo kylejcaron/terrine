@@ -14,6 +14,38 @@ from integration.warehouse_execution.snowflake_fixtures import (
 pytestmark = pytest.mark.snowflake
 
 
+def test_unread_and_partial_readers_release_snapshot_cursors(
+    snowflake_scratch, tmp_path, monkeypatch
+):
+    from integration.warehouse_execution.test_snowflake_admission import _events, _model
+    from terrine.execution.inputs import open_execution
+
+    scratch = snowflake_scratch
+    _events(scratch)
+    scratch.sql("INSERT INTO events SELECT * FROM events")
+    model = _model(scratch, tmp_path)
+    with open_execution(model.catalog, scratch.con) as context:
+        query = context.resolve(model.catalog.sources["sessions"].relation).select("user_id")
+        raw = scratch.con.con
+        open_cursor = raw.cursor
+        cursors = []
+
+        def track(*args, **kwargs):
+            cursor = open_cursor(*args, **kwargs)
+            cursors.append(cursor)
+            return cursor
+
+        monkeypatch.setattr(raw, "cursor", track)
+        for partial in (False, True):
+            reader = context.to_arrow_batches(query, chunk_size=1)
+            assert any(not cursor.is_closed() for cursor in cursors)
+            if partial:
+                assert next(reader).num_rows == 1
+            reader.close()
+            assert all(cursor.is_closed() for cursor in cursors)
+            assert context.execute(query.count()).as_py() == 2
+
+
 def test_scratch_schema_is_isolated_and_round_trips_exact_values(snowflake_scratch):  # noqa: F811
     scratch = snowflake_scratch
     scratch.sql(
