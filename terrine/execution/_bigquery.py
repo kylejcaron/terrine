@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Generator, Mapping
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
@@ -308,7 +308,7 @@ def _query_schema(con: Any, sql: str) -> Any:
     return BigQuerySchema.to_ibis(job.schema)
 
 
-def owned_session(con: Any) -> tuple[Any, Any, str]:
+def owned_session(con: Any) -> BigQuerySession:
     """Open a private client, storage reader and session holding one snapshot.
 
     The caller's client, and any session or job configuration it holds, is never
@@ -320,6 +320,7 @@ def owned_session(con: Any) -> tuple[Any, Any, str]:
 
     caller = client_of(con)
     project, dataset = _defaults(con)
+    client = storage = session_id = None
     try:
         client = bigquery.Client(
             project=caller.project,
@@ -331,17 +332,38 @@ def owned_session(con: Any) -> tuple[Any, Any, str]:
             "BEGIN TRANSACTION", job_config=bigquery.QueryJobConfig(create_session=True)
         )
         job.result()
-    except Exception as exc:
-        raise _snapshot_error("could not open a private BigQuery session") from exc
-    session_id = job.session_info.session_id if job.session_info is not None else None
-    if session_id is None:
-        client.close()
-        raise _snapshot_error("BigQuery did not open a session for the snapshot transaction")
-    client.default_query_job_config = bigquery.QueryJobConfig(
-        default_dataset=f"{project}.{dataset}" if dataset else None,
-        connection_properties=[bigquery.ConnectionProperty("session_id", session_id)],
-    )
-    return client, storage, session_id
+        session_id = job.session_info.session_id if job.session_info is not None else None
+        if not session_id:
+            raise _snapshot_error("BigQuery did not open a session for the snapshot transaction")
+        client.default_query_job_config = bigquery.QueryJobConfig(
+            default_dataset=f"{project}.{dataset}" if dataset else None,
+            connection_properties=[bigquery.ConnectionProperty("session_id", session_id)],
+        )
+        return BigQuerySession(client, storage, session_id)
+    except BaseException as exc:
+        _release_session(client, storage, session_id)
+        if isinstance(exc, Exception) and not isinstance(exc, TerrineError):
+            raise _snapshot_error("could not open a private BigQuery session") from exc
+        raise
+
+
+def _release_session(client, storage, session_id):
+    """Best-effort cleanup, including failures before the private defaults were installed."""
+    if session_id:
+        from google.cloud import bigquery
+
+        for statement in ("ROLLBACK TRANSACTION", "CALL BQ.ABORT_SESSION()"):
+            with suppress(BaseException):
+                config = bigquery.QueryJobConfig(
+                    connection_properties=[bigquery.ConnectionProperty("session_id", session_id)]
+                )
+                client.query(statement, job_config=config).result()
+    if client is not None:
+        with suppress(BaseException):
+            client.close()
+    if storage is not None:
+        with suppress(BaseException):
+            storage.transport.close()
 
 
 def _submit_arrow(con: Any, query: Any, sql: str) -> tuple[Any, Any]:
@@ -404,13 +426,7 @@ class BigQuerySession:
 
     def close(self) -> None:
         """Roll back and end the session; cleanup failures never mask a result."""
-        for statement in ("ROLLBACK TRANSACTION", "CALL BQ.ABORT_SESSION()"):
-            try:
-                self.client.query(statement).result()
-            except Exception:  # the session also expires server-side
-                continue
-        self.client.close()
-        self.storage.transport.close()
+        _release_session(self.client, self.storage, self.session_id)
 
 
 @contextmanager
