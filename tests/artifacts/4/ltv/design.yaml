@@ -1,0 +1,23 @@
+design:
+  anchor:
+    event: orders
+    type: EventAnchor
+  features:
+    orders_30d:
+      metric: orders
+      type: MetricAgg
+      window:
+        end: 0s
+        start: -30d
+        type: Window
+  shape:
+    origin: orders
+    trajectory:
+      cumulative: true
+      metric: spend
+      period: 1w
+      periods: 2
+      type: Trajectory
+    type: CohortSpec
+  unit: null
+schema_version: 4

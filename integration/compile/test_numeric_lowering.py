@@ -287,7 +287,10 @@ def test_schedule_native_certificate_uses_last_origin_not_alignment_sample(con):
     ]
 
 
-def test_revision_one_replay_refuses_and_empty_change_refresh_recomputes(tmp_path):
+@pytest.mark.parametrize(("old_revision", "old_recent"), [(1, 0.0), (2, 1.0)])
+def test_obsolete_replay_refuses_and_empty_change_refresh_recomputes(
+    tmp_path, old_revision, old_recent
+):
     import hashlib
     import json
     from dataclasses import replace
@@ -349,9 +352,9 @@ def test_revision_one_replay_refuses_and_empty_change_refresh_recomputes(tmp_pat
             snapshot_id=snapshot.snapshot_id,
             graph=graph,
         )
-        # Reconstruct a valid revision-one identity, including its checksum.
+        historical_generation = f"revision-{old_revision}"
         old_document = json.loads(plan.serialize())
-        old_document["execution_revision"] = 1
+        old_document["execution_revision"] = old_revision
         del old_document["fingerprint"]
         old_document["fingerprint"] = hashlib.sha256(
             json.dumps(old_document, sort_keys=True, separators=(",", ":")).encode()
@@ -368,15 +371,15 @@ def test_revision_one_replay_refuses_and_empty_change_refresh_recomputes(tmp_pat
         )
         assert SavedPlan.from_json(old_saved.to_json()) == old_saved
         frame = design.build(model).materialize()
-        # Binary64 lifetime subtraction previously published (1e16 + 1) - 1e16 = 0.
+        # Revision 1 lost the recent unit via lifetime subtraction; revision 2 retained it.
         old_frame = replace(
             frame,
             table=frame.table.set_column(
                 frame.table.schema.get_field_index("recent"),
                 "recent",
-                pa.array([0.0]),
+                pa.array([old_recent]),
             ),
-            provenance=replace(frame.provenance, execution_revision=1),
+            provenance=replace(frame.provenance, execution_revision=old_revision),
         )
         backend = DuckDBBackend(con.con, namespace="owner")
         leases = LeaseStore(con.con, namespace="owner")
@@ -389,10 +392,10 @@ def test_revision_one_replay_refuses_and_empty_change_refresh_recomputes(tmp_pat
         historical = backend.publish_generation(
             StagedGeneration(
                 "study",
-                "revision-one",
+                historical_generation,
                 {"all": old_frame.to_pyarrow()},
                 snapshot_id=snapshot.snapshot_id,
-                execution_revision=1,
+                execution_revision=old_revision,
             ),
             expected_manifest=None,
             lease=lease,
@@ -401,9 +404,10 @@ def test_revision_one_replay_refuses_and_empty_change_refresh_recomputes(tmp_pat
         con.con.execute(
             "INSERT INTO owner.runtime_runs "
             "(run_id,dataset,fingerprint,state,published_generation,request_key,destination_json) "
-            "VALUES ('historical','study',?,'succeeded','revision-one','same-request',?)",
+            "VALUES ('historical','study',?,'succeeded',?,'same-request',?)",
             [
                 _bind_saved_plan(old_saved, namespace="owner").definition.fingerprint,
+                historical_generation,
                 json.dumps(
                     destination.to_dict(),
                     sort_keys=True,
@@ -419,9 +423,9 @@ def test_revision_one_replay_refuses_and_empty_change_refresh_recomputes(tmp_pat
                 request_key="same-request",
             )
         assert error.value.code == "terrine.runtime.saved_plan_mismatch"
-        assert error.value.context["execution_revision"] == 1
-        assert error.value.context["required_revision"] == 2
-        revision = backend.generation_execution_revision("study", "revision-one")
+        assert error.value.context["execution_revision"] == old_revision
+        assert error.value.context["required_revision"] == 3
+        revision = backend.generation_execution_revision("study", historical_generation)
         refreshed = _plan_refresh(
             namespace="owner",
             dataset="study",
@@ -430,7 +434,7 @@ def test_revision_one_replay_refuses_and_empty_change_refresh_recomputes(tmp_pat
             graph=graph,
             execution_mode="design",
             changes=ChangeSet((), "revision"),
-            reuse_base_generation="revision-one",
+            reuse_base_generation=historical_generation,
             reuse_base_revision=revision,
         )
         assert refreshed.tasks
@@ -440,7 +444,7 @@ def test_revision_one_replay_refuses_and_empty_change_refresh_recomputes(tmp_pat
             model=ModelReference.from_model(model, owner_key="model"),
             destination=destination,
             namespace="owner",
-            expected_base_manifest="revision-one",
+            expected_base_manifest=historical_generation,
         )
         saved.pin_snapshot(RuntimeStore(con.con, namespace="owner"))
 
@@ -458,12 +462,12 @@ def test_revision_one_replay_refuses_and_empty_change_refresh_recomputes(tmp_pat
         )
         current = open_published_frame(receipt, con=con.con, namespace="owner")
         assert current.table["recent"].to_pylist() == [pytest.approx(1.0)]
-        assert current.provenance.execution_revision == 2
+        assert current.provenance.execution_revision == 3
         assert receipt.published_generation is not None
-        assert backend.generation_execution_revision("study", receipt.published_generation) == 2
+        assert backend.generation_execution_revision("study", receipt.published_generation) == 3
         reopened = MaterializedFrame.from_arrow(backend.read_partition(historical, "all"))
-        assert reopened.table["recent"].to_pylist() == [0.0]
-        assert reopened.provenance.execution_revision == 1
-        assert backend.generation_execution_revision("study", "revision-one") == 1
+        assert reopened.table["recent"].to_pylist() == [old_recent]
+        assert reopened.provenance.execution_revision == old_revision
+        assert backend.generation_execution_revision("study", historical_generation) == old_revision
     finally:
         con.disconnect()

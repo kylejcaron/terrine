@@ -58,7 +58,7 @@ construction. The canonical runtime `PlanDefinition` is available as
 Owner preparation accepts `PlanRequest.dataset_definition` and persists the
 complete saved plan as `PlanInvocation.saved_plan_json`.
 
-Saved plans use envelope version **2** and execution revision **2**. The built-in
+Saved plans use envelope version **2** and execution revision **3**. The built-in
 schedule is fingerprinted in runtime plan version **4**; logical callback plans
 keep version **3** and their original fingerprints. A nonempty version-3 plan
 requires its custom executor, or you can replan it for built-in execution after
@@ -145,7 +145,7 @@ with that schema and closes its cursor when the reader closes.
 
 Every newly executed partition, including typed-empty and plain Arrow output,
 carries a separate `terrine.execution` schema marker:
-`{"version":1,"execution_revision":2}`. The publisher takes this revision from
+`{"version":1,"execution_revision":3}`. The publisher takes this revision from
 the validated executing plan, not the installed code or incoming data. Existing
 markers and any Frame provenance must agree; historical Frame metadata cannot
 be silently relabeled. Ordinary Frames also record `Provenance.execution_revision`;
