@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased
+
+- Ambiguous event-column bindings now refuse instead of silently using another
+  column's values. Event sequences preserve the configured event ID and reject
+  property names that would overwrite an output or its support fields.
+- Execution revision advances from 2 to 3 for **all** definitions. Replan old
+  saved requests before executing or replaying them. A refresh cannot reuse
+  a revision-2 generation: a valid definition rebuilds; an ambiguous binding
+  refuses. Historical generations remain readable with their original values.
+- Training views retain shared approximate-quantile outputs when another alias
+  is omitted. Dropping unusable labels counts their reasons and applies output
+  row and byte budgets to the surviving rows.
+- Interrupting a DuckDB capture or publication before commit releases its
+  transaction for retry. Interrupting after commit leaves the generation intact.
+  File-backed staging and reopening now also work when the runtime schema has
+  the same name as its DuckDB catalog.
+- Explicitly closing a PostgreSQL or Snowflake batch reader releases its
+  cursor without waiting for garbage collection. Failed BigQuery session
+  startup cleans up the private clients it acquired, not the caller's client.
+- Event panels require signed 64-bit integer period indices and reference
+  periods; booleans are not indices. Binned state panels with a fixed day
+  boundary now export their start timestamps as UTC instants.
+- The survival guide explains why `source_coverage` can refer to a unit's
+  observation limit. The runtime guide distinguishes an unverifiable
+  publication from a run cancelled before recovery.
+
 ## 0.1.0a4
 
 - Terrine submits fewer training-label queries, bounds eligible fact reads,

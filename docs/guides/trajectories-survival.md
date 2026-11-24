@@ -120,8 +120,11 @@ assert survival == equivalent_survival
 
 Per-unit survival columns use `duration__complete`/`duration__reason`,
 `event__complete`/`event__reason`, and `event_time__complete`/`event_time__reason`.
-`censor_reason` remains a distinct value describing censoring, not a shared
-completeness field.
+`censor_reason` describes why follow-up ended. `source_coverage` can mean that the
+endpoint source stopped covering events **or** that the unit reached its own
+`observed_until`. The code does not distinguish the two. For example, if the
+source covers nine days after entry but the unit is observed for only two, a
+unit with no endpoint event is censored at two days, not nine.
 
 Nanosecond axes retain nanoseconds in the Arrow duration. DuckDB's lazy
 published-generation relation cannot express nanosecond intervals and refuses
@@ -219,9 +222,9 @@ censoring, or attach intervals.
 
 Bins are half-open elapsed-time intervals from each row's analysis origin.
 Delayed entry contributes to the risk set starting at its actual entry bin;
-events and censoring are recorded in their terminal-time bin. Censor reasons
-remain explicit counts in `censored_by_reason`; no incomplete record is
-zero-filled or reclassified as an event.
+events and censoring are recorded in their terminal-time bin. `censored_by_reason`
+counts both source and unit observation limits under `source_coverage`; no
+incomplete record is zero-filled or reclassified as an event.
 
 Each group emits all bins from zero through its last terminal bin, including
 bins before anyone enters. `Budget.max_rows` and `Budget.max_output_bytes`
