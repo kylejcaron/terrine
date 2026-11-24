@@ -1144,7 +1144,8 @@ def test_sequence_compiler_projects_multiple_rebound_properties_from_original_ro
     assert (child["b"], child["a"]) == ("C", "B")
 
 
-def test_sequence_timestamp_temporary_alias_avoids_physical_property(sequence_model):
+@pytest.mark.parametrize("representation", ["positions", "arrays"])
+def test_sequence_preserves_id_and_helper_like_properties(sequence_model, representation):
     from terrine.semantic.models import Property, TableRef
     from terrine.spec import Design, EventAnchor, EventSequence
     from terrine.windows import Window
@@ -1155,14 +1156,18 @@ def test_sequence_timestamp_temporary_alias_avoids_physical_property(sequence_mo
             {
                 "user_id": ["u"],
                 "ts": [datetime(2025, 1, 1, 12, tzinfo=UTC)],
-                "event_id": ["one"],
-                "_sequence_raw_timestamp": ["preserve-me"],
-                "__terrine_sequence_event_id": ["collision"],
+                "event_id": ["a"],
+                "_SEQUENCE_RAW_TIMESTAMP": ["preserve-me"],
+                "__TERRINE_SEQUENCE_EVENT_ID": ["base-decoy"],
+                "__TERRINE_SEQUENCE_EVENT_ID_1": ["fallback-decoy"],
             }
         ),
     )
     source = sequence_model.catalog.sources["events"].model_copy(
-        update={"relation": TableRef(kind="table", name="alias_events"), "properties": ("raw",)}
+        update={
+            "relation": TableRef(kind="table", name="alias_events"),
+            "properties": ("raw", "payload"),
+        }
     )
     catalog = sequence_model.catalog.model_copy(
         update={
@@ -1170,10 +1175,16 @@ def test_sequence_timestamp_temporary_alias_avoids_physical_property(sequence_mo
             "properties": {
                 "raw": Property(
                     source="events",
-                    column="_sequence_raw_timestamp",
+                    column="_SEQUENCE_RAW_TIMESTAMP",
                     dtype="string",
                     as_of="event_time",
-                )
+                ),
+                "payload": Property(
+                    source="events",
+                    column="__TERRINE_SEQUENCE_EVENT_ID_1",
+                    dtype="string",
+                    as_of="event_time",
+                ),
             },
         }
     )
@@ -1186,9 +1197,21 @@ def test_sequence_timestamp_temporary_alias_avoids_physical_property(sequence_mo
     design = Design(
         "user",
         EventAnchor("signup"),
-        shape=EventSequence("signup", Window("0s", "2h"), max_events=5, properties=("raw",)),
+        shape=EventSequence(
+            "signup",
+            Window("0s", "2h"),
+            max_events=5,
+            properties=("raw", "payload"),
+            representation=representation,
+        ),
     )
-    compiled = design.build(model)._compiled
-    compiled.validate(execute=model.con.to_pyarrow)
-    child = next(row for row in model.con.to_pyarrow(compiled.table).to_pylist() if row["is_event"])
-    assert child["raw"] == "preserve-me"
+    result = design.build(model).materialize(budget=Budget(max_rows=10, max_output_bytes=10_000))
+    rows = result.table.to_pylist()
+    children = (
+        [row for row in rows if row["is_event"]]
+        if representation == "positions"
+        else rows[0]["event_values"]
+    )
+    assert [(row["event_id"], row["raw"], row["payload"]) for row in children] == [
+        ("a", "preserve-me", "fallback-decoy")
+    ]

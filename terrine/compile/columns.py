@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import copy
-import unicodedata
 from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager
 from contextvars import ContextVar
@@ -18,6 +17,7 @@ import ibis.expr.types as ir
 import pyarrow as pa
 
 import terrine.reasons as reason_codes
+from terrine._names import available_name, canonical_name
 from terrine.backends.dialect import dialect_scope
 from terrine.backends.extrema import greatest, least
 from terrine.backends.joins import null_safe_equal
@@ -155,7 +155,7 @@ def _validate_names(design: Design) -> None:
     seen = {}
     reserved_casefold = {value.casefold() for value in reserved}
     for name in names:
-        normalized = unicodedata.normalize("NFC", name).casefold()
+        normalized = canonical_name(name)
         if normalized in reserved_casefold or normalized.startswith("__terrine_"):
             raise _RESERVED_NAME.error(name=name)
         if normalized in seen:
@@ -526,11 +526,9 @@ def compile_columns(
             configured_id = model.event_ids.get(source_name)
             extra_columns = None
             if configured_id is not None:
-                identity_alias = "__terrine_selector_event_id"
-                suffix = 0
-                while identity_alias in raw.columns:
-                    suffix += 1
-                    identity_alias = f"__terrine_selector_event_id_{suffix}"
+                identity_alias = available_name(
+                    "__terrine_selector_event_id", set(map(canonical_name, raw.columns))
+                )
                 selector_identity_columns[source_name] = identity_alias
                 extra_columns = {identity_alias: configured_id}
             events = normalize_events(

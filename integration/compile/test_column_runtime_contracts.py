@@ -34,6 +34,60 @@ def column_model_fixture(column_model):
     yield column_model
 
 
+@pytest.mark.parametrize("unit,amount", [("id", "_UNIT"), ("_UNIT", "amount_raw")])
+def test_reserved_unit_name_only_identifies_the_selected_key(unit, amount):
+    events = pa.table({unit: [1], "ts": [datetime(2025, 1, 2, tzinfo=UTC)], amount: [10]})
+    model = Model.from_tables(
+        units={"user": tr.UnitSource(pa.table({"id": [1]}), "id")},
+        events={
+            "activity": tr.Events(
+                events, time="ts", key=unit, metrics={"amount": tr.sum(amount)},
+                complete=("2025-01-01", "2025-01-10"),
+            )
+        },
+    )
+    try:
+        design = Design(
+            "user", FixedDate("2025-01-03"), features={"total": agg("amount", window=("-2d", "0s"))}
+        )
+        if amount == "_UNIT":
+            with pytest.raises(TerrineError) as error:
+                design.build(model).materialize()
+            assert error.value.code == "terrine.semantic.ambiguous_column"
+            assert error.value.context["column"] == "_unit"
+        else:
+            row, = design.build(model).materialize().table.to_pylist()
+            assert (row["unit"], row["total"], row["total__complete"]) == (1, 10, True)
+    finally:
+        model.con.disconnect()
+
+
+def test_selector_identity_ignores_repeated_helper_like_payload(column_model):
+    con = column_model.con
+    con.raw_sql("ALTER TABLE events RENAME COLUMN tier TO __TERRINE_SELECTOR_EVENT_ID")
+    con.raw_sql("UPDATE events SET __TERRINE_SELECTOR_EVENT_ID='decoy'")
+    con.raw_sql("ALTER TABLE events ADD COLUMN actual_id INTEGER")
+    con.raw_sql("UPDATE events SET actual_id=coalesce(amount, 0)")
+    catalog = column_model.catalog.model_dump(mode="python")
+    catalog["properties"]["tier"]["column"] = "__TERRINE_SELECTOR_EVENT_ID"
+    model = Model.from_catalog(
+        Catalog.model_validate(catalog), con=con, units=column_model.units,
+        readiness=column_model.readiness, event_ids={"events": "actual_id"},
+    )
+    design = Design(
+        "user", FixedDate("2025-01-03"),
+        features={"first": event_time("amount", window=("-1d", "0s"))},
+    )
+    frame = design.build(model)
+    row = next(row for row in frame.materialize().table.to_pylist() if row["unit"] == "a")
+    assert row["first"] == datetime(2025, 1, 2, 11, 59, 59, tzinfo=UTC)
+    con.raw_sql("UPDATE events SET actual_id=1 WHERE user_id='a'")
+    with pytest.raises(TerrineError) as error:
+        frame.materialize()
+    assert error.value.code == "terrine.compile.anchor_integrity"
+    assert error.value.context["check_key"] == "duplicate_event_id"
+
+
 def test_named_windows_asof_treatment_and_independent_completeness(column_model_fixture):
     compiled = _compile(
         column_model_fixture,

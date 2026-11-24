@@ -114,3 +114,15 @@ def test_sequence_property_names_cannot_collide_with_generated_columns():
         )
     with pytest.raises(TerrineError):
         EventSequence("purchase", Window("0s", "1h"), max_events=2, properties=("sequence",))
+    for representation, properties in (
+        ("positions", ("EVENT_ID",)),
+        ("positions", ("payload", "payload__reason")),
+        ("positions", ("payload", "PAYLOAD__COMPLETE")),
+        ("arrays", ("payload", "PAYLOAD_REASON")),
+    ):
+        with pytest.raises(TerrineError) as collision:
+            EventSequence(
+                "purchase", Window("0s", "1h"), max_events=2,
+                representation=representation, properties=properties,
+            )
+        assert collision.value.code == "terrine.sequence.invalid_spec"

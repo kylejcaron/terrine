@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
+from terrine._names import canonical_name, value_columns
 from terrine.errors import RefusalSpec
 from terrine.windows import Duration, Window, duration
 
@@ -15,6 +16,30 @@ _UNSUPPORTED_SHAPE = RefusalSpec(
 )
 _INVALID = RefusalSpec("terrine.sequence.invalid_spec", "Invalid event sequence request: {reason}.")
 _MAX = 2**63 - 1
+
+_SEQUENCE_FIELDS = frozenset({
+    "unit", "anchor_id", "t0", "is_event", "sequence_position", "event_id", "event_time",
+    "event_count", "sequence_complete", "sequence_reason", "event_values", "funnel_attempts",
+    "funnel_attempts_complete", "funnel_attempts_reason",
+})
+SESSION_VALUES = (
+    "session_index", "session_event_count", "session_start_time", "session_end_time",
+    "previous_event_id", "previous_event_time", "transition",
+)
+TRANSITION_LABELS = ("transition_from", "transition_to")
+_SESSION_FIELDS = frozenset({
+    *SESSION_VALUES, *TRANSITION_LABELS, "transition_reason", "sessions",
+    "sessions_complete", "sessions_reason",
+})
+
+
+def _reserved_sequence_fields(sessions: bool) -> frozenset[str]:
+    return _SEQUENCE_FIELDS | _SESSION_FIELDS if sessions else _SEQUENCE_FIELDS
+
+
+def _property_fields(names: tuple[str, ...], representation: str) -> tuple[str, ...]:
+    values = value_columns(names) if representation == "positions" else names
+    return (*values, *(f"{name}_reason" for name in names))
 
 
 def _name(value: object, field: str) -> str:
@@ -159,48 +184,18 @@ class EventSequence:
         if not isinstance(properties, (tuple, list)):
             raise _INVALID.error(reason="properties must be an ordered sequence")
         properties = tuple(_name(v, "property") for v in properties)
-        if len(set(properties)) != len(properties):
-            raise _INVALID.error(reason="properties must be distinct")
-        generated = {
-            "unit",
-            "anchor_id",
-            "t0",
-            "is_event",
-            "sequence_position",
-            "event_id",
-            "event_time",
-            "event_count",
-            "sequence_complete",
-            "sequence_reason",
-            "event_values",
-            "funnel_attempts",
-            "funnel_attempts_complete",
-            "funnel_attempts_reason",
-        }
-        if sessions is not None:
-            generated.update(
-                {
-                    "session_index",
-                    "session_event_count",
-                    "session_start_time",
-                    "session_end_time",
-                    "previous_event_id",
-                    "previous_event_time",
-                    "transition_reason",
-                    "transition",
-                    "transition_from",
-                    "transition_to",
-                    "sessions",
-                    "sessions_complete",
-                    "sessions_reason",
-                }
-            )
-        reason_names = {f"{name}_reason" for name in properties}
-        if (
-            generated.intersection(properties)
-            or reason_names.intersection(properties)
-            or reason_names.intersection(generated)
-        ):
+        fields = tuple(map(canonical_name, _property_fields(properties, representation)))
+        reserved = _reserved_sequence_fields(sessions is not None)
+        if representation == "positions":
+            public_values = ["event_count"]
+            if sessions is not None:
+                public_values.extend(("sessions", *SESSION_VALUES))
+                if label_property is not None:
+                    public_values.extend(TRANSITION_LABELS)
+            if funnel is not None:
+                public_values.append("funnel_attempts")
+            reserved = reserved.union(value_columns(public_values))
+        if len(set(fields)) != len(fields) or not reserved.isdisjoint(fields):
             raise _INVALID.error(
                 reason="event property names collide with generated output columns"
             )

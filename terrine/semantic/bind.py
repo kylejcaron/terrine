@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, cast
 import ibis
 import ibis.expr.types as ir
 
+from terrine._names import canonical_name
 from terrine.backends.registry import Engine, expression_dialect, resolve_engine
 from terrine.errors import RefusalSpec, freeze
 from terrine.semantic.io import invalid_definition
@@ -565,17 +566,19 @@ def normalize_events(
     )
     physical.extend(dim.foreign_key for dim in source.dimensions if dim.foreign_key is not None)
     physical = list(dict.fromkeys(physical))
-    if ("_unit" in physical and unit_column != "_unit") or (
-        "_timestamp" in physical and source.time_column != "_timestamp"
-    ):
-        raise _AMBIGUOUS.error(column="_unit" if "_unit" in physical else "_timestamp")
     columns = {"_timestamp": source.time_column, "_unit": unit_column}
+    for column in physical:
+        role = canonical_name(column)
+        if role in columns and column != columns[role]:
+            raise _AMBIGUOUS.error(column=role)
     columns.update((column, column) for column in physical)
     if extra_columns:
+        occupied = set(map(canonical_name, (*columns, *source_table.columns)))
         for alias, column in extra_columns.items():
             if column not in source_table.columns:
                 raise _SCHEMA.error(field="additional identity", column=column)
-            if alias in columns or alias in source_table.columns:
+            if canonical_name(alias) in occupied:
                 raise _AMBIGUOUS.error(column=alias)
             columns[alias] = column
+            occupied.add(canonical_name(alias))
     return source_table.select(**{name: source_table[column] for name, column in columns.items()})

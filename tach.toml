@@ -29,6 +29,10 @@ path = "terrine._time"
 depends_on = []
 
 [[modules]]
+path = "terrine._names"
+depends_on = []
+
+[[modules]]
 path = "terrine.data"
 depends_on = ["terrine.backends", "terrine.errors", "terrine.windows"]
 
@@ -39,11 +43,11 @@ depends_on = ["terrine.data", "terrine.errors", "terrine.semantic"]
 
 [[modules]]
 path = "terrine.spec"
-depends_on = ["terrine.backends", "terrine._time", "terrine.errors", "terrine.semantic", "terrine.windows", "terrine.frame", "terrine.execution"]
+depends_on = ["terrine.backends", "terrine._names", "terrine._time", "terrine.errors", "terrine.semantic", "terrine.windows", "terrine.frame", "terrine.execution"]
 
 [[modules]]
 path = "terrine.semantic"
-depends_on = ["terrine.backends", "terrine._time", "terrine.errors", "terrine.windows", "terrine.execution"]
+depends_on = ["terrine.backends", "terrine._names", "terrine._time", "terrine.errors", "terrine.windows", "terrine.execution"]
 
 [[modules]]
 path = "terrine.temporal"
@@ -64,7 +68,7 @@ depends_on = ["terrine.errors", "terrine.semantic"]
 
 [[modules]]
 path = "terrine.compile"
-depends_on = ["terrine.backends", "terrine.errors", "terrine.reasons", "terrine.execution", "terrine.model", "terrine.spec", "terrine.data", "terrine.semantic", "terrine.temporal", "terrine.windows"]
+depends_on = ["terrine._names", "terrine.backends", "terrine.errors", "terrine.reasons", "terrine.execution", "terrine.model", "terrine.spec", "terrine.data", "terrine.semantic", "terrine.temporal", "terrine.windows"]
 
 [[modules]]
 path = "terrine.compile.cost"
@@ -72,7 +76,7 @@ depends_on = ["terrine.compile", "terrine.compile.dispatch", "terrine.data", "te
 
 [[modules]]
 path = "terrine.compile.shapes"
-depends_on = ["terrine.backends", "terrine.compile", "terrine.data", "terrine.errors", "terrine.reasons", "terrine.model", "terrine.semantic", "terrine.spec", "terrine.temporal", "terrine.windows"]
+depends_on = ["terrine._names", "terrine.backends", "terrine.compile", "terrine.data", "terrine.errors", "terrine.reasons", "terrine.model", "terrine.semantic", "terrine.spec", "terrine.temporal", "terrine.windows"]
 
 [[modules]]
 path = "terrine.compile.dispatch"
