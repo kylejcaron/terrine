@@ -512,15 +512,15 @@ class ArrowReader(Protocol):
 
 
 class _ClosingArrowReader:
-    """Couple a PyArrow reader to the generator that owns its source."""
+    """Couple a PyArrow reader to the lifetime of its driver resources."""
 
     def __init__(
         self,
         reader: pa.RecordBatchReader,
-        batches: Generator[pa.RecordBatch],
+        close_source: Callable[[], None],
     ) -> None:
         self._reader: pa.RecordBatchReader | None = reader
-        self._batches: Generator[pa.RecordBatch] | None = batches
+        self._close_source: Callable[[], None] | None = close_source
         self._schema = reader.schema
 
     @property
@@ -562,11 +562,11 @@ class _ClosingArrowReader:
             self.close()
 
     def close(self) -> None:
-        batches, self._batches = self._batches, None
+        close_source, self._close_source = self._close_source, None
         reader, self._reader = self._reader, None
         try:
-            if batches is not None:
-                batches.close()
+            if close_source is not None:
+                close_source()
         finally:
             if reader is not None:
                 reader.close()
@@ -627,7 +627,7 @@ class _DuckDBSession:
 
         source = batches()
         reader = pa.RecordBatchReader.from_batches(query.as_table().schema().to_pyarrow(), source)
-        return _ClosingArrowReader(reader, source)
+        return _ClosingArrowReader(reader, source.close)
 
     def close(self) -> None:
         try:

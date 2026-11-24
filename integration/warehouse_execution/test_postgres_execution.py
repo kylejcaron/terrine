@@ -47,6 +47,33 @@ metrics:
 """
 
 
+def test_partial_reader_releases_named_cursor_inside_its_context(postgres_scratch, tmp_path):
+    from integration.warehouse_execution.test_postgres_admission import _events, _model
+    from terrine.execution.inputs import open_execution
+
+    con = postgres_scratch.con
+    _events(con)
+    con.raw_sql("INSERT INTO events SELECT * FROM events").close()
+    model = _model(con, tmp_path)
+    with open_execution(model.catalog, con) as context:
+        query = context.resolve(model.catalog.sources["sessions"].relation).select("user_id")
+
+        def active():
+            with context.con.con.cursor() as cursor:
+                cursor.execute(
+                    "SELECT count(*) FROM pg_catalog.pg_cursors WHERE name='terrine_cursor'"
+                )
+                return cursor.fetchone()[0]
+
+        reader = context.to_arrow_batches(query, chunk_size=1)
+        assert active() == 0
+        assert next(reader).num_rows == 1
+        assert active() == 1
+        reader.close()
+        assert active() == 0
+        assert context.execute(query.count()).as_py() == 2
+
+
 def test_first_dataset_counts_match_the_duckdb_tutorial(postgres_scratch, tmp_path):  # noqa: F811
     import terrine as tr
 

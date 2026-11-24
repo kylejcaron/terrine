@@ -400,7 +400,7 @@ class BigQuerySession:
 
         source = batches()
         reader = pa.RecordBatchReader.from_batches(schema.to_pyarrow(), source)
-        return _ClosingArrowReader(reader, source)
+        return _ClosingArrowReader(reader, source.close)
 
     def close(self) -> None:
         """Roll back and end the session; cleanup failures never mask a result."""

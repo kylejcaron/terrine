@@ -7,7 +7,7 @@ import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from itertools import pairwise
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import ibis
 import pyarrow as pa
@@ -26,6 +26,9 @@ from terrine.semantic.sql import (
     _verified,
     admit_read_query,
 )
+
+if TYPE_CHECKING:
+    from terrine.execution.inputs import ArrowReader
 
 _NONFINITE = RefusalSpec(
     "terrine.backend.nonfinite_decimal",
@@ -444,13 +447,16 @@ class PostgresSession:
         table = pa.Table.from_batches(list(self._rows(sql, schema, 65_536)), schema=schema)
         return query.__pyarrow_result__(table)
 
-    def batches(self, con: Any, query: Any, sql: str, *, chunk_size: int) -> pa.RecordBatchReader:
+    def batches(self, con: Any, query: Any, sql: str, *, chunk_size: int) -> ArrowReader:
+        from terrine.execution.inputs import _ClosingArrowReader
+
         try:
             con._run_pre_execute_hooks(query)
         finally:
             invalidate_metadata()
         schema = query.as_table().schema().to_pyarrow()
-        return pa.RecordBatchReader.from_batches(schema, self._rows(sql, schema, chunk_size))
+        source = self._rows(sql, schema, chunk_size)
+        return _ClosingArrowReader(pa.RecordBatchReader.from_batches(schema, source), source.close)
 
     def close(self) -> None:
         try:

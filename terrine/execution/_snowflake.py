@@ -20,10 +20,10 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Generator, Iterable, Mapping
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import ibis
 import ibis.expr.datatypes as dt
@@ -35,6 +35,9 @@ from terrine.errors import RefusalSpec, TerrineError
 from terrine.execution._metadata import invalidate_metadata
 from terrine.semantic.models import Catalog, RelationSpec, SqlQuery, TableRef
 from terrine.semantic.sql import _admit_read_query_ast, _render, _scopes, _verified
+
+if TYPE_CHECKING:
+    from terrine.execution.inputs import ArrowReader
 
 DIALECT = "snowflake"
 # Physical row sources with Time Travel, and views over them. Temporary tables
@@ -624,22 +627,21 @@ class SnowflakeSession:
         with _arrow_refusal():
             return query.__pyarrow_result__(result, data_mapper=SnowflakePyArrowData)
 
-    def batches(self, con: Any, query: Any, sql: str, *, chunk_size: int) -> pa.RecordBatchReader:
+    def batches(self, con: Any, query: Any, sql: str, *, chunk_size: int) -> ArrowReader:
+        from terrine.execution.inputs import _ClosingArrowReader
+
         invalidate_metadata()
         target = query.as_table().schema().to_pyarrow()
-        cursor = raw_connection(con).cursor()
-        try:
+        with ExitStack() as resources:
+            cursor = raw_connection(con).cursor()
+            resources.callback(cursor.close)
             with _query_refusal():
                 cursor.execute(pin(sql, self.stamp))
             # The statement has completed and its result is held by Snowflake:
             # identity is settled before any batch reaches the caller.
             self.verify()
-        except Exception:
-            cursor.close()
-            raise
 
-        def batches():
-            try:
+            def batches():
                 with _query_refusal(), _arrow_refusal():
                     for table in cursor.fetch_arrow_batches():
                         yield from (
@@ -647,10 +649,11 @@ class SnowflakeSession:
                             .cast(target)
                             .to_batches(max_chunksize=chunk_size)
                         )
-            finally:
-                cursor.close()
 
-        return pa.RecordBatchReader.from_batches(target, batches())
+            source = batches()
+            resources.callback(source.close)
+            reader = pa.RecordBatchReader.from_batches(target, source)
+            return _ClosingArrowReader(reader, resources.pop_all().close)
 
     def close(self) -> None:
         """Nothing is held open: no transaction, session change or temporary object."""
