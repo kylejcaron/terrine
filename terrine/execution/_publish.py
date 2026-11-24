@@ -7,6 +7,7 @@ import os
 import shutil
 import tempfile
 from collections.abc import Mapping
+from contextlib import suppress
 from pathlib import Path
 from typing import Any, Literal
 
@@ -229,9 +230,11 @@ def _publish_locked(
         path = str(retained_path / "inputs.duckdb")
     writer = None
     raw = None
+    owns_transaction = False
     try:
         writer = duckdb.connect(path)
         origin.execute("BEGIN TRANSACTION")
+        owns_transaction = True
         _admit_roots(catalog, origin, units, roots)
         objects = _native.native_objects(origin)
         handles: dict[PhysicalRelationId, RelationHandle] = {}
@@ -276,6 +279,7 @@ def _publish_locked(
                 handles[identity] = handle
                 issuer.handles[identity] = handle
         origin.execute("COMMIT")
+        owns_transaction = False
         writer.close()
         writer = None
         for capture_file in Path(path).parent.glob("capture_*.parquet"):
@@ -308,25 +312,19 @@ def _publish_locked(
             issuer.root_identities[key] = identity
         issuer.cleanup = lambda: _remove_artifact(raw, artifact_dir)
         return PublishedInputs(managed, handles, issuer)
-    except Exception:
-        if writer is not None:
-            try:
-                writer.close()
-            except Exception:
-                pass
-        if raw is not None:
-            try:
-                raw.close()
-            except Exception:
-                pass
-        try:
-            origin.execute("ROLLBACK")
-        except Exception:
-            pass
-        if artifact_dir is not None:
-            artifact_dir.cleanup()
-        elif retained_path is not None:
-            shutil.rmtree(retained_path, ignore_errors=True)
+    except BaseException:
+        if owns_transaction:
+            with suppress(BaseException):
+                origin.execute("ROLLBACK")
+        for connection in (writer, raw):
+            if connection is not None:
+                with suppress(BaseException):
+                    connection.close()
+        with suppress(BaseException):
+            if artifact_dir is not None:
+                artifact_dir.cleanup()
+            elif retained_path is not None:
+                shutil.rmtree(retained_path)
         raise
 
 

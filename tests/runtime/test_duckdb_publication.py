@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import duckdb
@@ -141,6 +142,68 @@ def test_partial_stage_never_becomes_visible():
             lease=lease,
         )
     assert backend.current_generation("orders") is None
+
+
+def test_publication_interrupt_before_commit_rolls_back_but_after_commit_is_durable():
+    with duckdb.connect() as con, con.cursor() as other:
+        backend = DuckDBBackend(con, namespace="owner")
+        observer = DuckDBBackend(other, namespace="owner")
+        lease = _lease(con, "owner")
+        stage = StagedGeneration("orders", "g1", {"p": pa.table({"id": [7]})}, run_id="publish")
+        for phase, expected in (("before_commit", None), ("after_commit", "g1")):
+            def stop(at, phase=phase):
+                if at == phase:
+                    raise KeyboardInterrupt
+
+            backend.fault_injector = stop
+            with pytest.raises(KeyboardInterrupt):
+                backend.publish_generation(stage, expected_manifest=None, lease=lease)
+            assert observer.reconcile("publish").published_generation == expected
+            assert backend.current_generation("orders") == expected
+
+
+@pytest.mark.parametrize("path", ["matching_retry", "reuse"])
+def test_interrupted_run_receipt_can_be_retried_without_rolling_back_manually(monkeypatch, path):
+    with duckdb.connect() as con, con.cursor() as other:
+        backend = DuckDBBackend(con, namespace="owner")
+        observer = DuckDBBackend(other, namespace="owner")
+        lease = _lease(con, "owner")
+        stage = StagedGeneration(
+            "orders", "g1", {"p": pa.table({"id": [7]})}, execution_revision=EXECUTION_REVISION
+        )
+        receipt = backend.publish_generation(stage, expected_manifest=None, lease=lease)
+
+        def attempt():
+            if path == "matching_retry":
+                return backend.publish_generation(
+                    replace(stage, run_id=path), expected_manifest="g1", lease=lease
+                )
+            return backend.reuse_generation(
+                "orders", expected_manifest="g1", lease=lease,
+                run_id=path, execution_revision=EXECUTION_REVISION,
+            )
+
+        def interrupt_before_commit(at):
+            if at == "before_commit":
+                raise KeyboardInterrupt
+
+        record = backend._record_run_publication
+
+        def interrupt_after_record(stage, version):
+            record(stage, version)
+            raise KeyboardInterrupt
+
+        with monkeypatch.context() as patch:
+            if path == "matching_retry":
+                patch.setattr(backend, "_record_run_publication", interrupt_after_record)
+            else:
+                patch.setattr(backend, "fault_injector", interrupt_before_commit)
+            with pytest.raises(KeyboardInterrupt):
+                attempt()
+        assert observer.read_partition(receipt, "p")["id"].to_pylist() == [7]
+        assert observer.reconcile(path).published_generation is None
+        assert attempt() == receipt
+        assert observer.reconcile(path).published_generation == "g1"
 
 
 def test_manifest_conflict_refuses_stale_expected_generation():
