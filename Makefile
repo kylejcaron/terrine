@@ -50,7 +50,7 @@ test-bigquery:
 # WAREHOUSE,DATABASE,SCHEMA} (key-pair service user) and fails without them. Each
 # probe creates and drops its own schema in the test database.
 test-snowflake:
-	$(PYTEST_TIME) uv run --extra duckdb --extra snowflake pytest integration -n $(WAREHOUSE_WORKERS) -m snowflake
+	$(PYTEST_TIME) uv run --extra duckdb --extra snowflake --extra sketches pytest integration -v -n $(WAREHOUSE_WORKERS) -m snowflake
 
 lint:
 	uv run ruff check terrine tests integration benchmarks

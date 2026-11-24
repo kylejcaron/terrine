@@ -358,11 +358,15 @@ def _feature_definition_hash(design: Design, features: tuple[str, ...], model: M
     ).hexdigest()
 
 
+def _has_deferred_labels(compiled: CompiledStudy, view: _TrainingView) -> bool:
+    return any(name in view.labels for sidecar in compiled.sketches for name in sidecar.outputs)
+
+
 def _apply_training_view(compiled: CompiledStudy, view: _TrainingView) -> CompiledStudy:
     table = compiled.table
     roles = compiled.roles
     label_metadata = [compiled.columns[name] for name in view.labels]
-    if view.incomplete_labels == "drop":
+    if view.incomplete_labels == "drop" and not _has_deferred_labels(compiled, view):
         for name, metadata in zip(view.labels, label_metadata, strict=True):
             assert metadata.complete_column is not None
             usable = table[metadata.complete_column].fill_null(False) & table[name].notnull()
@@ -442,7 +446,28 @@ def _apply_training_view(compiled: CompiledStudy, view: _TrainingView) -> Compil
         roles=selected_roles,
         columns=selected_columns,
         expression_timings=timings,
+        sketches=tuple(
+            replace(sidecar, outputs=outputs)
+            for sidecar in compiled.sketches
+            if (outputs := tuple(name for name in sidecar.outputs if name in selected_columns))
+        ),
     )
+
+
+def _filter_resolved_labels(batch, compiled, labels, counts):
+    """Count each unusable label, then discard a row if any selected label is unusable."""
+    keep = None
+    for label in labels:
+        meta = compiled.columns[label]
+        complete = batch[meta.complete_column].fill_null(False)
+        usable = pc.call_function("and", [batch[label].is_valid(), complete])
+        missing = pc.call_function("invert", [usable])
+        reasons = batch[meta.reason_column].filter(missing).fill_null("unknown")
+        for entry in reasons.value_counts().to_pylist():
+            reason = entry["values"]
+            counts[reason] = counts.get(reason, 0) + entry["counts"]
+        keep = usable if keep is None else pc.call_function("and", [keep, usable])
+    return batch.filter(keep)
 
 
 def _excluded_label_counts(compiled: CompiledStudy, view: _TrainingView, execute) -> dict[str, int]:
@@ -872,7 +897,11 @@ class Frame:
         enforce_shape_budget(self._design.shape, budget)
         for warning in _scan_policy(budget):
             warnings.warn(warning, RuntimeWarning, stacklevel=2)
-        from terrine.compile.columns import expression_policy
+        from terrine.compile.columns import (
+            apply_sketch_estimates,
+            collect_sketch_estimates,
+            expression_policy,
+        )
         from terrine.compile.dispatch import _bind_study
         from terrine.compile.prune import prune_columns
         from terrine.execution.backend import backend_provider
@@ -905,7 +934,13 @@ class Frame:
             study_shape = self._design.shape
             life_table = study_shape if isinstance(study_shape, LifeTable) else None
             max_rows = None if budget is None else budget.max_rows
-            input_limit = max_rows if life_table is None else None
+            view = self._training_view
+            deferred_drop = (
+                view is not None
+                and view.incomplete_labels == "drop"
+                and _has_deferred_labels(compiled, view)
+            )
+            input_limit = max_rows if life_table is None and not deferred_drop else None
             if input_limit is not None:
                 limit = min(input_limit + 1, 2**63 - 1)
                 query = query.limit(limit)
@@ -919,6 +954,8 @@ class Frame:
                 and transform is None
                 and self._training_view is None
             )
+            estimates = collect_sketch_estimates(compiled, context.to_arrow_batches)
+            excluded_counts: dict[str, int] = {}
             with context.to_arrow_batches(query, chunk_size=chunk_size) as reader:
                 stream = GatedStream(
                     reader,
@@ -937,11 +974,20 @@ class Frame:
                     for batch in stream:
                         if batch.schema != schema:
                             batch = batch.cast(schema)
+                        if estimates:
+                            batch = apply_sketch_estimates(batch, compiled, estimates)
+                        if deferred_drop:
+                            assert view is not None
+                            batch = _filter_resolved_labels(
+                                batch, compiled, view.labels, excluded_counts
+                            )
+                            if batch.num_rows == 0:
+                                continue
                         batch = self._winsorize_output(batch)
-                        if input_limit is not None:
+                        if max_rows is not None and life_table is None:
                             row_count += batch.num_rows
-                            if row_count > input_limit:
-                                raise _ROWS_EXCEEDED.error(limit=input_limit)
+                            if row_count > max_rows:
+                                raise _ROWS_EXCEEDED.error(limit=max_rows)
                         yield batch
 
                 if life_table is not None and stream_life_table:
@@ -950,15 +996,8 @@ class Frame:
                     )
                 else:
                     table = pa.Table.from_batches(output_batches(), schema=empty.schema)
-            excluded_counts = {}
-            if self._training_view is not None and self._training_view.incomplete_labels == "drop":
-                excluded_counts = _excluded_label_counts(
-                    study, self._training_view, context.execute
-                )
-            if not stream_life_table:
-                from terrine.compile.columns import resolve_sketch_sidecars
-
-                table = resolve_sketch_sidecars(table, compiled, context.con)
+            if view is not None and view.incomplete_labels == "drop" and not deferred_drop:
+                excluded_counts = _excluded_label_counts(study, view, context.execute)
             roles = compiled.roles
             columns = compiled.columns
             if life_table is not None:
