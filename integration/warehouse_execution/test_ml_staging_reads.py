@@ -191,6 +191,47 @@ def test_frame_stage_publishes_and_reads_its_pinned_generation(events_world, tmp
     con.disconnect()
 
 
+def test_staged_generation_reopens_when_namespace_matches_catalog(tmp_path, monkeypatch):
+    import ibis
+
+    import terrine as tr
+
+    def values(dataset):
+        return [(r["unit"], r["v"]) for b in dataset.to_arrow_batches() for r in b.to_pylist()]
+
+    path = str(tmp_path / "owner.duckdb")
+    monkeypatch.setenv("TERRINE_RUNTIME_NAMESPACE", "owner")
+    con = ibis.duckdb.connect(path)
+    try:
+        con.raw_sql("CREATE TABLE roster AS SELECT 'a' AS id")
+        con.raw_sql("CREATE TABLE facts AS SELECT 'a' AS id, TIMESTAMP '2025-01-01' AS ts, 7 AS n")
+        model = tr.Model.from_tables(
+            con,
+            units={"user": tr.UnitSource("roster", "id")},
+            events={"event": tr.Events(
+                "facts", key="id", time="ts", metrics={"amount": tr.sum("n")},
+                complete=("2025-01-01", "2025-01-03"),
+            )},
+        )
+        frame = Design(
+            "user", FixedDate("2025-01-02"), features={"v": agg("amount", window=("-1d", "0s"))}
+        ).build(model)
+        dataset = frame.stage("totals", budget=Budget(strict_scan=False))
+        generation = dataset.manifest.generation
+        assert values(dataset) == [("a", 7)]
+    finally:
+        con.disconnect()
+    con = ibis.duckdb.connect(path)
+    try:
+        reopened = Dataset.open_generation(
+            generation.dataset_id, generation.generation_id, con=con, namespace="owner"
+        )
+        assert reopened.manifest.generation == generation
+        assert values(reopened) == [("a", 7)]
+    finally:
+        con.disconnect()
+
+
 def test_manifest_reopen_rejects_tampered_generation_row_count(events_world, tmp_path):
     from dataclasses import replace
 

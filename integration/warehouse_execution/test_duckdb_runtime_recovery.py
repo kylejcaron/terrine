@@ -16,8 +16,8 @@ from tests._timing import HANG_GUARD_SECONDS
 
 def _crash_writer(path: str, crash_at: str) -> None:
     con = duckdb.connect(path)
-    backend = DuckDBBackend(con, namespace="runtime_owner")
-    lease_store = LeaseStore(con, namespace="runtime_owner")
+    backend = DuckDBBackend(con, namespace="owner")
+    lease_store = LeaseStore(con, namespace="owner")
     lease = lease_store.acquire(
         "dataset:orders", "crash-writer", ttl=timedelta(minutes=1), now=datetime.now(UTC)
     )
@@ -47,8 +47,8 @@ def test_duckdb_crash_boundary_retry_reconciles_manifest(
 ):
     path = str(tmp_path / "owner.duckdb")
     writer = duckdb.connect(path)
-    backend = DuckDBBackend(writer, namespace="runtime_owner")
-    leases = LeaseStore(writer, namespace="runtime_owner")
+    backend = DuckDBBackend(writer, namespace="owner")
+    leases = LeaseStore(writer, namespace="owner")
     lease = leases.acquire(
         "dataset:orders", "initial-writer", ttl=timedelta(minutes=1), now=datetime.now(UTC)
     )
@@ -72,10 +72,10 @@ def test_duckdb_crash_boundary_retry_reconciles_manifest(
     assert process.exitcode == 91
 
     reader = duckdb.connect(path)
-    recovered = DuckDBBackend(reader, namespace="runtime_owner")
+    recovered = DuckDBBackend(reader, namespace="owner")
     assert recovered.current_generation("orders") == expected_generation
     version_row = reader.execute(
-        'SELECT version FROM "runtime_owner".runtime_manifests WHERE dataset=?', ["orders"]
+        'SELECT version FROM "owner"."owner".runtime_manifests WHERE dataset=?', ["orders"]
     ).fetchone()
     assert version_row is not None
     publication = PublicationReceipt("orders", expected_generation, version_row[0], ("all",))

@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from terrine.errors import RefusalSpec
-from terrine.runtime.schema import ensure_runtime_schema
+from terrine.runtime.schema import _runtime_namespace, ensure_runtime_schema
 
 __all__ = ["Lease", "LeaseStore"]
 
@@ -32,7 +32,7 @@ class LeaseStore:
             raise _INVALID_NAMESPACE.error(reason="invalid_namespace", field="namespace")
         self.con = con
         self.namespace = namespace
-        self._schema = f'"{namespace}"'
+        self._schema = _runtime_namespace(con, namespace).sql
 
     def initialize(self) -> None:
         """Create the namespace's runtime metadata, refusing unsupported schema versions."""
