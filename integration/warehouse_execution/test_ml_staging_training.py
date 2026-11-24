@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import FrozenInstanceError, replace
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -25,6 +26,85 @@ from tests.conftest import winsorization_world as winsorization_world  # noqa: F
 from tests.dataset.test_staging import _durable_frame
 from tests.dataset.test_training_view import _frame
 from tests.fixtures.winsorization import bind_model, design
+
+
+def test_deferred_training_labels_filter_real_estimates_before_budgets_and_split():
+    pytest.importorskip("datasketches")
+    import terrine as tr
+    from terrine.spec import approx_quantile, quantile
+
+    noon = datetime(2025, 1, 2, 12, tzinfo=UTC)
+    roster = pa.table({
+        "id": ["a", "b", "c", "d"],
+        "payload": ["x" * 8192, "small", "empty", "partial"],
+        "end": [None, None, None, noon],
+    })
+    events = pa.table({
+        "id": ["a", "b", "d", "b"],
+        "ts": [noon, noon, noon, datetime(2025, 1, 1, 12, tzinfo=UTC)],
+        "amount": [None, 7, 9, 11],
+    })
+    con = ibis.duckdb.connect()
+    try:
+        con.create_table("users", roster)
+        con.create_table("events", events)
+        model = Model.from_tables(
+            con,
+            units={
+                "user": UnitSource("users", "id", observed_until="end", attributes=("payload",))
+            },
+            events={"visit": tr.Events(
+                "events", time="ts", key="id", metrics={"spend": tr.sum("amount")},
+                complete=("2025-01-01", "2025-01-04"),
+            )},
+        )
+        past = approx_quantile("spend", "0.5", window=("-1d", "0s"))
+        future = approx_quantile("spend", "0.5", window=("0s", "1d"))
+        frame = Design(
+            "user", tr.FixedDate("2025-01-02"),
+            features={"past": past, "omit": past, "wide": tr.asof("payload", before="0s")},
+            outcomes={"q": future, "exact": quantile("spend", "0.5", window=("0s", "1d"))},
+        ).build(model)
+        labels, features = ("q", "exact"), ("past", "wide")
+        keep = frame.training_set(label=labels, features=features, incomplete_labels="keep")
+        keep_rows = keep.materialize().table.to_pylist()
+        usable = [
+            row for row in keep_rows
+            if all(row[f"{label}__complete"] and row[label] is not None for label in ("q", "exact"))
+        ]
+        assert [(r["unit"], r["q"], r["exact"], r["past"]) for r in usable] == [("b", 7, 7, 11)]
+        assert "omit" not in usable[0]
+        drop = frame.training_set(label=labels, features=features)
+        budget = Budget(max_rows=1, max_output_bytes=1024)
+        result = drop.materialize(budget=budget)
+        assert result.table.to_pylist() == usable
+        expected_reasons = Counter(
+            row[f"{label}__reason"] or "unknown"
+            for row in keep_rows for label in labels
+            if not row[f"{label}__complete"] or row[label] is None
+        )
+        assert sum(expected_reasons.values()) == 6
+        assert result.provenance.dataset_view is not None
+        assert result.provenance.dataset_view.counts_by_reason == expected_reasons
+        split = frame.training_set(
+            label=labels, features=features, split=TimeSplit(train_until="2025-01-02T12:00:00Z")
+        )
+        split_result = split.materialize(budget=budget)
+        assert split_result.table["unit"].to_pylist() == ["b"]
+        assert split_result.provenance.dataset_view is not None
+        assert split_result.provenance.dataset_view.counts_by_reason == {
+            **expected_reasons, "label_overlap": 1,
+        }
+        con.raw_sql("UPDATE users SET payload=repeat('x',8192) WHERE id='b'")
+        with pytest.raises(TerrineError) as too_wide:
+            drop.materialize(budget=budget)
+        assert too_wide.value.code == "terrine.budget.output_bytes_exceeded"
+        con.raw_sql("UPDATE events SET amount=9 WHERE id='a'")
+        with pytest.raises(TerrineError) as too_many:
+            drop.materialize(budget=Budget(max_rows=1))
+        assert too_many.value.code == "terrine.budget.rows_exceeded"
+    finally:
+        con.disconnect()
 
 
 def test_training_drop_counts_labels_before_assigning_split_overlap(events_world, tmp_path):

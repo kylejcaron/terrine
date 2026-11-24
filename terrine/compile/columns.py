@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Literal, Protocol, cast
 import ibis
 import ibis.expr.types as ir
 import pyarrow as pa
+import pyarrow.compute as pc
 
 import terrine.reasons as reason_codes
 from terrine.backends.dialect import dialect_scope
@@ -86,7 +87,7 @@ from terrine.temporal.ranges import RangePlan
 if TYPE_CHECKING:
     from terrine.model import Model
 
-__all__ = ["CompiledStudy", "compile_columns", "resolve_sketch_sidecars"]
+__all__ = ["CompiledStudy", "compile_columns"]
 
 _NAME_CONFLICT = RefusalSpec(
     "terrine.spec.output_name_conflict",
@@ -363,40 +364,33 @@ class CompiledStudy:
         validate_schedule(self, execute)
 
 
-def resolve_sketch_sidecars(table: pa.Table, compiled: CompiledStudy, con) -> pa.Table:
-    """Execute optional t-digest sidecars inside the owning execution context."""
+def collect_sketch_estimates(compiled: CompiledStudy, read_batches):
+    """Finish each sidecar reader before opening the next reader on the same session."""
     if not compiled.sketches:
-        return table
+        return {}
     from terrine.temporal.sketches import approximate_quantiles_by_key
 
+    estimates_by_output = {}
     for sidecar in compiled.sketches:
-        reader = con.to_pyarrow_batches(sidecar.rows, chunk_size=65_536)
-        try:
-            estimates, _ = approximate_quantiles_by_key(
-                reader,
-                sidecar.probability,
-            )
-        finally:
-            reader.close()
+        with read_batches(sidecar.rows) as reader:
+            estimates, _ = approximate_quantiles_by_key(reader, sidecar.probability)
         for output in sidecar.outputs:
-            meta = compiled.columns[output]
-            complete = (
-                table.column(meta.complete_column).to_pylist()
-                if meta.complete_column is not None
-                else [True] * table.num_rows
+            estimates_by_output[output] = estimates
+    return estimates_by_output
+
+
+def apply_sketch_estimates(batch: pa.RecordBatch, compiled: CompiledStudy, estimates_by_output):
+    """Fill selected aliases with keyed estimates only where their window is complete."""
+    keys = tuple(zip(batch["unit"].to_pylist(), batch["anchor_id"].to_pylist(), strict=True))
+    for output, estimates in estimates_by_output.items():
+        meta = compiled.columns[output]
+        values = pa.array((estimates.get(key) for key in keys), type=pa.float64())
+        if meta.complete_column is not None:
+            values = pc.call_function(
+                "if_else", [batch[meta.complete_column], values, pa.scalar(None, pa.float64())]
             )
-            keys = zip(
-                table.column("unit").to_pylist(),
-                table.column("anchor_id").to_pylist(),
-                strict=True,
-            )
-            values = [
-                estimates.get(key) if is_complete else None
-                for key, is_complete in zip(keys, complete, strict=True)
-            ]
-            index = table.schema.get_field_index(output)
-            table = table.set_column(index, output, pa.array(values, type=pa.float64()))
-    return table
+        batch = batch.set_column(batch.schema.get_field_index(output), output, values)
+    return batch
 
 
 def expression_policy(model: Model) -> str:
