@@ -426,7 +426,7 @@ def _binned(
         ):
             if name is not None and name not in required_columns:
                 required_columns.append(name)
-    panel_start = ibis.literal(model.day_boundary(schedule.start))
+    panel_start = ibis.literal(model.day_boundary(schedule.start).astimezone(UTC))
     retained = retained.mutate(__terrine_panel_start=panel_start)
     audit = audit.mutate(__terrine_panel_start=panel_start)
     required_columns.append("__terrine_panel_start")

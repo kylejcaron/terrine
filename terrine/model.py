@@ -461,8 +461,8 @@ class Model:
             history: Mapping of attribute names to History declarations; None declares no history
                 attributes.
             dialect: Catalog dialect name; None infers it from the admitted connection.
-            day_boundary: "UTC" or an IANA timezone name defining local calendar-day boundaries;
-                default "UTC".
+            day_boundary: "UTC" (default) or a fixed offset written ±HH:MM or UTC±HH:MM,
+                from −14:00 through +14:00. Calendar dates start at midnight in that offset.
             event_ids: Mapping of source names (the keys in events) to unique occurrence-ID column
                 names; None supplies no tie breaker.
             allow_unverified: Whether to allow read-only use of unverified Ibis backends; False

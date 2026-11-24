@@ -283,22 +283,7 @@ def test_adjacent_binned_state_relation_pairs_response_with_successor_prior(
     table = (
         design.build(model).materialize(budget=Budget(max_rows=10, max_output_bytes=100_000)).table
     )
-    public = table.select(
-        [
-            "unit",
-            "anchor_id",
-            "period_index",
-            "from_state",
-            "to_state",
-            "from_state__complete",
-            "from_state__reason",
-            "to_state__complete",
-            "to_state__reason",
-        ]
-    )
-    for name in ("to_time", "scheduled_to"):
-        public = public.append_column(name, table[name].cast(pa.timestamp("us", tz="UTC")))
-    rows = public.to_pylist()
+    rows = table.to_pylist()
     a_positions = sorted(
         (index for index, row in enumerate(rows) if row["unit"] == "a"),
         key=lambda index: rows[index]["period_index"],
